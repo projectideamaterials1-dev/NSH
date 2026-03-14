@@ -71,3 +71,25 @@ class SimulationTickResponse(BaseModel):
     updated_objects: List[UpdatedObject]
     collision_warnings: List[CollisionWarning]
     total_objects_tracked: int
+    maneuvers_executed: int = 0
+
+
+# ─── /api/maneuver/schedule ───────────────────────────────────────────────────
+
+class Burn(BaseModel):
+    burn_id: str
+    burnTime: datetime
+    deltaV_vector: Vec3
+
+class ManeuverScheduleRequest(BaseModel):
+    satelliteId: str
+    maneuver_sequence: List[Burn]
+
+class ValidationResult(BaseModel):
+    ground_station_los: bool
+    sufficient_fuel: bool
+    projected_mass_remaining_kg: float
+
+class ManeuverScheduleResponse(BaseModel):
+    status: str  # "SCHEDULED" or "REJECTED"
+    validation: ValidationResult

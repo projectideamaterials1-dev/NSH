@@ -9,7 +9,7 @@ Implements:
 """
 
 import math
-from typing import Tuple
+from typing import Tuple, List
 
 # ─── Earth Constants ──────────────────────────────────────────────────────────
 MU    = 398600.4418       # km³/s²  — Earth's gravitational parameter
@@ -163,3 +163,18 @@ def risk_level(dist_km: float) -> str:
         return "MEDIUM"
     else:
         return "LOW"
+
+
+def propagate_object(r: List[float], v: List[float], dt: float) -> Tuple[List[float], List[float]]:
+    """
+    Propagate a single object forward by dt seconds using RK4 with J2.
+    Returns new (r, v).
+    """
+    time_remaining = dt
+    max_step = 30.0  # seconds
+    r_cur, v_cur = r[:], v[:]
+    while time_remaining > 0:
+        step = min(time_remaining, max_step)
+        r_cur, v_cur = rk4_step(r_cur, v_cur, step)
+        time_remaining -= step
+    return r_cur, v_cur

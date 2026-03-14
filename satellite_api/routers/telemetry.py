@@ -8,8 +8,8 @@ updates internal state, and runs collision screening.
 """
 
 from fastapi import APIRouter, Request
-from models import TelemetryIngestionRequest, TelemetryIngestionResponse
-from collision import run_collision_screening
+from satellite_api.models import TelemetryIngestionRequest, TelemetryIngestionResponse
+from satellite_api.collision import run_collision_screening
 
 router = APIRouter()
 
@@ -33,10 +33,10 @@ async def ingest_telemetry(
 
     # ── 1. Upsert all incoming objects into shared state ──────────────────────
     for obj in payload.objects:
-        state.upsert(obj)
+        await state.upsert(obj, payload.timestamp)
 
     # ── 2. Run collision screening on full object catalog ─────────────────────
-    all_objects = state.get_all()
+    all_objects = await state.get_all()
     warnings = run_collision_screening(all_objects, sim_time_offset_s=state.sim_time_s)
 
     # ── 3. Build response ─────────────────────────────────────────────────────

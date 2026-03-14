@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import telemetry, simulation
-from state import AppState
+from satellite_api.routers import telemetry, simulation, maneuver
+from satellite_api.state import AppState
 
 app = FastAPI(
     title="Satellite Collision Avoidance API",
@@ -20,6 +20,11 @@ app.add_middleware(
 app.state.orbital_state = AppState()
 
 app.include_router(telemetry.router, prefix="/api", tags=["Telemetry"])
+
+
+app.include_router(maneuver.router, prefix="/api", tags=["Maneuver"])
+
+
 app.include_router(simulation.router, prefix="/api", tags=["Simulation"])
 
 
