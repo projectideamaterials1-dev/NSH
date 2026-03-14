@@ -1,29 +1,75 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import telemetry, simulation, visualization
-from state import AppState
+from fastapi.responses import ORJSONResponse
 
+# ─── Modular Routers ─────────────────────────────────────────────────────────
+from satellite_api.routers import telemetry, simulation, visualization, maneuvers
+
+# ─── Global State Manager ────────────────────────────────────────────────────
+from satellite_api.state import get_state
+
+# ============================================================================
+# APP INITIALIZATION
+# ============================================================================
+
+# Initialize FastAPI with ORJSON globally for blistering serialization speeds.
+# This ensures every single endpoint defaults to the C-optimized JSON parser,
+# completely bypassing standard Python JSON encoding overhead.
 app = FastAPI(
-    title="Satellite Collision Avoidance API",
-    description="Real-time telemetry ingestion and orbital simulation with collision detection",
+    title="Autonomous Constellation Manager (NSH 2026)",
+    description="High-performance SDA engine with zero-copy C++ physics integration.",
     version="1.0.0",
+    default_response_class=ORJSONResponse
 )
 
+# ============================================================================
+# MIDDLEWARE
+# ============================================================================
+
+# CORS Middleware: Absolutely critical for the frontend UI (Cesium/Three.js) 
+# to communicate with the API without browser security blocks.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Open for hackathon rapid development
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Shared in-memory state (replace with DB in production)
-app.state.orbital_state = AppState()
+# ============================================================================
+# GLOBAL STATE BINDING
+# ============================================================================
+
+# Attach the Singleton State Manager to the app state.
+# This guarantees that all routers safely access the exact same memory buffers
+# and threaded locks without instantiating duplicate memory allocations.
+app.state.orbital_state = get_state()
+
+# ============================================================================
+# ROUTER MOUNTING
+# ============================================================================
 
 app.include_router(telemetry.router, prefix="/api", tags=["Telemetry"])
 app.include_router(simulation.router, prefix="/api", tags=["Simulation"])
 app.include_router(visualization.router, prefix="/api", tags=["Visualization"])
+app.include_router(maneuvers.router, prefix="/api", tags=["Maneuvers"])
 
-
+# ============================================================================
+# HEALTH PROBE
+# ============================================================================
 @app.get("/", tags=["Health"])
-def root():
-    return {"status": "online", "system": "Satellite Collision Avoidance API v1.0"}
+async def root():
+    """Root liveness probe."""
+    return {
+        "status": "online",
+        "system": "Autonomous Constellation Manager API v1.0",
+        "engine_ready": app.state.orbital_state.is_ready()
+    }
+
+@app.get("/health", tags=["Health"])
+async def health_check():
+    """Dedicated endpoint for Docker HEALTHCHECK."""
+    return {
+        "status": "online",
+        "engine_ready": app.state.orbital_state.is_ready()
+    }

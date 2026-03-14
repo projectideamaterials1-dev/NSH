@@ -1,91 +1,70 @@
-"""
-routers/visualization.py
--------------------------
-GET /api/visualization/snapshot
+from fastapi import APIRouter, Request, HTTPException
+import logging
 
-Returns current state of all satellites and debris in a
-compressed format optimized for frontend rendering.
-Converts ECI position vectors to Lat/Lon/Altitude.
-"""
-
-from fastapi import APIRouter, Request
-from datetime import datetime, timezone
-import math
+from satellite_api.coordinates import convert_states_to_lla
 
 router = APIRouter()
-
-
-def eci_to_geodetic(x: float, y: float, z: float) -> tuple[float, float, float]:
-    """
-    Convert ECI (x, y, z) in km to (latitude, longitude, altitude_km).
-    Uses simplified conversion assuming Earth rotation is negligible
-    for snapshot purposes (no GMST applied — frontend uses relative positions).
-    """
-    R_EARTH = 6378.137  # km
-
-    # Longitude from x, y
-    lon = math.degrees(math.atan2(y, x))
-
-    # Distance from Earth center
-    r_mag = math.sqrt(x**2 + y**2 + z**2)
-
-    # Latitude from z component
-    lat = math.degrees(math.asin(z / r_mag))
-
-    # Altitude above surface
-    alt = r_mag - R_EARTH
-
-    return round(lat, 4), round(lon, 4), round(alt, 4)
-
+logger = logging.getLogger(__name__)
 
 @router.get(
     "/visualization/snapshot",
     summary="Get current orbital snapshot for visualization",
-    description=(
-        "Returns lat/lon/altitude for all satellites with fuel and status, "
-        "and a compact debris cloud array for efficient frontend rendering."
-    ),
+    description="Returns GMST-corrected lat/lon/altitude for satellites and debris."
 )
 async def visualization_snapshot(request: Request):
-
     state = request.app.state.orbital_state
+    
+    if not state.is_ready() or state.current_time is None:
+        raise HTTPException(status_code=400, detail="State not initialized.")
+
+    # ── 1. Fetch the exact memory slices from our NumPy buffers ─────────────
+    sat_state, debris_state = await state.get_state_buffers()
+
+    # ── 2. Vectorized WGS84 ECI-to-LLA Math ─────────────────────────────────
+    # Output format is an array of [index, lat, lon, alt]
+    sat_lla_raw = convert_states_to_lla(sat_state, state.current_time)
+    debris_lla_raw = convert_states_to_lla(debris_state, state.current_time)
 
     satellites = []
-    debris_cloud = []
-
-    for obj in state.get_all():
-        lat, lon, alt = eci_to_geodetic(obj.r.x, obj.r.y, obj.r.z)
-
-        if obj.type == "SATELLITE":
-            # Determine status based on fuel
-            if obj.fuel_kg <= 0:
+    # Lock the state briefly to ensure fuel and ID arrays don't mutate
+    async with state.lock:
+        # ── 3. Build Satellite Dicts (Matches Teammate's Contract) ──────────
+        for row in sat_lla_raw:
+            idx = int(row[0])
+            lat, lon, alt = round(row[1], 4), round(row[2], 4), round(row[3], 4)
+            fuel = state.sat_fuel[idx]
+            
+            # Determine status based on fuel (5% threshold = 2.5kg)
+            if fuel <= 0:
                 status = "EOL"
-            elif obj.fuel_kg <= 2.5:  # 5% of 50kg
+            elif fuel <= 2.5:
                 status = "CRITICAL_FUEL"
             else:
                 status = "NOMINAL"
-
+            
             satellites.append({
-                "id": obj.id,
+                "id": state.idx_to_sat_id[idx],
                 "lat": lat,
                 "lon": lon,
                 "alt_km": alt,
-                "fuel_kg": round(obj.fuel_kg, 3),
+                "fuel_kg": round(fuel, 3),
                 "status": status,
             })
 
-        else:
-            # Debris — compact tuple format [id, lat, lon, alt]
-            debris_cloud.append([obj.id, lat, lon, alt])
-
-    timestamp = (
-        state.sim_epoch.isoformat()
-        if state.sim_epoch
-        else datetime.now(tz=timezone.utc).isoformat()
-    )
+        # ── 4. Build Debris Cloud (Flattened per NSH Spec Section 6.3) ──────
+        # Format: [ID, Lat, Lon, Alt]
+        debris_cloud = [
+            [
+                state.idx_to_debris_id[int(row[0])],
+                round(row[1], 4),
+                round(row[2], 4),
+                round(row[3], 4)
+            ]
+            for row in debris_lla_raw
+        ]
 
     return {
-        "timestamp": timestamp,
+        "timestamp": state.current_time.isoformat(),
         "satellites": satellites,
         "debris_cloud": debris_cloud,
     }
