@@ -7,8 +7,8 @@ Two-stage pipeline:
 """
 
 from typing import List, Tuple
-from satellite_api.models import SpaceObject, CollisionWarning
-from satellite_api.physics import separation_km, time_to_closest_approach, risk_level, CRIT_DIST_KM
+from models import SpaceObject, CollisionWarning
+from physics import separation_km, time_to_closest_approach, risk_level, CRIT_DIST_KM
 from datetime import datetime, timedelta, timezone
 
 # Coarse filter threshold — only pairs within this distance get precise TCA check

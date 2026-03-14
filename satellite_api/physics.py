@@ -9,13 +9,13 @@ Implements:
 """
 
 import math
-from typing import Tuple, List
+from typing import Tuple
 
 # ─── Earth Constants ──────────────────────────────────────────────────────────
 MU    = 398600.4418       # km³/s²  — Earth's gravitational parameter
 R_EQ  = 6378.137          # km      — Earth equatorial radius
 J2    = 1.08262668e-3     # Dimensionless — J2 oblateness coefficient
-CRIT_DIST_KM = 5.0        # km      — Collision warning threshold
+CRIT_DIST_KM = 0.1        # km      — Collision warning threshold (100 meters)
 
 
 # ─── Acceleration ─────────────────────────────────────────────────────────────
@@ -163,18 +163,3 @@ def risk_level(dist_km: float) -> str:
         return "MEDIUM"
     else:
         return "LOW"
-
-
-def propagate_object(r: List[float], v: List[float], dt: float) -> Tuple[List[float], List[float]]:
-    """
-    Propagate a single object forward by dt seconds using RK4 with J2.
-    Returns new (r, v).
-    """
-    time_remaining = dt
-    max_step = 30.0  # seconds
-    r_cur, v_cur = r[:], v[:]
-    while time_remaining > 0:
-        step = min(time_remaining, max_step)
-        r_cur, v_cur = rk4_step(r_cur, v_cur, step)
-        time_remaining -= step
-    return r_cur, v_cur

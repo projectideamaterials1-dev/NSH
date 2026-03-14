@@ -25,6 +25,9 @@ class SpaceObject(BaseModel):
     type: Literal["SATELLITE", "DEBRIS", "ROCKET_BODY"]
     r: Vec3 = Field(..., description="Position vector (km)")
     v: Vec3 = Field(..., description="Velocity vector (km/s)")
+    fuel_kg: float = 50.0
+    dry_mass_kg: float = 500.0
+    last_burn_time_s: float = -9999.0
 
 
 # ─── /api/telemetry ───────────────────────────────────────────────────────────
@@ -41,13 +44,7 @@ class TelemetryIngestionResponse(BaseModel):
     warning_pairs: Optional[List[dict]] = None
 
 
-# ─── /api/simulation/tick ─────────────────────────────────────────────────────
-
-class SimulationTickRequest(BaseModel):
-    tick_duration_s: float = Field(
-        ..., gt=0, le=3600, description="Seconds to advance (1–3600)"
-    )
-
+# ─── Collision Warning (used by collision.py) ─────────────────────────────────
 
 class CollisionWarning(BaseModel):
     object1: str
@@ -57,39 +54,27 @@ class CollisionWarning(BaseModel):
     risk_level: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
 
 
-class UpdatedObject(BaseModel):
-    id: str
-    type: str
-    r: Vec3
-    v: Vec3
+# ─── /api/simulate/step ───────────────────────────────────────────────────────
+
+class SimulateStepRequest(BaseModel):
+    step_seconds: float = Field(..., gt=0, description="Seconds to advance")
 
 
-class SimulationTickResponse(BaseModel):
-    status: str = "TICK_PROCESSED"
-    sim_time_elapsed_s: float
-    tick_duration_s: float
-    updated_objects: List[UpdatedObject]
-    collision_warnings: List[CollisionWarning]
-    total_objects_tracked: int
-    maneuvers_executed: int = 0
+class SimulateStepResponse(BaseModel):
+    status: str = "STEP_COMPLETE"
+    new_timestamp: str
+    collisions_detected: int
+    maneuvers_executed: int
 
 
-# ─── /api/maneuver/schedule ───────────────────────────────────────────────────
+# ─── Maneuver structures (for teammate's API + tick execution) ─────────────────
 
-class Burn(BaseModel):
+class BurnCommand(BaseModel):
     burn_id: str
     burnTime: datetime
     deltaV_vector: Vec3
 
-class ManeuverScheduleRequest(BaseModel):
+
+class ScheduledManeuver(BaseModel):
     satelliteId: str
-    maneuver_sequence: List[Burn]
-
-class ValidationResult(BaseModel):
-    ground_station_los: bool
-    sufficient_fuel: bool
-    projected_mass_remaining_kg: float
-
-class ManeuverScheduleResponse(BaseModel):
-    status: str  # "SCHEDULED" or "REJECTED"
-    validation: ValidationResult
+    maneuver_sequence: List[BurnCommand]
