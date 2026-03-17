@@ -1,139 +1,98 @@
+"""
+models.py
+---------
+Strict Pydantic schemas for the NSH 2026 API.
+Matches Section 4 and Section 6.3 of the Problem Statement exactly.
+"""
+
 from pydantic import BaseModel, Field
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Any
 from datetime import datetime
 
 # ============================================================================
 # SHARED TYPES
 # ============================================================================
-
 class Vec3(BaseModel):
     """3D Vector for position and velocity."""
-    x: float = Field(..., description="X component (km or km/s)")
-    y: float = Field(..., description="Y component (km or km/s)")
-    z: float = Field(..., description="Z component (km or km/s)")
-
-# ============================================================================
-# CORE DOMAIN OBJECTS
-# ============================================================================
+    x: float
+    y: float
+    z: float
 
 class SpaceObject(BaseModel):
     """Represents a satellite, debris, or rocket body in orbit."""
-    id: str = Field(..., description="Unique object identifier (e.g., 'SAT-001', 'DEB-12345')")
-    type: Literal["SATELLITE", "DEBRIS", "ROCKET_BODY"] = Field(
-        ..., 
-        description="Object classification"
-    )
-    r: Vec3 = Field(..., description="Position vector in ECI frame (km)")
-    v: Vec3 = Field(..., description="Velocity vector in ECI frame (km/s)")
-    fuel_kg: float = Field(default=50.0, description="Remaining fuel mass (kg)")
-    dry_mass_kg: float = Field(default=500.0, description="Spacecraft dry mass (kg)")
-    last_burn_time_s: float = Field(default=-9999.0, description="Last burn timestamp (seconds)")
+    id: str = Field(..., description="Unique object identifier (e.g., 'SAT-00', 'DEB-1234')")
+    type: Literal["SATELLITE", "DEBRIS", "ROCKET_BODY"]
+    r: Vec3
+    v: Vec3
 
 # ============================================================================
-# TELEMETRY ENDPOINTS (/api/telemetry)
+# TELEMETRY ENDPOINTS (/telemetry)
 # ============================================================================
-
 class TelemetryIngestionRequest(BaseModel):
     """Request payload for telemetry ingestion."""
-    timestamp: datetime = Field(
-        ..., 
-        description="ISO 8601 timestamp (e.g., '2026-03-12T08:00:00.000Z')"
-    )
-    objects: List[SpaceObject] = Field(
-        ..., 
-        description="List of space objects with position/velocity vectors"
-    )
+    timestamp: datetime
+    objects: List[SpaceObject]
 
 class TelemetryIngestionResponse(BaseModel):
-    """Response payload for telemetry ingestion."""
-    status: str = Field(default="ACK", description="Acknowledgment status")
-    processed_count: int = Field(..., description="Number of objects processed")
-    active_cdm_warnings: int = Field(default=0, description="Active Conjunction Data Message warnings")
-    warning_pairs: Optional[List[dict]] = Field(default=None, description="Collision warning pairs")
+    """Response payload for telemetry ingestion. (Strict Section 4.1 Schema)"""
+    status: str = Field(default="ACK")
+    processed_count: int
+    active_cdm_warnings: int
+    warning_pairs: Optional[List[dict]] = None 
 
 # ============================================================================
-# COLLISION WARNING TYPES
+# SIMULATION ENDPOINTS (/simulate/step)
 # ============================================================================
-
-class CollisionWarning(BaseModel):
-    """Collision warning between two space objects."""
-    object1: str = Field(..., description="First object ID")
-    object2: str = Field(..., description="Second object ID")
-    closest_approach_km: float = Field(..., description="Minimum separation distance (km)")
-    predicted_time: Optional[str] = Field(default=None, description="Predicted TCA (ISO 8601)")
-    risk_level: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] = Field(
-        ..., 
-        description="Risk classification"
-    )
-
-# ============================================================================
-# SIMULATION ENDPOINTS (/api/simulate/step)
-# ============================================================================
-
 class SimulateStepRequest(BaseModel):
     """Request payload for simulation step."""
-    step_seconds: float = Field(
-        ..., 
-        gt=0.0, 
-        description="Time to advance the simulation in seconds"
-    )
+    step_seconds: float = Field(..., gt=0.0)
 
 class SimulateStepResponse(BaseModel):
-    """Response payload for simulation step."""
-    status: str = Field(default="STEP_COMPLETE", description="Execution status")
-    new_timestamp: str = Field(..., description="New simulation timestamp (ISO 8601)")
-    collisions_detected: int = Field(..., description="Number of conjunctions detected")
-    maneuvers_executed: int = Field(..., description="Number of maneuvers executed this step")
-    collision_data: Optional[List[list]] = Field(
-        default=None, 
-        description="Array of [sat_idx, target_idx, is_debris_flag, distance_km]"
-    )
+    """Response payload for simulation step. (Strict Section 4.3 Schema)"""
+    status: str = Field(default="STEP_COMPLETE")
+    new_timestamp: str = Field(..., description="ISO 8601 Timestamp")
+    collisions_detected: int
+    maneuvers_executed: int
+    # 🚀 STRICT COMPLIANCE: collision_data field completely removed
 
 # ============================================================================
-# MANEUVER ENDPOINTS (/api/maneuver/schedule)
+# MANEUVER ENDPOINTS (/maneuver/schedule)
 # ============================================================================
-
 class BurnCommand(BaseModel):
     """Individual burn command within a maneuver sequence."""
-    burn_id: str = Field(..., description="Unique burn identifier")
-    burnTime: datetime = Field(..., description="Scheduled burn time (ISO 8601)")
-    deltaV_vector: Vec3 = Field(..., description="Delta-V vector in ECI frame (km/s)")
+    burn_id: str
+    burnTime: str  # Kept as string to exactly match API payload expectations
+    deltaV_vector: Vec3
 
-# CRITICAL FIX: Renamed from ScheduledManeuver to match router imports
 class ManeuverScheduleRequest(BaseModel):
     """Complete maneuver sequence for a satellite."""
-    satelliteId: str = Field(..., description="Target satellite ID")
-    maneuver_sequence: List[BurnCommand] = Field(
-        ..., 
-        description="Ordered list of burn commands"
-    )
+    satelliteId: str
+    maneuver_sequence: List[BurnCommand]
 
 class ValidationResult(BaseModel):
     """Validation results for maneuver scheduling."""
-    ground_station_los: bool = Field(..., description="Line-of-sight validation result")
-    sufficient_fuel: bool = Field(..., description="Fuel sufficiency validation result")
-    projected_mass_remaining_kg: float = Field(..., description="Projected mass after maneuvers (kg)")
+    ground_station_los: bool
+    sufficient_fuel: bool
+    projected_mass_remaining_kg: float
 
 class ManeuverScheduleResponse(BaseModel):
-    """Response payload for maneuver scheduling."""
-    status: str = Field(..., description="Scheduling status (SCHEDULED or REJECTED: reason)")
-    validation: ValidationResult = Field(..., description="Validation results")
+    """Response payload for maneuver scheduling. (Strict Section 4.2 Schema)"""
+    status: str
+    validation: ValidationResult
 
 # ============================================================================
-# VISUALIZATION ENDPOINTS (/api/visualization/snapshot)
+# VISUALIZATION ENDPOINTS (/visualization/snapshot)
 # ============================================================================
-
 class SatelliteStatus(BaseModel):
-    """Satellite status for frontend visualization."""
-    id: str = Field(..., description="Satellite ID")
-    lat: float = Field(..., description="Latitude (degrees)")
-    lon: float = Field(..., description="Longitude (degrees)")
-    alt_km: float = Field(..., description="Altitude (km)")
-    fuel_kg: float = Field(..., description="Remaining fuel (kg)")
-    status: Literal["NOMINAL", "CRITICAL_FUEL", "EOL"] = Field(..., description="Operational status")
-
+    """Satellite status for frontend visualization. (Strict Section 6.3 Schema)"""
+    id: str
+    lat: float
+    lon: float
+    fuel_kg: float
+    status: Literal["NOMINAL", "CRITICAL_FUEL", "EOL"]
+    
 class VisualizationSnapshotResponse(BaseModel):
     """Response payload for visualization snapshot."""
-    timestamp: str = Field(..., description="Current simulation timestamp (ISO 8601)")
-    satellites: List[SatelliteStatus] = Field(..., description="Satellite status list")
-    debris_cloud: List[list] = Field(..., description="Compact debris array [id, lat, lon, alt]")
+    timestamp: str
+    satellites: List[SatelliteStatus]
+    debris_cloud: List[List[Any]] # Flattened: [ID, Lat, Lon, Alt]

@@ -4,7 +4,6 @@ from fastapi.responses import ORJSONResponse
 
 # ─── Modular Routers ─────────────────────────────────────────────────────────
 from satellite_api.routers import telemetry, simulation, visualization, maneuvers
-
 # ─── Global State Manager ────────────────────────────────────────────────────
 from satellite_api.state import get_state
 
@@ -47,12 +46,10 @@ app.state.orbital_state = get_state()
 
 # ============================================================================
 # ROUTER MOUNTING
-# ============================================================================
-
-app.include_router(telemetry.router, prefix="/api", tags=["Telemetry"])
-app.include_router(simulation.router, prefix="/api", tags=["Simulation"])
-app.include_router(visualization.router, prefix="/api", tags=["Visualization"])
-app.include_router(maneuvers.router, prefix="/api", tags=["Maneuvers"])
+app.include_router(telemetry.router, tags=["Telemetry"])
+app.include_router(simulation.router, tags=["Simulation"])
+app.include_router(visualization.router, tags=["Visualization"])
+app.include_router(maneuvers.router, tags=["Maneuvers"])
 
 # ============================================================================
 # HEALTH PROBE

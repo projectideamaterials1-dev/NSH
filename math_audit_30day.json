@@ -1,0 +1,4319 @@
+{
+  "global_metrics": {
+    "total_collisions_detected": 0,
+    "total_maneuvers_fired": 28,
+    "simulation_start_time": 252420.071148,
+    "simulation_end_time": 254275.5809202
+  },
+  "satellite_metrics": {
+    "SAT-00": {
+      "maneuvers_scheduled": 30,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 6.35356302154462,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.01589050370549927,
+      "initial_energy": -29.39838737046406,
+      "status_history": [
+        {
+          "step": 120,
+          "energy": -29.39838737046406,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 240,
+          "energy": -29.406499894659085,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 360,
+          "energy": -29.409259160688254,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 480,
+          "energy": -29.396821422312243,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 600,
+          "energy": -29.414105637000212,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 720,
+          "energy": -29.39868084000788,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 840,
+          "energy": -29.40628057152755,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 960,
+          "energy": -29.40945872368112,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 1080,
+          "energy": -29.396625716408767,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 1200,
+          "energy": -29.41408925525273,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 1320,
+          "energy": -29.39884560960482,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 1440,
+          "energy": -29.40587593500901,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 1560,
+          "energy": -29.409807287997957,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 1680,
+          "energy": -29.396564770805472,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 1800,
+          "energy": -29.413978974628506,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 1920,
+          "energy": -29.399142611747926,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 2040,
+          "energy": -29.40565625452229,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 2160,
+          "energy": -29.409999809335662,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 2280,
+          "energy": -29.396377635473964,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 2400,
+          "energy": -29.41393977645648,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 2520,
+          "energy": -29.399332758358174,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 2640,
+          "energy": -29.405248659864647,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 2760,
+          "energy": -29.410332757686913,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 2880,
+          "energy": -29.396347157342326,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 3000,
+          "energy": -29.41381152214022,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 3120,
+          "energy": -29.399631536977637,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 3240,
+          "energy": -29.405028500230024,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 3360,
+          "energy": -29.41051840298438,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 3480,
+          "energy": -29.39616996146287,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 3600,
+          "energy": -29.413748343523306,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 3720,
+          "energy": -29.39984649999959,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 3840,
+          "energy": -29.404620991383485,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 3960,
+          "energy": -29.410833183229183,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 4080,
+          "energy": -29.39616954779221,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 4200,
+          "energy": -29.413604028476538,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 4320,
+          "energy": -29.40014540968261,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 4440,
+          "energy": -29.40440021306335,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 4560,
+          "energy": -29.41101204070589,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 4680,
+          "energy": -29.3960036991894,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 4800,
+          "energy": -29.413515879438208,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 4920,
+          "energy": -29.400384389937873,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 5040,
+          "energy": -29.403995841196394,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 5160,
+          "energy": -29.411306306193417,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 5280,
+          "energy": -29.39603272728854,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 5400,
+          "energy": -29.413357413564224,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 5520,
+          "energy": -29.400681912763403,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 5640,
+          "energy": -29.40377431134039,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 5760,
+          "energy": -29.411478362795027,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 5880,
+          "energy": -29.39587965693388,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 6000,
+          "energy": -29.41324351153358,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 6120,
+          "energy": -29.400943867876485,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 6240,
+          "energy": -29.403376097430577,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 6360,
+          "energy": -29.411750005600325,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 6480,
+          "energy": -29.395937296725368,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 6600,
+          "energy": -29.413072765260544,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 6720,
+          "energy": -29.40123862787897,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 6840,
+          "energy": -29.403153713084894,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 6960,
+          "energy": -29.411915126146443,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 7080,
+          "energy": -29.395798442478895,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 7200,
+          "energy": -29.412932564953223,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 7320,
+          "energy": -29.401522270669844,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 7440,
+          "energy": -29.402764612086543,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 7560,
+          "energy": -29.412162306297017,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 7680,
+          "energy": -29.395883670041346,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 7800,
+          "energy": -29.41275133583153,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 7920,
+          "energy": -29.401813045535814,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 8040,
+          "energy": -29.40254132160238,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 8160,
+          "energy": -29.412320216385208,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 8280,
+          "energy": -29.39576046007584,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 8400,
+          "energy": -29.412584554873124,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 8520,
+          "energy": -29.402116845783894,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 8640,
+          "energy": -29.402164188794067,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 8760,
+          "energy": -29.41254138635169,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 8880,
+          "energy": -29.395872072356273,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 9000,
+          "energy": -29.412394537978013,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 9120,
+          "energy": -29.402402575442665,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 9240,
+          "energy": -29.40194001097298,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 9360,
+          "energy": -29.412691659663306,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 9480,
+          "energy": -29.39576590839193,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 9600,
+          "energy": -29.412201177600014,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 9720,
+          "energy": -29.40272476533312,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 9840,
+          "energy": -29.40157757098697,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 9960,
+          "energy": -29.412885583497324,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 10080,
+          "energy": -29.395902538994566,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 10200,
+          "energy": -29.412003940349692,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 10320,
+          "energy": -29.403004557078358,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 10440,
+          "energy": -29.40135261156567,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 10560,
+          "energy": -29.41302763401295,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 10680,
+          "energy": -29.395814779400386,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 10800,
+          "energy": -29.411784300608733,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 10920,
+          "energy": -29.403343140573497,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 11040,
+          "energy": -29.401007430484665,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 11160,
+          "energy": -29.41319340062434,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 11280,
+          "energy": -29.395974915406537,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 11400,
+          "energy": -29.411581262515195,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 11520,
+          "energy": -29.403616270475187,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 11640,
+          "energy": -29.400781895680034,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 11760,
+          "energy": -29.413326480149657,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 11880,
+          "energy": -29.39590685824955,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 12000,
+          "energy": -29.41133595166372,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 12120,
+          "energy": -29.403969036776754,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 12240,
+          "energy": -29.40045635648717,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 12360,
+          "energy": -29.413463510356117,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 12480,
+          "energy": -29.396088857989195,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 12600,
+          "energy": -29.411128369311946,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 12720,
+          "energy": -29.404234947172327,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 12840,
+          "energy": -29.400230563415963,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 12960,
+          "energy": -29.413586711585474,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 13080,
+          "energy": -29.39604172405577,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 13200,
+          "energy": -29.4108583070765,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 13320,
+          "energy": -29.404599488355203,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 13440,
+          "energy": -29.39992684498483,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 13560,
+          "energy": -29.413694758755422,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 13680,
+          "energy": -29.39624383582324,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 13800,
+          "energy": -29.41064726456877,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 13920,
+          "energy": -29.404857781370026,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 14040,
+          "energy": -29.39970122888805,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 14160,
+          "energy": -29.413807023976137,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 14280,
+          "energy": -29.39621875168658,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 14400,
+          "energy": -29.410353679300165,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 14520,
+          "energy": -29.405231514175565,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 14640,
+          "energy": -29.39942128860829,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 14760,
+          "energy": -29.413886168227688,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 14880,
+          "energy": -29.39643913331124,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 15000,
+          "energy": -29.41014008413849,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 15120,
+          "energy": -29.40548194126812,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 15240,
+          "energy": -29.399196406881227,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 15360,
+          "energy": -29.413986303563323,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 15480,
+          "energy": -29.39643711447857,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 15600,
+          "energy": -29.409824503909338,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 15720,
+          "energy": -29.405862132899827,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 15840,
+          "energy": -29.398941966892497,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 15960,
+          "energy": -29.41403693965367,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 16080,
+          "energy": -29.39667385369094,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 16200,
+          "energy": -29.409609088201634,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 16320,
+          "energy": -29.40610458057701,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 16440,
+          "energy": -29.39871850001938,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 16560,
+          "energy": -29.414123634610725,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 16680,
+          "energy": -29.396695787909284,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 16800,
+          "energy": -29.409273326131444,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 16920,
+          "energy": -29.40648837826685,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 17040,
+          "energy": -29.398491036991,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 17160,
+          "energy": -29.414146453837105,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 17280,
+          "energy": -29.39694692339233,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 17400,
+          "energy": -29.409056652840185,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 17520,
+          "energy": -29.406722850230025,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 17640,
+          "energy": -29.398269786551996,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 17760,
+          "energy": -29.414218305741226,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 17880,
+          "energy": -29.396993554220685,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 18000,
+          "energy": -29.408702787030673,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 18120,
+          "energy": -29.407107314185073,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 18240,
+          "energy": -29.398070524844456,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 18360,
+          "energy": -29.414214272318024,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 18480,
+          "energy": -29.397257097214254,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 18600,
+          "energy": -29.408485260848497,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 18720,
+          "energy": -29.40733391027875,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 18840,
+          "energy": -29.397852408819578,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 18960,
+          "energy": -29.41426981508909,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 19080,
+          "energy": -29.397329007990773,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 19200,
+          "energy": -29.408115609471103,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 19320,
+          "energy": -29.40771604952477,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 19440,
+          "energy": -29.39768231682562,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 19560,
+          "energy": -29.414240137616716,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 19680,
+          "energy": -29.397602964248616,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 19800,
+          "energy": -29.407897491783913,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 19920,
+          "energy": -29.40793494196122,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 20040,
+          "energy": -29.39746836245228,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 20160,
+          "energy": -29.41427787416956,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 20280,
+          "energy": -29.39770056262146,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 20400,
+          "energy": -29.407514583939143,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 20520,
+          "energy": -29.408311752476223,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 20640,
+          "energy": -29.397328151876074,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 20760,
+          "energy": -29.414223972954908,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 20880,
+          "energy": -29.39798295451114,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 21000,
+          "energy": -29.40729601128022,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 21120,
+          "energy": -29.40852315995141,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 21240,
+          "energy": -29.397119486370126,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 21360,
+          "energy": -29.414242410438707,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 21480,
+          "energy": -29.398106457774894,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 21600,
+          "energy": -29.406902554369232,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 21720,
+          "energy": -29.40889166440198,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 21840,
+          "energy": -29.397009614193344,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 21960,
+          "energy": -29.414165881516592,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 22080,
+          "energy": -29.398395346226902,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 22200,
+          "energy": -29.40668355964787,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 22320,
+          "energy": -29.40909582476162,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 22440,
+          "energy": -29.39680745362583,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 22560,
+          "energy": -29.414163568469583,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 22680,
+          "energy": -29.39854476769745,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 22800,
+          "energy": -29.406282404017944,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 22920,
+          "energy": -29.409453113042876,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 23040,
+          "energy": -29.39672812647371,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 23160,
+          "energy": -29.414066145266627,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 23280,
+          "energy": -29.39883827368751,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 23400,
+          "energy": -29.406062939797632,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 23520,
+          "energy": -29.409650255262257,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 23640,
+          "energy": -29.396533763108973,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 23760,
+          "energy": -29.414041709726966,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 23880,
+          "energy": -29.399013410442084,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 24000,
+          "energy": -29.405657041491573,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 24120,
+          "energy": -29.409993525013196,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 24240,
+          "energy": -29.396484943767256,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 24360,
+          "energy": -29.413925223365773,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 24480,
+          "energy": -29.39930973563507,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 24600,
+          "energy": -29.405437004550365,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 24720,
+          "energy": -29.410183841289218,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 24840,
+          "energy": -29.396299732158948,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 24960,
+          "energy": -29.413877410933722,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 25080,
+          "energy": -29.399510157941727,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 25200,
+          "energy": -29.405029386982292,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        },
+        {
+          "step": 25320,
+          "energy": -29.410510437493897,
+          "drift_R": 0.0,
+          "drift_T": 0.0,
+          "drift_N": 0.0,
+          "total_drift_km": 0.0,
+          "fuel": 50.0
+        }
+      ]
+    },
+    "SAT-01": {
+      "maneuvers_scheduled": 50,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 9.341428043928536,
+      "time_outside_box": 6900.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.02758467836715539,
+      "initial_energy": -29.409360990403112,
+      "status_history": []
+    },
+    "SAT-02": {
+      "maneuvers_scheduled": 44,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 8.596430333125767,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.001756256931617628,
+      "initial_energy": -29.392860538841052,
+      "status_history": []
+    },
+    "SAT-03": {
+      "maneuvers_scheduled": 44,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 8.219359373688524,
+      "time_outside_box": 7500.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.0368423929397359,
+      "initial_energy": -29.337718876957688,
+      "status_history": []
+    },
+    "SAT-04": {
+      "maneuvers_scheduled": 44,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 8.218851362128992,
+      "time_outside_box": 7980.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.04236924602130543,
+      "initial_energy": -29.377940308294438,
+      "status_history": []
+    },
+    "SAT-05": {
+      "maneuvers_scheduled": 50,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 9.34422210750596,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.02402727431637075,
+      "initial_energy": -29.369663629791003,
+      "status_history": []
+    },
+    "SAT-06": {
+      "maneuvers_scheduled": 58,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 10.83650358112949,
+      "time_outside_box": 6720.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.0032198599235435665,
+      "initial_energy": -29.4066755561881,
+      "status_history": []
+    },
+    "SAT-07": {
+      "maneuvers_scheduled": 34,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 6.727585911624575,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.03316857835705633,
+      "initial_energy": -29.362206288534757,
+      "status_history": []
+    },
+    "SAT-08": {
+      "maneuvers_scheduled": 40,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 7.470045290801636,
+      "time_outside_box": 8280.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.04119808425370408,
+      "initial_energy": -29.39997497693756,
+      "status_history": []
+    },
+    "SAT-09": {
+      "maneuvers_scheduled": 34,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 6.354071033104053,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.0058198810964107395,
+      "initial_energy": -29.41451579916802,
+      "status_history": []
+    },
+    "SAT-10": {
+      "maneuvers_scheduled": 42,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 7.849146570305007,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.012941018417961914,
+      "initial_energy": -29.42323546989917,
+      "status_history": []
+    },
+    "SAT-11": {
+      "maneuvers_scheduled": 32,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 6.353817027324336,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.0008622739246852973,
+      "initial_energy": -29.423462163397694,
+      "status_history": []
+    },
+    "SAT-12": {
+      "maneuvers_scheduled": 62,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 11.960350291827913,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.04282669545404971,
+      "initial_energy": -29.356509357307356,
+      "status_history": []
+    },
+    "SAT-13": {
+      "maneuvers_scheduled": 52,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 9.717990991806198,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.010515710765989894,
+      "initial_energy": -29.354771384336992,
+      "status_history": []
+    },
+    "SAT-14": {
+      "maneuvers_scheduled": 42,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 7.849146570305007,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.034380444469828575,
+      "initial_energy": -29.404753587476794,
+      "status_history": []
+    },
+    "SAT-15": {
+      "maneuvers_scheduled": 46,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 8.596684338905483,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.02693063560016995,
+      "initial_energy": -29.38612514642813,
+      "status_history": []
+    },
+    "SAT-16": {
+      "maneuvers_scheduled": 48,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 9.343968101726244,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.040736317073303496,
+      "initial_energy": -29.381671897144116,
+      "status_history": []
+    },
+    "SAT-17": {
+      "maneuvers_scheduled": 34,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 6.727585911624575,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.04272834890065624,
+      "initial_energy": -29.39759309895431,
+      "status_history": []
+    },
+    "SAT-18": {
+      "maneuvers_scheduled": 54,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 10.079826782152136,
+      "time_outside_box": 10020.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.04585097036580166,
+      "initial_energy": -29.400463222704083,
+      "status_history": []
+    },
+    "SAT-19": {
+      "maneuvers_scheduled": 66,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 12.334373181907868,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.019060101512323513,
+      "initial_energy": -29.360794273935653,
+      "status_history": []
+    },
+    "SAT-20": {
+      "maneuvers_scheduled": 52,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 9.717990991806198,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.006993440121121353,
+      "initial_energy": -29.364928266029406,
+      "status_history": []
+    },
+    "SAT-21": {
+      "maneuvers_scheduled": 34,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 6.727585911624575,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.025492895960411488,
+      "initial_energy": -29.394309527867858,
+      "status_history": []
+    },
+    "SAT-22": {
+      "maneuvers_scheduled": 46,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 8.970199217426005,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.0432507734506693,
+      "initial_energy": -29.326578166647614,
+      "status_history": []
+    },
+    "SAT-23": {
+      "maneuvers_scheduled": 44,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 8.596430333125767,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.00023095543291518084,
+      "initial_energy": -29.380551834159718,
+      "status_history": []
+    },
+    "SAT-24": {
+      "maneuvers_scheduled": 42,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 7.849146570305007,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.017562300607920633,
+      "initial_energy": -29.383856976953037,
+      "status_history": []
+    },
+    "SAT-25": {
+      "maneuvers_scheduled": 42,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 7.849146570305007,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.00029450973093148036,
+      "initial_energy": -29.44380405016341,
+      "status_history": []
+    },
+    "SAT-26": {
+      "maneuvers_scheduled": 28,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 5.232764380203338,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.04449633024509225,
+      "initial_energy": -29.323571200861252,
+      "status_history": []
+    },
+    "SAT-27": {
+      "maneuvers_scheduled": 46,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 8.596684338905483,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.03084289706376353,
+      "initial_energy": -29.39609858996685,
+      "status_history": []
+    },
+    "SAT-28": {
+      "maneuvers_scheduled": 58,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 10.839297644706914,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.024537614270766284,
+      "initial_energy": -29.34162059780042,
+      "status_history": []
+    },
+    "SAT-29": {
+      "maneuvers_scheduled": 40,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 7.4753776860047685,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.0027287776152569165,
+      "initial_energy": -29.374339827861768,
+      "status_history": []
+    },
+    "SAT-30": {
+      "maneuvers_scheduled": 54,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 10.091759876106437,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.01920645683274458,
+      "initial_energy": -29.35753118796874,
+      "status_history": []
+    },
+    "SAT-31": {
+      "maneuvers_scheduled": 46,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 8.596684338905483,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.026224441340779947,
+      "initial_energy": -29.40079320142,
+      "status_history": []
+    },
+    "SAT-32": {
+      "maneuvers_scheduled": 50,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 9.34422210750596,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.043756529446230985,
+      "initial_energy": -29.402469424572683,
+      "status_history": []
+    },
+    "SAT-33": {
+      "maneuvers_scheduled": 52,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 9.715704939788306,
+      "time_outside_box": 2340.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.038765508514867264,
+      "initial_energy": -29.400947599675398,
+      "status_history": []
+    },
+    "SAT-34": {
+      "maneuvers_scheduled": 48,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 8.970453223205721,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.0015467073900694572,
+      "initial_energy": -29.400193783993643,
+      "status_history": []
+    },
+    "SAT-35": {
+      "maneuvers_scheduled": 44,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 8.596430333125767,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.040113034110305534,
+      "initial_energy": -29.323205059244486,
+      "status_history": []
+    },
+    "SAT-36": {
+      "maneuvers_scheduled": 50,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 9.34422210750596,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.00017830334072144183,
+      "initial_energy": -29.42189179955098,
+      "status_history": []
+    },
+    "SAT-37": {
+      "maneuvers_scheduled": 48,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 8.970453223205721,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.04378698013632487,
+      "initial_energy": -29.39853498361061,
+      "status_history": []
+    },
+    "SAT-38": {
+      "maneuvers_scheduled": 58,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 10.833963523331832,
+      "time_outside_box": 9060.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.044979368589508795,
+      "initial_energy": -29.38916658727537,
+      "status_history": []
+    },
+    "SAT-39": {
+      "maneuvers_scheduled": 36,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 6.7278399174042915,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.04610877339820263,
+      "initial_energy": -29.342334438451363,
+      "status_history": []
+    },
+    "SAT-40": {
+      "maneuvers_scheduled": 38,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 7.10160880170453,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.0023737448639842285,
+      "initial_energy": -29.41248442672938,
+      "status_history": []
+    },
+    "SAT-41": {
+      "maneuvers_scheduled": 40,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 7.4753776860047685,
+      "time_outside_box": 120.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.04294658245403227,
+      "initial_energy": -29.39931483993512,
+      "status_history": []
+    },
+    "SAT-42": {
+      "maneuvers_scheduled": 46,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 8.596684338905483,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.0006382077949282916,
+      "initial_energy": -29.442642707066145,
+      "status_history": []
+    },
+    "SAT-43": {
+      "maneuvers_scheduled": 52,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 9.713927589798725,
+      "time_outside_box": 5700.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.0347243983584562,
+      "initial_energy": -29.367616975831062,
+      "status_history": []
+    },
+    "SAT-44": {
+      "maneuvers_scheduled": 72,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 13.455679834808583,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.02585382591046681,
+      "initial_energy": -29.360983768691874,
+      "status_history": []
+    },
+    "SAT-45": {
+      "maneuvers_scheduled": 42,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 7.849146570305007,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.02072427804181487,
+      "initial_energy": -29.396343550908462,
+      "status_history": []
+    },
+    "SAT-46": {
+      "maneuvers_scheduled": 50,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 9.717736986026482,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.005317481716595296,
+      "initial_energy": -29.41907160518574,
+      "status_history": []
+    },
+    "SAT-47": {
+      "maneuvers_scheduled": 56,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 10.465528760406675,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.015834268842123578,
+      "initial_energy": -29.384982602574755,
+      "status_history": []
+    },
+    "SAT-48": {
+      "maneuvers_scheduled": 44,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 8.222915454605245,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.030455731272976294,
+      "initial_energy": -29.33823885096116,
+      "status_history": []
+    },
+    "SAT-49": {
+      "maneuvers_scheduled": 52,
+      "maneuvers_executed": 0,
+      "fuel_consumed": 10.09150587032672,
+      "time_outside_box": 0.0,
+      "collisions_avoided": 0,
+      "energy_variance": 0.046041877097977135,
+      "initial_energy": -29.337738183222843,
+      "status_history": []
+    }
+  },
+  "sat_00_trace": [
+    {
+      "step": 120,
+      "energy": -29.39838737046406,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 240,
+      "energy": -29.406499894659085,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 360,
+      "energy": -29.409259160688254,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 480,
+      "energy": -29.396821422312243,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 600,
+      "energy": -29.414105637000212,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 720,
+      "energy": -29.39868084000788,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 840,
+      "energy": -29.40628057152755,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 960,
+      "energy": -29.40945872368112,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 1080,
+      "energy": -29.396625716408767,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 1200,
+      "energy": -29.41408925525273,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 1320,
+      "energy": -29.39884560960482,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 1440,
+      "energy": -29.40587593500901,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 1560,
+      "energy": -29.409807287997957,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 1680,
+      "energy": -29.396564770805472,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 1800,
+      "energy": -29.413978974628506,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 1920,
+      "energy": -29.399142611747926,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 2040,
+      "energy": -29.40565625452229,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 2160,
+      "energy": -29.409999809335662,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 2280,
+      "energy": -29.396377635473964,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 2400,
+      "energy": -29.41393977645648,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 2520,
+      "energy": -29.399332758358174,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 2640,
+      "energy": -29.405248659864647,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 2760,
+      "energy": -29.410332757686913,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 2880,
+      "energy": -29.396347157342326,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 3000,
+      "energy": -29.41381152214022,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 3120,
+      "energy": -29.399631536977637,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 3240,
+      "energy": -29.405028500230024,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 3360,
+      "energy": -29.41051840298438,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 3480,
+      "energy": -29.39616996146287,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 3600,
+      "energy": -29.413748343523306,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 3720,
+      "energy": -29.39984649999959,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 3840,
+      "energy": -29.404620991383485,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 3960,
+      "energy": -29.410833183229183,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 4080,
+      "energy": -29.39616954779221,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 4200,
+      "energy": -29.413604028476538,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 4320,
+      "energy": -29.40014540968261,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 4440,
+      "energy": -29.40440021306335,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 4560,
+      "energy": -29.41101204070589,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 4680,
+      "energy": -29.3960036991894,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 4800,
+      "energy": -29.413515879438208,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 4920,
+      "energy": -29.400384389937873,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 5040,
+      "energy": -29.403995841196394,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 5160,
+      "energy": -29.411306306193417,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 5280,
+      "energy": -29.39603272728854,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 5400,
+      "energy": -29.413357413564224,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 5520,
+      "energy": -29.400681912763403,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 5640,
+      "energy": -29.40377431134039,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 5760,
+      "energy": -29.411478362795027,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 5880,
+      "energy": -29.39587965693388,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 6000,
+      "energy": -29.41324351153358,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 6120,
+      "energy": -29.400943867876485,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 6240,
+      "energy": -29.403376097430577,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 6360,
+      "energy": -29.411750005600325,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 6480,
+      "energy": -29.395937296725368,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 6600,
+      "energy": -29.413072765260544,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 6720,
+      "energy": -29.40123862787897,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 6840,
+      "energy": -29.403153713084894,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 6960,
+      "energy": -29.411915126146443,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 7080,
+      "energy": -29.395798442478895,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 7200,
+      "energy": -29.412932564953223,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 7320,
+      "energy": -29.401522270669844,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 7440,
+      "energy": -29.402764612086543,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 7560,
+      "energy": -29.412162306297017,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 7680,
+      "energy": -29.395883670041346,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 7800,
+      "energy": -29.41275133583153,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 7920,
+      "energy": -29.401813045535814,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 8040,
+      "energy": -29.40254132160238,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 8160,
+      "energy": -29.412320216385208,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 8280,
+      "energy": -29.39576046007584,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 8400,
+      "energy": -29.412584554873124,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 8520,
+      "energy": -29.402116845783894,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 8640,
+      "energy": -29.402164188794067,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 8760,
+      "energy": -29.41254138635169,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 8880,
+      "energy": -29.395872072356273,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 9000,
+      "energy": -29.412394537978013,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 9120,
+      "energy": -29.402402575442665,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 9240,
+      "energy": -29.40194001097298,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 9360,
+      "energy": -29.412691659663306,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 9480,
+      "energy": -29.39576590839193,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 9600,
+      "energy": -29.412201177600014,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 9720,
+      "energy": -29.40272476533312,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 9840,
+      "energy": -29.40157757098697,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 9960,
+      "energy": -29.412885583497324,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 10080,
+      "energy": -29.395902538994566,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 10200,
+      "energy": -29.412003940349692,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 10320,
+      "energy": -29.403004557078358,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 10440,
+      "energy": -29.40135261156567,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 10560,
+      "energy": -29.41302763401295,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 10680,
+      "energy": -29.395814779400386,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 10800,
+      "energy": -29.411784300608733,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 10920,
+      "energy": -29.403343140573497,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 11040,
+      "energy": -29.401007430484665,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 11160,
+      "energy": -29.41319340062434,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 11280,
+      "energy": -29.395974915406537,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 11400,
+      "energy": -29.411581262515195,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 11520,
+      "energy": -29.403616270475187,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 11640,
+      "energy": -29.400781895680034,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 11760,
+      "energy": -29.413326480149657,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 11880,
+      "energy": -29.39590685824955,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 12000,
+      "energy": -29.41133595166372,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 12120,
+      "energy": -29.403969036776754,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 12240,
+      "energy": -29.40045635648717,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 12360,
+      "energy": -29.413463510356117,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 12480,
+      "energy": -29.396088857989195,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 12600,
+      "energy": -29.411128369311946,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 12720,
+      "energy": -29.404234947172327,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 12840,
+      "energy": -29.400230563415963,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 12960,
+      "energy": -29.413586711585474,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 13080,
+      "energy": -29.39604172405577,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 13200,
+      "energy": -29.4108583070765,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 13320,
+      "energy": -29.404599488355203,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 13440,
+      "energy": -29.39992684498483,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 13560,
+      "energy": -29.413694758755422,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 13680,
+      "energy": -29.39624383582324,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 13800,
+      "energy": -29.41064726456877,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 13920,
+      "energy": -29.404857781370026,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 14040,
+      "energy": -29.39970122888805,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 14160,
+      "energy": -29.413807023976137,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 14280,
+      "energy": -29.39621875168658,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 14400,
+      "energy": -29.410353679300165,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 14520,
+      "energy": -29.405231514175565,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 14640,
+      "energy": -29.39942128860829,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 14760,
+      "energy": -29.413886168227688,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 14880,
+      "energy": -29.39643913331124,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 15000,
+      "energy": -29.41014008413849,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 15120,
+      "energy": -29.40548194126812,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 15240,
+      "energy": -29.399196406881227,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 15360,
+      "energy": -29.413986303563323,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 15480,
+      "energy": -29.39643711447857,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 15600,
+      "energy": -29.409824503909338,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 15720,
+      "energy": -29.405862132899827,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 15840,
+      "energy": -29.398941966892497,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 15960,
+      "energy": -29.41403693965367,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 16080,
+      "energy": -29.39667385369094,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 16200,
+      "energy": -29.409609088201634,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 16320,
+      "energy": -29.40610458057701,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 16440,
+      "energy": -29.39871850001938,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 16560,
+      "energy": -29.414123634610725,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 16680,
+      "energy": -29.396695787909284,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 16800,
+      "energy": -29.409273326131444,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 16920,
+      "energy": -29.40648837826685,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 17040,
+      "energy": -29.398491036991,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 17160,
+      "energy": -29.414146453837105,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 17280,
+      "energy": -29.39694692339233,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 17400,
+      "energy": -29.409056652840185,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 17520,
+      "energy": -29.406722850230025,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 17640,
+      "energy": -29.398269786551996,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 17760,
+      "energy": -29.414218305741226,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 17880,
+      "energy": -29.396993554220685,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 18000,
+      "energy": -29.408702787030673,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 18120,
+      "energy": -29.407107314185073,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 18240,
+      "energy": -29.398070524844456,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 18360,
+      "energy": -29.414214272318024,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 18480,
+      "energy": -29.397257097214254,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 18600,
+      "energy": -29.408485260848497,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 18720,
+      "energy": -29.40733391027875,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 18840,
+      "energy": -29.397852408819578,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 18960,
+      "energy": -29.41426981508909,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 19080,
+      "energy": -29.397329007990773,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 19200,
+      "energy": -29.408115609471103,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 19320,
+      "energy": -29.40771604952477,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 19440,
+      "energy": -29.39768231682562,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 19560,
+      "energy": -29.414240137616716,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 19680,
+      "energy": -29.397602964248616,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 19800,
+      "energy": -29.407897491783913,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 19920,
+      "energy": -29.40793494196122,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 20040,
+      "energy": -29.39746836245228,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 20160,
+      "energy": -29.41427787416956,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 20280,
+      "energy": -29.39770056262146,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 20400,
+      "energy": -29.407514583939143,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 20520,
+      "energy": -29.408311752476223,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 20640,
+      "energy": -29.397328151876074,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 20760,
+      "energy": -29.414223972954908,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 20880,
+      "energy": -29.39798295451114,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 21000,
+      "energy": -29.40729601128022,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 21120,
+      "energy": -29.40852315995141,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 21240,
+      "energy": -29.397119486370126,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 21360,
+      "energy": -29.414242410438707,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 21480,
+      "energy": -29.398106457774894,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 21600,
+      "energy": -29.406902554369232,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 21720,
+      "energy": -29.40889166440198,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 21840,
+      "energy": -29.397009614193344,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 21960,
+      "energy": -29.414165881516592,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 22080,
+      "energy": -29.398395346226902,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 22200,
+      "energy": -29.40668355964787,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 22320,
+      "energy": -29.40909582476162,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 22440,
+      "energy": -29.39680745362583,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 22560,
+      "energy": -29.414163568469583,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 22680,
+      "energy": -29.39854476769745,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 22800,
+      "energy": -29.406282404017944,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 22920,
+      "energy": -29.409453113042876,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 23040,
+      "energy": -29.39672812647371,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 23160,
+      "energy": -29.414066145266627,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 23280,
+      "energy": -29.39883827368751,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 23400,
+      "energy": -29.406062939797632,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 23520,
+      "energy": -29.409650255262257,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 23640,
+      "energy": -29.396533763108973,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 23760,
+      "energy": -29.414041709726966,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 23880,
+      "energy": -29.399013410442084,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 24000,
+      "energy": -29.405657041491573,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 24120,
+      "energy": -29.409993525013196,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 24240,
+      "energy": -29.396484943767256,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 24360,
+      "energy": -29.413925223365773,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 24480,
+      "energy": -29.39930973563507,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 24600,
+      "energy": -29.405437004550365,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 24720,
+      "energy": -29.410183841289218,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 24840,
+      "energy": -29.396299732158948,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 24960,
+      "energy": -29.413877410933722,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 25080,
+      "energy": -29.399510157941727,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 25200,
+      "energy": -29.405029386982292,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    },
+    {
+      "step": 25320,
+      "energy": -29.410510437493897,
+      "drift_R": 0.0,
+      "drift_T": 0.0,
+      "drift_N": 0.0,
+      "total_drift_km": 0.0,
+      "fuel": 50.0
+    }
+  ],
+  "configuration": {
+    "simulation_days": 30,
+    "step_seconds": 60,
+    "total_steps": 43200,
+    "num_satellites": 50,
+    "num_debris": 10000,
+    "num_threats": 2000
+  }
+}
