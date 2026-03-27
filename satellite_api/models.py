@@ -4,9 +4,8 @@ models.py
 Strict Pydantic schemas for the NSH 2026 API.
 Matches Section 4 and Section 6.3 of the Problem Statement exactly.
 """
-
 from pydantic import BaseModel, Field
-from typing import List, Literal, Optional, Any
+from typing import List, Literal, Optional, Any, Tuple, Union
 from datetime import datetime
 
 # ============================================================================
@@ -83,16 +82,16 @@ class ManeuverScheduleResponse(BaseModel):
 # ============================================================================
 # VISUALIZATION ENDPOINTS (/visualization/snapshot)
 # ============================================================================
+
 class SatelliteStatus(BaseModel):
-    """Satellite status for frontend visualization. (Strict Section 6.3 Schema)"""
     id: str
     lat: float
     lon: float
     fuel_kg: float
-    status: Literal["NOMINAL", "CRITICAL_FUEL", "EOL"]
-    
+    status: str
+
 class VisualizationSnapshotResponse(BaseModel):
-    """Response payload for visualization snapshot."""
     timestamp: str
     satellites: List[SatelliteStatus]
-    debris_cloud: List[List[Any]] # Flattened: [ID, Lat, Lon, Alt]
+    # The exact tuple definition to force the JSON array-of-arrays
+    debris_cloud: List[Tuple[str, float, float, float]]

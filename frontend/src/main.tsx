@@ -1,10 +1,13 @@
-import {StrictMode} from 'react';
-import {createRoot} from 'react-dom/client';
-import App from './App.tsx';
-import './index.css';
+// src/main.tsx
+// Entry point: mounts the React app with Tailwind and global styles
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import './index.css'; // Tailwind + Crimson Nebula theme
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
     <App />
-  </StrictMode>,
+  </React.StrictMode>
 );

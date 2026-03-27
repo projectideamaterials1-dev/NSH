@@ -1,12 +1,12 @@
 // src/store/useOrbitalStore.ts
-// Production-Ready Zustand Store for Crimson Nebula Dashboard
-// Binary Buffer Support | Zero Re-renders | Backend API Sync
+// Production‑Ready Zustand Store – Crimson Nebula v3
+// Binary buffers | Batched trails | Zero GC churn | Full simulation control
 
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 
 // ============================================================================
-// TYPE DEFINITIONS (Strict Backend Sync with /api/visualization/snapshot)
+// TYPE DEFINITIONS (Match backend /worker)
 // ============================================================================
 
 export interface Satellite {
@@ -21,12 +21,12 @@ export interface Satellite {
 export interface ManeuverEvent {
   burn_id: string;
   satellite_id: string;
-  burnTime: string; // ISO 8601 with milliseconds
+  burnTime: string;
   deltaV_vector: { x: number; y: number; z: number };
   maneuver_type: 'PHASING_PROGRADE' | 'RADIAL_SHUNT' | 'RECOVERY' | 'PLANE_CHANGE';
   duration_seconds: number;
   cooldown_start: string;
-  cooldown_end: string; // burnTime + duration + 600s mandatory cooldown
+  cooldown_end: string;
   delta_v_magnitude: number;
   fuel_consumed_kg?: number;
 }
@@ -37,7 +37,7 @@ export interface FuelMetric {
   avgFuelKg: number;
   collisionsAvoided: number;
   maneuversExecuted: number;
-  _updateTime?: number; // internal use for throttling
+  _updateTime?: number; // internal throttling
 }
 
 export interface ConnectionStatus {
@@ -48,29 +48,34 @@ export interface ConnectionStatus {
   error: string | null;
 }
 
-// Binary buffer types from Web Worker (zero-copy transfer)
 export interface DebrisBinaryData {
-  positions: Float32Array; // [lon, lat, alt, lon, lat, alt, ...]
-  colors: Uint8ClampedArray; // [r, g, b, a, r, g, b, a, ...]
+  positions: Float32Array;
+  colors: Uint8ClampedArray;
   ids: string[];
   riskScores: Float32Array;
   length: number;
 }
 
 export interface SatelliteBinaryData {
-  positions: Float32Array; // [lon, lat, alt, lon, lat, alt, ...]
-  colors: Uint8ClampedArray; // [r, g, b, a, r, g, b, a, ...]
+  positions: Float32Array;
+  colors: Uint8ClampedArray;
   fuels: Float32Array;
   ids: string[];
   statuses: string[];
   length: number;
 }
 
-// Historical trail data (90-minute comet tails) – stored only for selected/hovered
 export interface SatelliteTrail {
   satelliteId: string;
-  positions: [number, number, number][]; // [lon, lat, alt] per point
+  positions: [number, number, number][];
   timestamps: string[];
+}
+
+export interface SimulationStepResponse {
+  status: string;
+  new_timestamp: string;
+  collisions_detected: number;
+  maneuvers_executed: number;
 }
 
 // ============================================================================
@@ -78,78 +83,82 @@ export interface SatelliteTrail {
 // ============================================================================
 
 interface OrbitalState {
-  // Binary Buffers (Direct Deck.gl Access - No React Re-rend ers)
+  // Binary buffers (direct GPU access)
   debris: DebrisBinaryData | null;
   satellites: SatelliteBinaryData | null;
-  
-  // Human-Readable Satellite Data (For UI Panels)
-  satelliteDetails: Record<string, Satellite>;
-  
-  // Metadata
   timestamp: string | null;
   lastUpdate: number | null;
   parseTimeMs: number | null;
-  
-  // Derived stats (cached for performance)
   highRiskDebrisCount: number;
-  
-  // Historical Trails (90-minute comet tails) – only for selected/hovered
+
+  // Trails (only for selected/hovered)
   trails: Record<string, SatelliteTrail>;
-  
-  // Connection State
+
+  // Connection & metrics
   connectionStatus: ConnectionStatus;
-  
-  // Historical Metrics (For Charts)
   fuelHistory: FuelMetric[];
-  
-  // Maneuvers (For Gantt Timeline)
   maneuvers: ManeuverEvent[];
-  
-  // Selection State (For Bullseye + LOS Arcs)
+
+  // Simulation (tracked locally)
+  simulation: {
+  status: 'idle' | 'running' | 'paused' | 'completed' | 'error';
+  currentStep: number;
+  totalSteps: number;
+  collisionsDetected: number;
+  maneuversExecuted: number;
+  lastStepResponse: SimulationStepResponse | null;
+  error: string | null;
+};
+
+  // UI selection
   selectedSatelliteId: string | null;
   hoveredSatelliteId: string | null;
-  
+
   // Actions
   updateTelemetry: (
     debris: DebrisBinaryData,
     satellites: SatelliteBinaryData,
-    satelliteDetails: Record<string, Satellite>,
     timestamp: string,
     parseTimeMs: number
   ) => void;
-  
+
   setConnectionStatus: (status: Partial<ConnectionStatus>) => void;
-  
   addFuelMetric: (metric: FuelMetric) => void;
-  
   addManeuvers: (maneuvers: ManeuverEvent[]) => void;
   clearManeuvers: () => void;
-  
   selectSatellite: (id: string | null) => void;
   hoverSatellite: (id: string | null) => void;
-  
-  updateTrail: (satelliteId: string, position: [number, number, number], timestamp: string) => void;
   clearTrails: () => void;
-  
   resetStore: () => void;
+
+  // API Actions
+  scheduleManeuver: (
+    satelliteId: string,
+    maneuverSequence: Array<{
+      burn_id: string;
+      burnTime: string;
+      deltaV_vector: { x: number; y: number; z: number };
+    }>
+  ) => Promise<boolean>;
+
+  stepSimulation: (stepSeconds: number) => Promise<SimulationStepResponse>;
+  setSimulationRunning: (isRunning: boolean) => void;
+  resetSimulation: () => void;
 }
 
 // ============================================================================
-// CONSTANTS (Matches PS Section 5.1 & Backend Config)
+// CONSTANTS
 // ============================================================================
 
 const CONSTANTS = {
-  MAX_TRAIL_POINTS: 5400,            // 90 minutes @ 1 point/second
-  MAX_FUEL_HISTORY: 720,             // 12 hours @ 1 point/minute
-  MAX_MANEUVERS: 200,                // Keep last 200 maneuvers in memory
-  FUEL_INITIAL_KG: 50.0,             // PS Section 5.1
-  FUEL_EOL_KG: 2.5,                  // PS Section 5.1 (graveyard threshold)
-  COOLDOWN_SECONDS: 600,             // PS Section 5.1 (mandatory thermal cooldown)
-  FUEL_UPDATE_INTERVAL_MS: 60000,    // 1 minute
+  MAX_TRAIL_POINTS: 5400,
+  MAX_FUEL_HISTORY: 720,
+  MAX_MANEUVERS: 200,
+  FUEL_UPDATE_INTERVAL_MS: 60000,
 } as const;
 
 // ============================================================================
-// HELPER FUNCTIONS
+// HELPERS
 // ============================================================================
 
 function computeHighRiskCount(riskScores: Float32Array): number {
@@ -161,7 +170,7 @@ function computeHighRiskCount(riskScores: Float32Array): number {
 }
 
 // ============================================================================
-// INITIAL STATE
+// INITIAL STATE (data only)
 // ============================================================================
 
 const INITIAL_CONNECTION_STATUS: ConnectionStatus = {
@@ -172,89 +181,114 @@ const INITIAL_CONNECTION_STATUS: ConnectionStatus = {
   error: null,
 };
 
-const INITIAL_STATE: OrbitalState = {
+const INITIAL_SIMULATION = {
+  status: 'idle' as const,
+  currentStep: 0,
+  totalSteps: 43200,
+  collisionsDetected: 0,
+  maneuversExecuted: 0,
+  lastStepResponse: null,
+  error: null,
+};
+
+const INITIAL_STATE = {
   debris: null,
   satellites: null,
-  satelliteDetails: {},
   timestamp: null,
   lastUpdate: null,
   parseTimeMs: null,
   highRiskDebrisCount: 0,
   trails: {},
   connectionStatus: INITIAL_CONNECTION_STATUS,
-  fuelHistory: [],
-  maneuvers: [],
+  fuelHistory: [] as FuelMetric[],
+  maneuvers: [] as ManeuverEvent[],
+  simulation: INITIAL_SIMULATION,
   selectedSatelliteId: null,
   hoveredSatelliteId: null,
 };
 
 // ============================================================================
-// ZUSTAND STORE CREATION
+// ZUSTAND STORE
 // ============================================================================
 
 export const useOrbitalStore = create<OrbitalState>()(
   subscribeWithSelector((set, get) => ({
     ...INITIAL_STATE,
-    
+
     // ==========================================================================
-    // TELEMETRY UPDATE (Called from telemetryClient.ts after Worker parsing)
+    // TELEMETRY UPDATE (from Web Worker)
     // ==========================================================================
-    
-    updateTelemetry: (
-      debris,
-      satellites,
-      satelliteDetails,
-      timestamp,
-      parseTimeMs
-    ) => {
-      // Compute high-risk count once
+
+    updateTelemetry: (debris, satellites, timestamp, parseTimeMs) => {
+      const state = get();
+      const now = Date.now();
       const highRiskCount = computeHighRiskCount(debris.riskScores);
-      
-      // Update core state
+
+      // Dynamic trail tracking (only for selected/hovered)
+      const activeIds = [state.selectedSatelliteId, state.hoveredSatelliteId].filter(Boolean) as string[];
+      let newTrails = state.trails;
+
+      if (activeIds.length > 0) {
+        newTrails = { ...state.trails };
+        for (const id of activeIds) {
+          const idx = satellites.ids.indexOf(id);
+          if (idx !== -1) {
+            const pos: [number, number, number] = [
+              satellites.positions[idx * 3],
+              satellites.positions[idx * 3 + 1],
+              satellites.positions[idx * 3 + 2],
+            ];
+            const existing = newTrails[id] || { satelliteId: id, positions: [], timestamps: [] };
+            const updatedPositions = [...existing.positions, pos];
+            const updatedTimestamps = [...existing.timestamps, timestamp];
+            if (updatedPositions.length > CONSTANTS.MAX_TRAIL_POINTS) {
+              updatedPositions.shift();
+              updatedTimestamps.shift();
+            }
+            newTrails[id] = { satelliteId: id, positions: updatedPositions, timestamps: updatedTimestamps };
+          }
+        }
+      }
+
       set({
         debris,
         satellites,
-        satelliteDetails,
+        trails: newTrails,
         timestamp,
-        lastUpdate: Date.now(),
+        lastUpdate: now,
         parseTimeMs,
         highRiskDebrisCount: highRiskCount,
         connectionStatus: {
-          ...get().connectionStatus,
+          ...state.connectionStatus,
           state: 'connected',
-          lastSuccessfulFetch: Date.now(),
+          lastSuccessfulFetch: now,
           consecutiveFailures: 0,
           error: null,
         },
       });
-      
-      // Fuel history update (throttled using real time, not snapshot timestamps)
-      const now = Date.now();
-      const lastMetric = get().fuelHistory[get().fuelHistory.length - 1];
+
+      // Fuel history
+      const lastMetric = state.fuelHistory[state.fuelHistory.length - 1];
       const lastUpdateTime = lastMetric?._updateTime ?? 0;
-      
-      if (now - lastUpdateTime >= CONSTANTS.FUEL_UPDATE_INTERVAL_MS) {
-        const totalFuel = Object.values(satelliteDetails).reduce(
-          (sum, sat) => sum + sat.fuel_kg,
-          0
-        );
-        const avgFuel = totalFuel / Object.keys(satelliteDetails).length;
-        
+      if (now - lastUpdateTime >= CONSTANTS.FUEL_UPDATE_INTERVAL_MS && satellites.length > 0) {
+        const fuels = satellites.fuels;
+        let totalFuel = 0;
+        for (let i = 0; i < fuels.length; i++) totalFuel += fuels[i];
         get().addFuelMetric({
           timestamp,
           totalFuelKg: totalFuel,
-          avgFuelKg: avgFuel,
-          collisionsAvoided: 0, // TODO: replace with actual value from backend
-          maneuversExecuted: get().maneuvers.length,
+          avgFuelKg: totalFuel / fuels.length,
+          collisionsAvoided: 0,
+          maneuversExecuted: state.maneuvers.length,
           _updateTime: now,
         });
       }
     },
-    
+
     // ==========================================================================
-    // CONNECTION STATE MANAGEMENT
+    // CONNECTION & METRICS
     // ==========================================================================
-    
+
     setConnectionStatus: (status) => {
       set((state) => ({
         connectionStatus: {
@@ -264,130 +298,142 @@ export const useOrbitalStore = create<OrbitalState>()(
         },
       }));
     },
-    
-    // ==========================================================================
-    // FUEL HISTORY (For Delta-V Cost Analysis Chart)
-    // ==========================================================================
-    
+
     addFuelMetric: (metric) => {
       set((state) => ({
-        fuelHistory: [
-          ...state.fuelHistory.slice(-(CONSTANTS.MAX_FUEL_HISTORY - 1)),
-          metric,
-        ],
+        fuelHistory: [...state.fuelHistory.slice(-(CONSTANTS.MAX_FUEL_HISTORY - 1)), metric],
       }));
     },
-    
-    // ==========================================================================
-    // MANEUVER MANAGEMENT (For Gantt Timeline)
-    // ==========================================================================
-    
+
     addManeuvers: (maneuvers) => {
       set((state) => {
-        const existingIds = new Set(state.maneuvers.map(m => m.burn_id));
-        const newManeuvers = maneuvers.filter(m => !existingIds.has(m.burn_id));
+        const existingIds = new Set(state.maneuvers.map((m) => m.burn_id));
+        const newManeuvers = maneuvers.filter((m) => !existingIds.has(m.burn_id));
         return {
-          maneuvers: [
-            ...state.maneuvers,
-            ...newManeuvers,
-          ].slice(-CONSTANTS.MAX_MANEUVERS),
+          maneuvers: [...state.maneuvers, ...newManeuvers].slice(-CONSTANTS.MAX_MANEUVERS),
         };
       });
     },
-    
-    clearManeuvers: () => {
-      set({ maneuvers: [] });
-    },
-    
+
+    clearManeuvers: () => set({ maneuvers: [] }),
+
     // ==========================================================================
-    // SATELLITE SELECTION (For Bullseye Plot + LOS Arcs)
+    // UI SELECTION
     // ==========================================================================
-    
+
     selectSatellite: (id) => {
-      set({ 
+      set({
         selectedSatelliteId: id,
-        // Clear hover when selecting
         hoveredSatelliteId: id ? null : get().hoveredSatelliteId,
       });
     },
-    
-    hoverSatellite: (id) => {
-      set({ hoveredSatelliteId: id });
-    },
-    
+
+    hoverSatellite: (id) => set({ hoveredSatelliteId: id }),
+
+    clearTrails: () => set({ trails: {} }),
+
+    resetStore: () => set(INITIAL_STATE),
+
     // ==========================================================================
-    // SATELLITE TRAILS (90-Minute Comet Tails) – Only for Selected/Hovered
+    // API ACTIONS
     // ==========================================================================
-    
-    updateTrail: (satelliteId, position, timestamp) => {
-      // Only store trails for the currently selected or hovered satellite
-      const { selectedSatelliteId, hoveredSatelliteId } = get();
-      if (satelliteId !== selectedSatelliteId && satelliteId !== hoveredSatelliteId) {
-        return;
+
+    scheduleManeuver: async (satelliteId, maneuverSequence) => {
+      try {
+        const response = await fetch('/api/maneuver/schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            satelliteId,
+            maneuver_sequence: maneuverSequence.map((b) => ({
+              burn_id: b.burn_id,
+              burnTime: b.burnTime,
+              deltaV_vector: b.deltaV_vector,
+            })),
+          }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        if (data.status === 'SCHEDULED') {
+          const newManeuvers: ManeuverEvent[] = maneuverSequence.map((burn) => {
+            const burnTimeMs = new Date(burn.burnTime).getTime();
+            const dvMag = Math.hypot(burn.deltaV_vector.x, burn.deltaV_vector.y, burn.deltaV_vector.z);
+            return {
+              burn_id: burn.burn_id,
+              satellite_id: satelliteId,
+              burnTime: burn.burnTime,
+              deltaV_vector: burn.deltaV_vector,
+              maneuver_type: 'RECOVERY', // default; could be determined by logic
+              duration_seconds: 0,
+              cooldown_start: new Date(burnTimeMs).toISOString(),
+              cooldown_end: new Date(burnTimeMs + 600 * 1000).toISOString(),
+              delta_v_magnitude: dvMag,
+            };
+          });
+          get().addManeuvers(newManeuvers);
+          return true;
+        }
+        console.warn('[Store] Maneuver rejected:', data.status);
+        return false;
+      } catch (error) {
+        console.error('[Store] Failed to schedule maneuver:', error);
+        return false;
       }
-      
-      set((state) => {
-        const existingTrail = state.trails[satelliteId];
-        
-        if (!existingTrail) {
-          return {
-            trails: {
-              ...state.trails,
-              [satelliteId]: {
-                satelliteId,
-                positions: [position],
-                timestamps: [timestamp],
-              },
-            },
-          };
-        }
-        
-        // Append new point
-        let newPositions = [...existingTrail.positions, position];
-        let newTimestamps = [...existingTrail.timestamps, timestamp];
-        
-        // Trim to max trail length (90 minutes)
-        if (newPositions.length > CONSTANTS.MAX_TRAIL_POINTS) {
-          const start = newPositions.length - CONSTANTS.MAX_TRAIL_POINTS;
-          newPositions = newPositions.slice(start);
-          newTimestamps = newTimestamps.slice(start);
-        }
-        
-        return {
-          trails: {
-            ...state.trails,
-            [satelliteId]: {
-              satelliteId,
-              positions: newPositions,
-              timestamps: newTimestamps,
-            },
-          },
-        };
+    },
+
+    stepSimulation: async (stepSeconds) => {
+    try {
+      const response = await fetch('/api/simulate/step', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ step_seconds: stepSeconds }),
       });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data: SimulationStepResponse = await response.json();
+      set((state) => ({
+        simulation: {
+          ...state.simulation,
+          currentStep: state.simulation.currentStep + 1,
+          collisionsDetected: data.collisions_detected,
+          maneuversExecuted: data.maneuvers_executed,
+          lastStepResponse: data,
+          status: 'running',
+          error: null,
+        },
+      }));
+      return data;
+    } catch (error) {
+      set((state) => ({
+        simulation: {
+          ...state.simulation,
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        },
+      }));
+      throw error;
+    }
+  },
+
+    setSimulationRunning: (isRunning) => {
+      set((state) => ({
+        simulation: {
+          ...state.simulation,
+          status: isRunning ? 'running' : 'paused',
+        },
+      }));
     },
-    
-    clearTrails: () => {
-      set({ trails: {} });
-    },
-    
-    // ==========================================================================
-    // STORE RESET (For Reconnection / Error Recovery)
-    // ==========================================================================
-    
-    resetStore: () => {
-      set(INITIAL_STATE);
+    resetSimulation: () => {
+      set({ simulation: { ...INITIAL_SIMULATION } });
     },
   }))
 );
 
 // ============================================================================
-// MEMOIZED SELECTORS (Performance-Optimized Access)
+// SELECTORS (All access binary arrays directly)
 // ============================================================================
 
 export const selectDebrisCount = (state: OrbitalState) => state.debris?.length ?? 0;
-
 export const selectSatelliteCount = (state: OrbitalState) => state.satellites?.length ?? 0;
-
 export const selectHighRiskDebrisCount = (state: OrbitalState) => state.highRiskDebrisCount;
 
 export const selectSelectedSatellite = (state: OrbitalState) => {
@@ -399,9 +445,8 @@ export const selectSelectedSatellite = (state: OrbitalState) => {
     lon: state.satellites.positions[idx * 3],
     lat: state.satellites.positions[idx * 3 + 1],
     alt: state.satellites.positions[idx * 3 + 2],
-    fuel: state.satellites.fuels[idx],
+    fuel_kg: state.satellites.fuels[idx],
     status: state.satellites.statuses[idx] as Satellite['status'],
-    details: state.satelliteDetails[state.selectedSatelliteId] || null,
   };
 };
 
@@ -417,25 +462,17 @@ export const selectHoveredSatellite = (state: OrbitalState) => {
   };
 };
 
-export const selectSatelliteTrail = (state: OrbitalState, satelliteId: string) => {
-  return state.trails[satelliteId] || null;
-};
+export const selectSatelliteTrail = (state: OrbitalState, satelliteId: string) =>
+  state.trails[satelliteId] || null;
 
 export const selectConnectionState = (state: OrbitalState) => state.connectionStatus.state;
 
-export const selectLatestFuelMetric = (state: OrbitalState) => {
-  return state.fuelHistory.length > 0 
-    ? state.fuelHistory[state.fuelHistory.length - 1] 
-    : null;
-};
+export const selectLatestFuelMetric = (state: OrbitalState) =>
+  state.fuelHistory.length > 0 ? state.fuelHistory[state.fuelHistory.length - 1] : null;
 
-export const selectManeuversForSatellite = (state: OrbitalState, satelliteId: string | null) => {
-  if (!satelliteId) return state.maneuvers;
-  return state.maneuvers.filter(m => m.satellite_id === satelliteId);
-};
+export const selectManeuversForSatellite = (state: OrbitalState, satelliteId: string | null) =>
+  !satelliteId ? state.maneuvers : state.maneuvers.filter((m) => m.satellite_id === satelliteId);
 
-// ============================================================================
-// EXPORT DEFAULT
-// ============================================================================
+export const selectSimulationState = (state: OrbitalState) => state.simulation;
 
 export default useOrbitalStore;

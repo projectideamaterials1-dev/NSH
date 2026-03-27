@@ -1,108 +1,352 @@
-import React, { useMemo } from 'react';
-import { ScatterChart, Scatter, XAxis, YAxis, ZAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { useOrbitalStore } from '../store/useOrbitalStore';
+// src/components/BullseyeRadar.tsx
+// Futuristic Conjunction Radar – SVG Polar Plot with Sweeping Scanner
+// Optimized for 60 FPS | Real-time TCA | Risk Color Coding | Global Debris Stats
 
-// Custom shape for the radar rings
-const RadarRings = () => {
-  return (
-    <g>
-      <circle cx="50%" cy="50%" r="40%" fill="none" stroke="#FF0033" strokeWidth="1" opacity="0.5" filter="drop-shadow(0 0 5px rgba(255,0,51,0.8))" />
-      <circle cx="50%" cy="50%" r="30%" fill="none" stroke="#FF0033" strokeWidth="1" opacity="0.4" />
-      <circle cx="50%" cy="50%" r="20%" fill="none" stroke="#FF0033" strokeWidth="1" opacity="0.3" />
-      <circle cx="50%" cy="50%" r="10%" fill="none" stroke="#FF0033" strokeWidth="1" opacity="0.2" />
-      <line x1="50%" y1="10%" x2="50%" y2="90%" stroke="#FF0033" strokeWidth="1" opacity="0.5" />
-      <line x1="10%" y1="50%" x2="90%" y2="50%" stroke="#FF0033" strokeWidth="1" opacity="0.5" />
-      <circle cx="50%" cy="50%" r="2%" fill="#00FFFF" filter="drop-shadow(0 0 8px rgba(0,255,255,1))" />
-    </g>
-  );
+import React, { useMemo, useState } from 'react';
+import useOrbitalStore, {
+  selectSelectedSatellite,
+  selectDebrisCount,
+  selectHighRiskDebrisCount,
+} from '../store/useOrbitalStore';
+
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+const RADAR_CONFIG = {
+  MAX_TCA_SECONDS: 120,         // Display limit (2 minutes)
+  MAX_DISPLAY_DEBRIS: 60,       // Performance cap
+  RELATIVE_VELOCITY_KM_S: 7.5,  // Typical LEO closure rate
+  DISTANCE_CRITICAL_M: 1000,    // 1 km
+  DISTANCE_WARNING_M: 5000,     // 5 km
+  SWEEP_SPEED_SECONDS: 4,       // Rotation duration (s)
+  // Colors
+  COLOR_CRITICAL: '#FF0033',
+  COLOR_WARNING: '#D29922',
+  COLOR_NOMINAL: '#00FFFF',
+  COLOR_GRID: 'rgba(255, 0, 51, 0.3)',
+  COLOR_BACKGROUND: 'rgba(0,0,0,0.4)',
 };
 
-const CustomTooltip = ({ active, payload }: any) => {
-  if (active && payload && payload.length) {
-    const data = payload[0].payload;
-    return (
-      <div className="bg-black/80 backdrop-blur-md border border-red-900/50 p-3 text-xs font-mono text-[#888888] shadow-[0_0_15px_rgba(220,38,38,0.3)] rounded">
-        <p className="text-[#00FFFF] mb-2 font-bold drop-shadow-[0_0_5px_rgba(0,255,255,0.5)]">TARGET: {data.id}</p>
-        <div className="space-y-1">
-          <p className="flex justify-between gap-4"><span>DISTANCE:</span> <span className="text-white">{data.distance.toFixed(3)} m</span></p>
-          <p className="flex justify-between gap-4"><span>TCA:</span> <span className="text-white">{data.tca.toFixed(3)} s</span></p>
-          <p className="flex justify-between gap-4">
-            <span>RISK:</span> 
-            <span className={data.risk === 'CRITICAL' ? 'text-[#FF0033] animate-pulse drop-shadow-[0_0_5px_rgba(255,0,51,0.8)]' : 'text-[#FFBF00] drop-shadow-[0_0_5px_rgba(255,191,0,0.8)]'}>
-              {data.riskScore.toFixed(4)} ({data.risk})
-            </span>
-          </p>
-        </div>
-      </div>
-    );
-  }
-  return null;
-};
+// ============================================================================
+// TYPES
+// ============================================================================
 
-export function BullseyeRadar() {
-  const { selectedSatelliteId, satellites } = useOrbitalStore();
-  const selectedSat = satellites.find(s => s.id === selectedSatelliteId);
+interface ConjunctionData {
+  id: string;
+  distanceM: number;
+  tca: number;
+  risk: 'CRITICAL' | 'WARNING' | 'NOMINAL';
+  approachAngle: number;       // 0-360 degrees
+  normalizedRadius: number;    // 0..1
+}
 
-  // Generate mock conjunction data mapped to Cartesian coordinates for ScatterChart
-  const conjunctionData = useMemo(() => {
-    if (!selectedSat) return [];
-    
-    return Array.from({ length: 15 }).map((_, i) => {
-      const angle = Math.random() * Math.PI * 2;
-      const distance = Math.random() * 80 + 10; // 10 to 90 m
-      const isCritical = distance < 30;
-      const riskScore = isCritical ? 0.8 + Math.random() * 0.19 : 0.5 + Math.random() * 0.29;
-      
-      // Map polar to cartesian (-100 to 100)
-      const x = Math.cos(angle) * distance;
-      const y = Math.sin(angle) * distance;
-      
-      return {
-        id: `DEB-${Math.floor(Math.random() * 90000) + 10000}`,
-        x,
-        y,
-        distance,
-        tca: Math.random() * 120, // Time to Closest Approach
-        risk: isCritical ? 'CRITICAL' : 'WARNING',
-        riskScore,
-        size: isCritical ? 60 : 30
-      };
+// ============================================================================
+// DATA CALCULATION (Optimized with early exits)
+// ============================================================================
+
+function calculateConjunctionData(
+  selectedSat: ReturnType<typeof selectSelectedSatellite>,
+  debris: ReturnType<typeof useOrbitalStore.getState>['debris']
+): ConjunctionData[] {
+  if (!selectedSat || !debris || debris.length === 0) return [];
+
+  const results: ConjunctionData[] = [];
+  const satLatRad = selectedSat.lat * (Math.PI / 180);
+  const satLon = selectedSat.lon;
+
+  // Pre-calc cos(lat) for haversine
+  const cosSatLat = Math.cos(satLatRad);
+
+  // Iterate over debris (up to 100k)
+  for (let i = 0; i < debris.length; i++) {
+    const lon = debris.positions[i * 3];
+    const lat = debris.positions[i * 3 + 1];
+
+    // Quick bounding box – skip far away objects (approx 10 degrees ~ 1110 km)
+    if (Math.abs(lat - selectedSat.lat) > 10) continue;
+    let deltaLon = Math.abs(lon - satLon);
+    if (deltaLon > 180) deltaLon = 360 - deltaLon;
+    if (deltaLon > 10) continue;
+
+    // Haversine angular distance
+    const debLatRad = lat * (Math.PI / 180);
+    const deltaLonRad = (lon - satLon) * (Math.PI / 180);
+    const a = Math.sin((debLatRad - satLatRad) / 2) ** 2 +
+              cosSatLat * Math.cos(debLatRad) *
+              Math.sin(deltaLonRad / 2) ** 2;
+    const angularDist = 2 * Math.asin(Math.sqrt(a));
+    const distanceKm = angularDist * (180 / Math.PI) * 111; // degrees to km
+    const distanceM = distanceKm * 1000;
+
+    if (distanceM > 100000) continue; // >100 km
+
+    const tca = distanceKm / RADAR_CONFIG.RELATIVE_VELOCITY_KM_S;
+    if (tca > RADAR_CONFIG.MAX_TCA_SECONDS) continue;
+
+    // Risk based on distance
+    let risk: 'CRITICAL' | 'WARNING' | 'NOMINAL';
+    if (distanceM < RADAR_CONFIG.DISTANCE_CRITICAL_M) risk = 'CRITICAL';
+    else if (distanceM < RADAR_CONFIG.DISTANCE_WARNING_M) risk = 'WARNING';
+    else risk = 'NOMINAL';
+
+    // Approach angle relative to satellite
+    let angle = Math.atan2(lat - selectedSat.lat, lon - satLon) * (180 / Math.PI);
+    if (angle < 0) angle += 360;
+
+    const normalizedRadius = Math.min(0.98, Math.max(0.05, tca / RADAR_CONFIG.MAX_TCA_SECONDS));
+
+    results.push({
+      id: debris.ids[i] || `DEB-${i}`,
+      distanceM,
+      tca,
+      risk,
+      approachAngle: angle,
+      normalizedRadius,
     });
-  }, [selectedSat]);
+  }
+
+  // Sort by TCA (closest first) and cap
+  return results.sort((a, b) => a.tca - b.tca).slice(0, RADAR_CONFIG.MAX_DISPLAY_DEBRIS);
+}
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
+
+export const BullseyeRadar: React.FC = React.memo(() => {
+  const store = useOrbitalStore();
+  const selectedSat = useMemo(() => selectSelectedSatellite(store), [store]);
+  const debris = store.debris;
+
+  const debrisCount = useMemo(() => selectDebrisCount(store), [store]);
+  const highRiskCount = useMemo(() => selectHighRiskDebrisCount(store), [store]);
+
+  const [hoveredBlip, setHoveredBlip] = useState<ConjunctionData | null>(null);
+
+  const conjunctionData = useMemo(
+    () => calculateConjunctionData(selectedSat, debris),
+    [selectedSat, debris]
+  );
+
+  // Memoize SVG generation to avoid recalc on every hover
+  const svgMarkup = useMemo(() => {
+    if (!selectedSat) return null;
+
+    const rings = [25, 50, 75, 100];
+    const sweepPath = `M 0,0 L 0,-100 A 100,100 0 0,1 70.7,-70.7 Z`;
+
+    return (
+      <svg className="absolute inset-0 w-full h-full drop-shadow-lg" viewBox="-100 -100 200 200">
+        {/* Background plate */}
+        <circle cx="0" cy="0" r="100" fill={RADAR_CONFIG.COLOR_BACKGROUND} />
+
+        {/* Range rings */}
+        {rings.map((r, i) => (
+          <g key={r}>
+            <circle
+              cx="0"
+              cy="0"
+              r={r}
+              fill="none"
+              stroke={RADAR_CONFIG.COLOR_GRID}
+              strokeWidth="0.5"
+              strokeDasharray={r === 50 || r === 100 ? 'none' : '4 4'}
+            />
+            <text x="2" y={-r + 6} fill="#FF0033" fontSize="5" opacity="0.7" fontFamily="monospace">
+              {(i + 1) * (RADAR_CONFIG.MAX_TCA_SECONDS / 4)}s
+            </text>
+          </g>
+        ))}
+
+        {/* Crosshairs */}
+        <line x1="0" y1="-100" x2="0" y2="100" stroke={RADAR_CONFIG.COLOR_GRID} strokeWidth="0.5" />
+        <line x1="-100" y1="0" x2="100" y2="0" stroke={RADAR_CONFIG.COLOR_GRID} strokeWidth="0.5" />
+        <circle cx="0" cy="0" r="1.5" fill={RADAR_CONFIG.COLOR_NOMINAL} filter="drop-shadow(0 0 4px cyan)" />
+
+        {/* Rotating sweep (CSS animation) */}
+        <g className="animate-radar-spin" style={{ transformOrigin: '0px 0px' }}>
+          <path d={sweepPath} fill="rgba(0, 255, 255, 0.15)" />
+          <line x1="0" y1="0" x2="0" y2="-100" stroke="#00FFFF" strokeWidth="1" filter="drop-shadow(0 0 4px cyan)" />
+        </g>
+
+        {/* Blips */}
+        {conjunctionData.map((data, idx) => {
+          const rad = data.approachAngle * (Math.PI / 180);
+          const r = data.normalizedRadius * 100;
+          const cx = Math.cos(rad) * r;
+          const cy = -(Math.sin(rad) * r); // SVG Y is flipped
+          const isCritical = data.risk === 'CRITICAL';
+          const color = isCritical
+            ? RADAR_CONFIG.COLOR_CRITICAL
+            : data.risk === 'WARNING'
+            ? RADAR_CONFIG.COLOR_WARNING
+            : RADAR_CONFIG.COLOR_NOMINAL;
+
+          return (
+            <g
+              key={`${data.id}-${idx}`}
+              onMouseEnter={() => setHoveredBlip(data)}
+              onMouseLeave={() => setHoveredBlip(null)}
+              className="cursor-crosshair"
+            >
+              {isCritical && (
+                <line
+                  x1="0"
+                  y1="0"
+                  x2={cx}
+                  y2={cy}
+                  stroke={color}
+                  strokeWidth="0.5"
+                  strokeDasharray="2 2"
+                  className="animate-pulse"
+                />
+              )}
+              <circle
+                cx={cx}
+                cy={cy}
+                r={isCritical ? 3.5 : data.risk === 'WARNING' ? 2.5 : 1.5}
+                fill={color}
+                className={isCritical ? 'animate-blip' : ''}
+                filter={isCritical ? 'drop-shadow(0 0 6px #FF0033)' : 'none'}
+              />
+              {(isCritical || data.risk === 'WARNING' || hoveredBlip?.id === data.id) && (
+                <text x={cx + 5} y={cy + 2} fill={color} fontSize="4" fontFamily="monospace" fontWeight="bold">
+                  {data.id}
+                </text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    );
+  }, [selectedSat, conjunctionData, hoveredBlip]);
 
   return (
-    <div className="p-4 border border-red-900/50 bg-black/60 rounded-lg flex flex-col h-full shadow-[0_0_15px_rgba(220,38,38,0.2)]">
-      <h2 className="text-[#888888] font-mono text-xs tracking-widest mb-2 uppercase">Conjunction Radar</h2>
-      <div className="flex-grow relative w-full h-full min-h-[250px]">
+    <div
+      className="glass-panel flex flex-col h-full overflow-hidden relative"
+      style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(12px)', border: '1px solid rgba(255,0,51,0.3)' }}
+    >
+      {/* CSS animations */}
+      <style>
+        {`
+          @keyframes radar-spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+          }
+          .animate-radar-spin {
+            animation: radar-spin ${RADAR_CONFIG.SWEEP_SPEED_SECONDS}s linear infinite;
+          }
+          @keyframes blip-pulse {
+            0% { opacity: 0.2; transform: scale(0.8); }
+            50% { opacity: 1; transform: scale(1.2); }
+            100% { opacity: 0.2; transform: scale(0.8); }
+          }
+          .animate-blip {
+            animation: blip-pulse 2s infinite;
+          }
+        `}
+      </style>
+
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-red-900/30 flex items-center justify-between z-10 bg-black/40">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 bg-laser-red rounded-full animate-pulse shadow-[0_0_8px_#FF0033]" />
+          <h2 className="text-muted-gray font-mono text-xs tracking-widest uppercase">Targeting Radar</h2>
+        </div>
+        {selectedSat && <div className="text-[10px] font-mono text-plasma-cyan font-bold">{selectedSat.id}</div>}
+      </div>
+
+      {/* Radar Canvas */}
+      <div className="relative flex-grow w-full flex items-center justify-center p-2">
         {selectedSat ? (
-          <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 10, right: 10, bottom: 10, left: 10 }}>
-              <XAxis type="number" dataKey="x" domain={[-100, 100]} hide />
-              <YAxis type="number" dataKey="y" domain={[-100, 100]} hide />
-              <ZAxis type="number" dataKey="size" range={[20, 100]} />
-              <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: '3 3', stroke: '#FF0033', opacity: 0.5 }} />
-              
-              {/* Custom Radar Background */}
-              <RadarRings />
-              
-              <Scatter data={conjunctionData} shape="circle">
-                {conjunctionData.map((entry, index) => (
-                  <Cell 
-                    key={`cell-${index}`} 
-                    fill={entry.risk === 'CRITICAL' ? '#FF0033' : '#FFBF00'} 
-                    className={entry.risk === 'CRITICAL' ? 'animate-pulse' : ''}
-                    style={{ filter: `drop-shadow(0 0 5px ${entry.risk === 'CRITICAL' ? '#FF0033' : '#FFBF00'})` }}
-                  />
-                ))}
-              </Scatter>
-            </ScatterChart>
-          </ResponsiveContainer>
+          <div className="relative w-full max-w-[320px] aspect-square">
+            {svgMarkup}
+            {/* Floating tooltip */}
+            {hoveredBlip && (
+              <div className="absolute top-2 left-2 pointer-events-none z-20">
+                <div
+                  className="glass-panel px-3 py-2"
+                  style={{
+                    background: 'rgba(0,0,0,0.95)',
+                    border: `1px solid ${
+                      hoveredBlip.risk === 'CRITICAL' ? '#FF0033' : hoveredBlip.risk === 'WARNING' ? '#D29922' : '#00FFFF'
+                    }`,
+                  }}
+                >
+                  <div
+                    className="text-[10px] font-mono font-bold mb-1"
+                    style={{
+                      color: hoveredBlip.risk === 'CRITICAL' ? '#FF0033' : hoveredBlip.risk === 'WARNING' ? '#D29922' : '#00FFFF',
+                    }}
+                  >
+                    TARGET: {hoveredBlip.id}
+                  </div>
+                  <div className="text-[9px] font-mono text-muted-gray space-y-0.5">
+                    <div>
+                      DIST: <span className="text-white">{hoveredBlip.distanceM.toFixed(0)}m</span>
+                    </div>
+                    <div>
+                      TCA: <span className="text-white">{hoveredBlip.tca.toFixed(1)}s</span>
+                    </div>
+                    <div>
+                      BEARING: <span className="text-white">{hoveredBlip.approachAngle.toFixed(0)}°</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center text-[#888888] font-mono text-xs">
-            SELECT SATELLITE TO VIEW CONJUNCTIONS
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-gray font-mono text-xs">
+            <div className="animate-pulse w-12 h-12 rounded-full border border-dashed border-red-900/50 mb-3 flex items-center justify-center">
+              <div className="w-1 h-1 bg-red-900 rounded-full" />
+            </div>
+            <span className="tracking-wider">AWAITING TARGET LOCK</span>
+          </div>
+        )}
+      </div>
+
+      {/* Threat summary footer */}
+      {selectedSat && conjunctionData.length > 0 && (
+        <div className="px-4 py-2 border-t border-red-900/30 bg-black/40 z-10">
+          <div className="flex justify-between font-mono text-[10px]">
+            <div className="text-muted-gray">
+              BOGEYS: <span className="text-white">{conjunctionData.length}</span>
+            </div>
+            <div className="flex gap-3">
+              <div className="flex items-center gap-1">
+                <div className="w-1.5 h-1.5 bg-laser-red rounded-full animate-pulse" />
+                <span className="text-laser-red">
+                  CRIT: {conjunctionData.filter((d) => d.risk === 'CRITICAL').length}
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-1.5 h-1.5 bg-amber rounded-full" />
+                <span className="text-amber">
+                  WARN: {conjunctionData.filter((d) => d.risk === 'WARNING').length}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global debris stats (always visible) */}
+      <div className="px-4 py-2 border-t border-red-900/20 bg-black/30 z-10">
+        <div className="flex justify-between font-mono text-[10px] text-muted-gray">
+          <span>GLOBAL DEBRIS:</span>
+          <span className="text-plasma-cyan">{debrisCount.toLocaleString()}</span>
+        </div>
+        {highRiskCount > 0 && (
+          <div className="flex justify-between font-mono text-[10px] text-muted-gray mt-1">
+            <span>HIGH RISK TRACTS:</span>
+            <span className="text-laser-red animate-pulse">{highRiskCount.toLocaleString()}</span>
           </div>
         )}
       </div>
     </div>
   );
-}
+});
+
+export default BullseyeRadar;

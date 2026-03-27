@@ -4,9 +4,11 @@ routers/visualization.py
 GET /api/visualization/snapshot
 Provides a highly compressed snapshot of all orbital objects.
 STRICTLY matches the NSH 2026 Problem Statement schema.
+Optimized for 100k+ objects using NumPy vectorization and list comprehensions.
 """
 
 from fastapi import APIRouter, Request, HTTPException
+import numpy as np
 import logging
 
 # 🚀 CRITICAL FIX: Import strict schemas directly from models.py
@@ -38,7 +40,6 @@ async def visualization_snapshot(request: Request) -> VisualizationSnapshotRespo
     debris_lla_raw = convert_states_to_lla(debris_state, state.current_time) if len(debris_state) > 0 else []
 
     satellites = []
-    debris_cloud = []
     
     async with state.lock:
         # 3. Process Satellites
@@ -63,18 +64,24 @@ async def visualization_snapshot(request: Request) -> VisualizationSnapshotRespo
                 status=status_str
             ))
 
-        # 4. Process Debris (Flattened Array format for bandwidth optimization)
-        for row in debris_lla_raw:
-            debris_cloud.append([
-                state.idx_to_debris_id.get(int(row[0]), "UNKNOWN"),
-                round(row[1], 4),
-                round(row[2], 4),
-                round(row[3], 4) # Altitude included
-            ])
+        # 🚀 4. Process Debris (Aggressively Optimized for 100k array)
+        # We round the entire NumPy array at once in C, bypassing slow Python math loops
+        if len(debris_lla_raw) > 0:
+            debris_rounded = np.round(debris_lla_raw, 4)
+            idx_map = state.idx_to_debris_id # Local reference for faster lookup
+            
+            # C-optimized list comprehension building the exact tuple structure
+            debris_cloud = [
+                [idx_map.get(int(row[0]), "UNKNOWN"), row[1], row[2], row[3]]
+                for row in debris_rounded
+            ]
+        else:
+            debris_cloud = []
 
         timestamp_iso = state.current_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
 
     # Return exactly matching the Pydantic Response Model
+    # FastAPI will use fast orjson automatically if installed.
     return VisualizationSnapshotResponse(
         timestamp=timestamp_iso,
         satellites=satellites,
