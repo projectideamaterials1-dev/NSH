@@ -16,11 +16,15 @@ ext_modules = [
         language="c++",
         extra_compile_args=[
             "-std=c++20", 
-            "-O3",          # Maximum compiler optimization
-            "-fPIC",        # Position Independent Code (required for shared libraries)
-            "-ffast-math"   # Hardware-level floating point acceleration
+            "-O3",          
+            "-fPIC",        
+            "-ffast-math",  
+            "-fopenmp"      # 🚀 CRITICAL: Tells GCC to enable OpenMP parallelization
         ],
-        extra_link_args=["-std=c++20"],
+        extra_link_args=[
+            "-std=c++20",
+            "-fopenmp"      # 🚀 CRITICAL: Links the generated multi-threaded instructions
+        ],
     ),
 ]
 

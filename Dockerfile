@@ -1,4 +1,3 @@
-# STRICT PDF CONSTRAINT: Must use ubuntu:22.04 base image
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -11,8 +10,9 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-dev \
+    libomp-dev \
     && rm -rf /var/lib/apt/lists/*
-
+    
 WORKDIR /app
 
 # Install Python dependencies FIRST to leverage Docker caching

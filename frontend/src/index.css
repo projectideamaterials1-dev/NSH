@@ -1,0 +1,443 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Fira Code", ui-monospace, SFMono-Regular, Consolas, monospace;
+  
+  /* Crimson Nebula Color Palette */
+  --color-void-black: #000000;
+  --color-deep-void: #0B0C10;
+  --color-nebula-maroon: #1A0000;
+  --color-panel-bg: rgba(0, 0, 0, 0.40);
+  --color-plasma-cyan: #00FFFF;
+  --color-laser-red: #FF0033;
+  --color-vermillion: #F85149;
+  --color-amber-warning: #D29922;
+  --color-nominal-green: #238636;
+  --color-muted-gray: #888888;
+  --color-border-dim: rgba(255, 0, 51, 0.30);
+  --color-border-glow: rgba(255, 0, 51, 0.50);
+  
+  /* Glow Effects */
+  --glow-cyan: 0 0 20px rgba(0, 255, 255, 0.3);
+  --glow-red: 0 0 15px rgba(255, 0, 51, 0.4);
+  --glow-amber: 0 0 15px rgba(210, 153, 34, 0.4);
+  --glow-green: 0 0 15px rgba(35, 134, 54, 0.4);
+}
+
+/* =============================================================================
+   BASE STYLES
+   ============================================================================= */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: linear-gradient(135deg, var(--color-void-black) 0%, var(--color-nebula-maroon) 50%, var(--color-void-black) 100%);
+  color: #ffffff;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* =============================================================================
+   TYPOGRAPHY
+   ============================================================================= */
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.text-mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "liga" 0;
+}
+
+.text-glow-cyan {
+  text-shadow: var(--glow-cyan);
+}
+
+.text-glow-red {
+  text-shadow: var(--glow-red);
+}
+
+/* =============================================================================
+   GLASSMORPHISM PANELS
+   ============================================================================= */
+
+.panel-glass {
+  background: var(--color-panel-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border-dim);
+  border-radius: 4px;
+  box-shadow: var(--glow-red);
+}
+
+.panel-glass-intense {
+  background: rgba(0, 0, 0, 0.60);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--color-border-glow);
+  border-radius: 4px;
+  box-shadow: 0 0 30px rgba(255, 0, 51, 0.3);
+}
+
+.panel-border-cyan {
+  border-color: rgba(0, 255, 255, 0.40);
+  box-shadow: var(--glow-cyan);
+}
+
+.panel-border-green {
+  border-color: rgba(35, 134, 54, 0.40);
+  box-shadow: var(--glow-green);
+}
+
+/* =============================================================================
+   ANIMATIONS
+   ============================================================================= */
+
+@keyframes pulse-critical {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 15px rgba(255, 0, 51, 0.4);
+  }
+  50% {
+    opacity: 0.7;
+    box-shadow: 0 0 30px rgba(255, 0, 51, 0.8);
+  }
+}
+
+@keyframes pulse-cyan {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+  }
+  50% {
+    opacity: 0.8;
+    box-shadow: 0 0 25px rgba(0, 255, 255, 0.6);
+  }
+}
+
+@keyframes scanline {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes glow-flicker {
+  0%, 100% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  93% {
+    opacity: 0.8;
+  }
+  94% {
+    opacity: 1;
+  }
+  95% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes cooldown-hatch {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 40px 40px;
+  }
+}
+
+.animate-pulse-critical {
+  animation: pulse-critical 1.5s ease-in-out infinite;
+}
+
+.animate-pulse-cyan {
+  animation: pulse-cyan 2s ease-in-out infinite;
+}
+
+.animate-scanline {
+  animation: scanline 3s linear infinite;
+}
+
+.animate-glow-flicker {
+  animation: glow-flicker 4s ease-in-out infinite;
+}
+
+.animate-cooldown-hatch {
+  animation: cooldown-hatch 2s linear infinite;
+}
+
+/* =============================================================================
+   CUSTOM SCROLLBAR (Terminal Feel)
+   ============================================================================= */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(26, 0, 0, 0.5);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 0, 51, 0.5);
+  border-radius: 3px;
+  box-shadow: 0 0 5px rgba(255, 0, 51, 0.5);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 0, 51, 0.8);
+  box-shadow: 0 0 10px rgba(255, 0, 51, 0.8);
+}
+
+::-webkit-scrollbar-corner {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* =============================================================================
+   MAPLIBRE OVERRIDES (Dark Theme)
+   ============================================================================= */
+
+.maplibregl-map {
+  background: var(--color-void-black) !important;
+}
+
+.maplibregl-canvas {
+  filter: contrast(1.1) brightness(0.9);
+}
+
+.maplibregl-control-container {
+  display: none !important;
+}
+
+.maplibregl-ctrl-attrib {
+  background: rgba(0, 0, 0, 0.6) !important;
+  color: var(--color-muted-gray) !important;
+  font-size: 10px !important;
+  font-family: var(--font-mono) !important;
+}
+
+.maplibregl-ctrl-attrib a {
+  color: var(--color-plasma-cyan) !important;
+}
+
+/* =============================================================================
+   DECK.GL CANVAS OPTIMIZATIONS
+   ============================================================================= */
+
+.deckgl-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: auto;
+}
+
+.deckgl-overlay canvas {
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* =============================================================================
+   FUEL GAUGE GRADIENTS
+   ============================================================================= */
+
+.fuel-gauge-high {
+  background: linear-gradient(90deg, 
+    rgba(0, 255, 255, 0.8) 0%, 
+    rgba(0, 255, 255, 0.4) 100%
+  );
+  box-shadow: var(--glow-cyan);
+}
+
+.fuel-gauge-medium {
+  background: linear-gradient(90deg, 
+    rgba(210, 153, 34, 0.8) 0%, 
+    rgba(210, 153, 34, 0.4) 100%
+  );
+  box-shadow: var(--glow-amber);
+}
+
+.fuel-gauge-critical {
+  background: linear-gradient(90deg, 
+    rgba(255, 0, 51, 0.8) 0%, 
+    rgba(255, 0, 51, 0.4) 100%
+  );
+  box-shadow: var(--glow-red);
+  animation: pulse-critical 2s ease-in-out infinite;
+}
+
+/* =============================================================================
+   COOLDOWN BLOCKS (600s Thermal)
+   ============================================================================= */
+
+.cooldown-block {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 0, 51, 0.3),
+    rgba(255, 0, 51, 0.3) 10px,
+    rgba(0, 0, 0, 0.5) 10px,
+    rgba(0, 0, 0, 0.5) 20px
+  );
+  border: 1px solid var(--color-laser-red);
+  box-shadow: 0 0 10px rgba(255, 0, 51, 0.4);
+  animation: cooldown-hatch 2s linear infinite;
+}
+
+/* =============================================================================
+   LOADING STATES
+   ============================================================================= */
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 2px solid rgba(0, 255, 255, 0.2);
+  border-top-color: var(--color-plasma-cyan);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-text {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-plasma-cyan);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  animation: glow-flicker 2s ease-in-out infinite;
+}
+
+/* =============================================================================
+   ERROR TOAST
+   ============================================================================= */
+
+.error-toast {
+  background: rgba(255, 0, 51, 0.15);
+  border: 1px solid var(--color-laser-red);
+  border-left: 4px solid var(--color-laser-red);
+  box-shadow: var(--glow-red);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* =============================================================================
+   UTILITY CLASSES
+   ============================================================================= */
+
+.text-critical {
+  color: var(--color-vermillion);
+  text-shadow: var(--glow-red);
+}
+
+.text-warning {
+  color: var(--color-amber-warning);
+  text-shadow: var(--glow-amber);
+}
+
+.text-nominal {
+  color: var(--color-nominal-green);
+  text-shadow: var(--glow-green);
+}
+
+.text-accent {
+  color: var(--color-plasma-cyan);
+  text-shadow: var(--glow-cyan);
+}
+
+.text-muted {
+  color: var(--color-muted-gray);
+}
+
+.border-critical {
+  border-color: var(--color-laser-red);
+}
+
+.border-accent {
+  border-color: var(--color-plasma-cyan);
+}
+
+.bg-void {
+  background-color: var(--color-void-black);
+}
+
+.bg-nebula {
+  background-color: var(--color-nebula-maroon);
+}
+
+/* =============================================================================
+   RESPONSIVE BREAKPOINTS
+   ============================================================================= */
+
+@media (max-width: 768px) {
+  .panel-glass {
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  
+  .text-mono {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 480px) {
+  body {
+    font-size: 12px;
+  }
+  
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+}
+
+/* =============================================================================
+   PRINT STYLES (For Reports)
+   ============================================================================= */
+
+@media print {
+  body {
+    background: #ffffff;
+    color: #000000;
+  }
+  
+  .panel-glass {
+    background: #ffffff;
+    border: 1px solid #000000;
+    box-shadow: none;
+  }
+  
+  .text-glow-cyan,
+  .text-glow-red {
+    text-shadow: none;
+  }
+}

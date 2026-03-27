@@ -8,3 +8,4 @@ build/
 *.md
 *.log
 .pytest_cache/
+frontend/

@@ -1,58 +1,44 @@
 """
 routers/visualization.py
 -------------------------
-GET /visualization/snapshot
+GET /api/visualization/snapshot
 Provides a highly compressed snapshot of all orbital objects.
 STRICTLY matches the NSH 2026 Problem Statement schema.
 """
 
 from fastapi import APIRouter, Request, HTTPException
-from pydantic import BaseModel
-from typing import List, Any
 import logging
 
+# 🚀 CRITICAL FIX: Import strict schemas directly from models.py
+from satellite_api.models import VisualizationSnapshotResponse, SatelliteStatus
 from satellite_api.coordinates import convert_states_to_lla
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# STRICT JSON SCHEMAS (Section 6.3)
-# ============================================================================
-class SatelliteSnapshot(BaseModel):
-    id: str
-    lat: float
-    lon: float
-    fuel_kg: float
-    status: str
-
-class VisualizationSnapshotResponse(BaseModel):
-    timestamp: str
-    satellites: List[SatelliteSnapshot]
-    debris_cloud: List[List[Any]] # Flattened: [ID, Lat, Lon, Alt]
-
-# ============================================================================
 # API ENDPOINT
 # ============================================================================
 @router.get(
-    "/api/visualization/snapshot", # 🚀 CRITICAL FIX: Removed /api to prevent double-prefixing
+    "/api/visualization/snapshot", 
     response_model=VisualizationSnapshotResponse,
     summary="Get current orbital snapshot for visualization",
 )
-async def visualization_snapshot(request: Request):
+async def visualization_snapshot(request: Request) -> VisualizationSnapshotResponse:
     state = request.app.state.orbital_state
     
-    if not state.is_initialized or state.current_time is None:
+    if not state.is_ready() or state.current_time is None:
         raise HTTPException(status_code=400, detail="State not initialized.")
 
     # 1. Fetch memory views
     sat_state, debris_state = await state.get_state_buffers()
 
-    # 2. Vectorized ECI-to-LLA Conversion
+    # 2. Vectorized ECI-to-LLA Conversion (Offloaded to coordinate math)
     sat_lla_raw = convert_states_to_lla(sat_state, state.current_time) if len(sat_state) > 0 else []
     debris_lla_raw = convert_states_to_lla(debris_state, state.current_time) if len(debris_state) > 0 else []
 
     satellites = []
+    debris_cloud = []
     
     async with state.lock:
         # 3. Process Satellites
@@ -61,40 +47,44 @@ async def visualization_snapshot(request: Request):
             lat, lon = round(row[1], 4), round(row[2], 4)
             fuel = state.sat_fuel[idx]
             
-            # Status mapping
-            if fuel <= 0: status = "EOL"
-            elif fuel <= 2.5: status = "CRITICAL_FUEL"
-            else: status = "NOMINAL"
+            # Strict Status Mapping (Matches Section 6.3)
+            if fuel <= 0.0: 
+                status_str = "EOL"
+            elif fuel <= 2.5: 
+                status_str = "CRITICAL_FUEL"
+            else: 
+                status_str = "NOMINAL"
             
-            satellites.append({
-                "id": state.idx_to_sat_id[idx],
-                "lat": lat,
-                "lon": lon,
-                "fuel_kg": round(fuel, 2), # Strictly formatted
-                "status": status,
-            })
+            satellites.append(SatelliteStatus(
+                id=state.idx_to_sat_id.get(idx, f"SAT-UNKNOWN-{idx}"),
+                lat=lat,
+                lon=lon,
+                fuel_kg=round(fuel, 2),
+                status=status_str
+            ))
 
-        # 4. Process Debris
-        debris_cloud = [
-            [
-                state.idx_to_debris_id[int(row[0])],
+        # 4. Process Debris (Flattened Array format for bandwidth optimization)
+        for row in debris_lla_raw:
+            debris_cloud.append([
+                state.idx_to_debris_id.get(int(row[0]), "UNKNOWN"),
                 round(row[1], 4),
                 round(row[2], 4),
-                round(row[3], 4) # Debris is allowed to have altitude in the flattened array
-            ]
-            for row in debris_lla_raw
-        ]
+                round(row[3], 4) # Altitude included
+            ])
 
-    return {
-        "timestamp": state.current_time.strftime('%Y-%m-%dT%H:%M:%S.000Z'),
-        "satellites": satellites,
-        "debris_cloud": debris_cloud,
-    }
+        timestamp_iso = state.current_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+
+    # Return exactly matching the Pydantic Response Model
+    return VisualizationSnapshotResponse(
+        timestamp=timestamp_iso,
+        satellites=satellites,
+        debris_cloud=debris_cloud
+    )
 
 # ============================================================================
 # HIDDEN INTERNAL DEBUG API (For Forensic Test Scripts)
 # ============================================================================
-@router.get("/api/internal/debug_state", include_in_schema=False) # 🚀 CRITICAL FIX: Removed /api
+@router.get("/api/internal/debug_state", include_in_schema=False) 
 async def debug_state(request: Request):
     """
     Hidden endpoint providing raw ECI and Nominal arrays to the testing script.

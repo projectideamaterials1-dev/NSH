@@ -1,9 +1,72 @@
+# ============================================================================
+# FRONTEND – Crimson Nebula
+# ============================================================================
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Vite / TypeScript cache
+.vite/
+.cache/
+
+# Optional: if you use ESLint / Prettier
+.eslintcache
+.prettiercache
+
+# Optional: if you use local SSL certificates
+*.pem
+*.crt
+*.key
+
+# ============================================================================
+# BACKEND (if in same repository – keep or remove as needed)
+# ============================================================================
+
+# Python
 venv/
 __pycache__/
 *.pyc
 *.pyo
-.env
 *.egg-info/
 dist/
 build/
+
+# ============================================================================
+# OS / System
+# ============================================================================
+
 .DS_Store
+Thumbs.db
+*.bak
