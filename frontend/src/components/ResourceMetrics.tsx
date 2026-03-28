@@ -1,8 +1,8 @@
 // src/components/ResourceMetrics.tsx
-// Production-Ready Telemetry & Resource Heatmaps
-// Active Fleet Analytics | Recharts Optimization | Crimson Nebula Theme
+// Upgraded with Real-Time Leaderboard (Fuel Consumption)
+// NSH 2026 PS Section 6.2 Compliance | Crimson Nebula Theme
 
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback, useState } from 'react';
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -21,7 +21,8 @@ import useOrbitalStore, {
   selectDebrisCount,
   selectSimulationState,
 } from '../store/useOrbitalStore';
-import type { FuelMetric } from '../store/useOrbitalStore';
+import type { FuelMetric, SatelliteBinaryData } from '../store/useOrbitalStore';
+import { ChevronDown, ChevronUp, Flame } from 'lucide-react';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -47,6 +48,13 @@ interface FleetStatus {
   warning: number;
   critical: number;
   eol: number;
+}
+
+interface TopConsumer {
+  id: string;
+  fuelConsumed: number;   // kg
+  fuelRemaining: number;  // kg
+  status: string;
 }
 
 // ============================================================================
@@ -98,8 +106,27 @@ const getFuelGaugeConfig = (percent: number): FuelGaugeConfig => {
   return { color: THEME.COLORS.LASER_RED, glowColor: 'rgba(255,0,51,0.8)', label: 'CRITICAL' };
 };
 
+// Calculate top fuel consumers
+const getTopConsumers = (satellites: SatelliteBinaryData | null): TopConsumer[] => {
+  if (!satellites || satellites.length === 0) return [];
+  const consumers: TopConsumer[] = [];
+  for (let i = 0; i < satellites.length; i++) {
+    const fuelRemaining = satellites.fuels[i];
+    const fuelConsumed = THEME.FUEL_THRESHOLDS.INITIAL - fuelRemaining;
+    if (fuelConsumed > 0) {
+      consumers.push({
+        id: satellites.ids[i],
+        fuelConsumed,
+        fuelRemaining,
+        status: satellites.statuses[i],
+      });
+    }
+  }
+  return consumers.sort((a, b) => b.fuelConsumed - a.fuelConsumed).slice(0, 5);
+};
+
 // ============================================================================
-// CUSTOM RECHARTS COMPONENTS (stable references)
+// CUSTOM RECHARTS COMPONENTS
 // ============================================================================
 
 const CustomDot = React.memo((props: any) => {
@@ -159,7 +186,7 @@ const CustomTooltip = React.memo(({ active, payload, label }: any) => {
 export const ResourceMetrics: React.FC = React.memo(() => {
   const store = useOrbitalStore();
 
-  // Atomic selectors – only re-run when the specific slice changes
+  // Atomic selectors
   const selectedSatellite = useMemo(() => selectSelectedSatellite(store), [store]);
   const latestFuelMetric = useMemo(() => selectLatestFuelMetric(store), [store]);
   const fuelHistory = store.fuelHistory;
@@ -168,7 +195,10 @@ export const ResourceMetrics: React.FC = React.memo(() => {
   const debrisCount = useMemo(() => selectDebrisCount(store), [store]);
   const simulation = useMemo(() => selectSimulationState(store), [store]);
 
-  // Fleet status (memoized)
+  // Leaderboard state (collapsible)
+  const [leaderboardExpanded, setLeaderboardExpanded] = useState(true);
+
+  // Fleet status
   const fleetStatus = useMemo<FleetStatus>(() => {
     const status: FleetStatus = { nominal: 0, warning: 0, critical: 0, eol: 0 };
     if (!satellites || satellites.length === 0) return status;
@@ -183,7 +213,7 @@ export const ResourceMetrics: React.FC = React.memo(() => {
     return status;
   }, [satellites]);
 
-  // Chart data (memoized)
+  // Chart data
   const chartData = useMemo<ChartDataPoint[]>(() => {
     if (!fuelHistory || fuelHistory.length === 0) return [];
     return fuelHistory.map((metric: FuelMetric) => ({
@@ -204,7 +234,7 @@ export const ResourceMetrics: React.FC = React.memo(() => {
   }, [fuelLevel]);
   const fuelGaugeConfig = useMemo(() => getFuelGaugeConfig(fuelPercent), [fuelPercent]);
 
-  // Fleet average fuel (active only)
+  // Fleet average fuel
   const fleetAvgFuel = useMemo(() => {
     if (!satellites || satellites.length === 0) return 0;
     let activeTotal = 0, activeCount = 0;
@@ -221,7 +251,10 @@ export const ResourceMetrics: React.FC = React.memo(() => {
     [fleetAvgFuel]
   );
 
-  // Display numbers (simulation or latest metric)
+  // Leaderboard data: top fuel consumers
+  const topConsumers = useMemo(() => getTopConsumers(satellites), [satellites]);
+
+  // Display numbers
   const collisionsDisplay = simulation.collisionsDetected > 0
     ? simulation.collisionsDetected
     : latestFuelMetric?.collisionsAvoided ?? 0;
@@ -229,7 +262,6 @@ export const ResourceMetrics: React.FC = React.memo(() => {
     ? simulation.maneuversExecuted
     : latestFuelMetric?.maneuversExecuted ?? 0;
 
-  // Stable callbacks for Recharts (avoid recreation)
   const handleYAxisTick = useCallback(formatYAxisTick, []);
 
   return (
@@ -418,6 +450,56 @@ export const ResourceMetrics: React.FC = React.memo(() => {
               </div>
             )}
           </div>
+        </div>
+
+        {/* NEW: Top Fuel Consumers Leaderboard (Expandable) */}
+        <div className="mt-2">
+          <div
+            className="flex items-center justify-between cursor-pointer hover:bg-white/5 transition-colors p-2 rounded"
+            onClick={() => setLeaderboardExpanded(!leaderboardExpanded)}
+          >
+            <div className="flex items-center gap-2">
+              <Flame className="w-4 h-4 text-amber" />
+              <span className="text-[10px] font-mono text-plasma-cyan uppercase tracking-wider">Top Fuel Consumers</span>
+            </div>
+            {leaderboardExpanded ? <ChevronUp className="w-4 h-4 text-muted-gray" /> : <ChevronDown className="w-4 h-4 text-muted-gray" />}
+          </div>
+          {leaderboardExpanded && (
+            <div className="mt-2 space-y-1.5">
+              {topConsumers.length > 0 ? (
+                topConsumers.map((sat, idx) => (
+                  <div
+                    key={sat.id}
+                    className="flex items-center justify-between p-2 bg-black/30 rounded border border-red-900/20 hover:bg-black/50 transition-all group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono text-muted-gray w-5">{idx + 1}.</span>
+                      <span className="text-[11px] font-mono text-white font-bold">{sat.id}</span>
+                      <div className="w-1.5 h-1.5 rounded-full bg-amber animate-pulse" />
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] font-mono text-muted-gray">USED:</span>
+                        <span className="text-[10px] font-mono text-amber font-bold">{sat.fuelConsumed.toFixed(2)} kg</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] font-mono text-muted-gray">LEFT:</span>
+                        <span
+                          className={`text-[10px] font-mono font-bold ${
+                            sat.fuelRemaining < 5 ? 'text-laser-red' : sat.fuelRemaining < 15 ? 'text-amber' : 'text-plasma-cyan'
+                          }`}
+                        >
+                          {sat.fuelRemaining.toFixed(2)} kg
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center text-[9px] text-muted-gray py-2">No fuel consumption data yet</div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

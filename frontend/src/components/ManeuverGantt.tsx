@@ -1,7 +1,6 @@
 // src/components/ManeuverGantt.tsx
-// Production-Ready Maneuver Timeline / Gantt Scheduler
+// Optimized Maneuver Timeline / Gantt Scheduler
 // Millisecond Precision | Conflict Detection | Blackout Flags
-// NSH 2026 PS Section 6.2 Compliance
 
 import React, { useMemo, useCallback, useState, useEffect } from 'react';
 import useOrbitalStore, {
@@ -54,8 +53,8 @@ const THEME = {
     MUTED_GRAY: '#888888',
     WHITE: '#FFFFFF',
   },
-  COOLDOWN_SECONDS: 600,               // PS Section 5.1
-  TIMELINE_WINDOW_MINUTES: 20,         // -10min … +10min
+  COOLDOWN_SECONDS: 600,
+  TIMELINE_WINDOW_MINUTES: 20,
 } as const;
 
 const MANEUVER_TYPES: Record<string, ManeuverTypeConfig> = {
@@ -68,11 +67,12 @@ const MANEUVER_TYPES: Record<string, ManeuverTypeConfig> = {
 };
 
 // ============================================================================
-// UTILITIES (memoized where possible)
+// UTILITIES
 // ============================================================================
 
 const formatTimestamp = (ms: number): string => {
   const d = new Date(ms);
+  if (isNaN(d.getTime())) return '--:--:--Z';
   return `${d.getUTCHours().toString().padStart(2, '0')}:${d.getUTCMinutes().toString().padStart(2, '0')}:${d.getUTCSeconds().toString().padStart(2, '0')}Z`;
 };
 
@@ -85,27 +85,28 @@ const formatRelativeTime = (ms: number, now: number): string => {
   return `${sign}${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 };
 
-// Quick eclipse check (simplified, used only for visual flagging)
+// Simplified eclipse check (fast, used only for visual flagging)
 const isEclipseAtTime = (satLat: number, satLon: number, burnTimeMs: number): boolean => {
   const date = new Date(burnTimeMs);
+  if (isNaN(date.getTime())) return false;
+
   const dayOfYear = (date.getTime() - new Date(date.getFullYear(), 0, 0).getTime()) / 86400000;
   const declination = -23.44 * Math.cos((360 / 365) * (dayOfYear + 10) * (Math.PI / 180));
   const utcHours = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
   let sunLon = 180 - 15 * utcHours;
-  if (sunLon < -180) sunLon += 360;
-  if (sunLon > 180) sunLon -= 360;
+  while (sunLon <= -180) sunLon += 360;
+  while (sunLon > 180) sunLon -= 360;
 
-  // Approximate satellite movement for the burn time (coarse)
   const dtMs = burnTimeMs - Date.now();
-  const projectedLon = satLon + (dtMs / 1000) * 0.000185;   // ~1 deg / 90 min
+  const projectedLon = satLon + (dtMs / 1000) * 0.000185; // approx 1° per 90 min
 
-  const latRad = satLat * (Math.PI / 180);
-  const decRad = declination * (Math.PI / 180);
-  const lonDiffRad = (projectedLon - sunLon) * (Math.PI / 180);
+  const latRad = satLat * Math.PI / 180;
+  const decRad = declination * Math.PI / 180;
+  const lonDiffRad = (projectedLon - sunLon) * Math.PI / 180;
 
   const sinElevation = Math.sin(latRad) * Math.sin(decRad) +
                        Math.cos(latRad) * Math.cos(decRad) * Math.cos(lonDiffRad);
-  return sinElevation < -0.1;   // shadow threshold
+  return sinElevation < -0.1;
 };
 
 // ============================================================================
@@ -122,9 +123,11 @@ export const ManeuverGantt: React.FC = React.memo(() => {
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [hoveredManeuverId, setHoveredManeuverId] = useState<string | null>(null);
 
-  // Update current time every 100ms (10Hz) – enough for smooth timeline scrolling
+  // Update current time less frequently (2 Hz) – enough for smooth timeline scrolling
   useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(Date.now()), 100);
+    const interval = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 500); // 500ms = 2 FPS for timeline movement
     return () => clearInterval(interval);
   }, []);
 
@@ -136,13 +139,15 @@ export const ManeuverGantt: React.FC = React.memo(() => {
     return { start, end, duration: end - start };
   }, [currentTime]);
 
-  // Build maneuver blocks (memoized)
+  // Build maneuver blocks
   const maneuverBlocks = useMemo<ManeuverBlock[]>(() => {
     if (!selectedSatellite || timelineWindow.duration === 0) return [];
 
     // First pass – compute percentages and basic flags
     const blocks = satelliteManeuvers.map((maneuver) => {
       const burnStartMs = new Date(maneuver.burnTime).getTime();
+      if (isNaN(burnStartMs)) return null; // skip invalid
+
       const burnEndMs = burnStartMs + maneuver.duration_seconds * 1000;
       const cooldownEndMs = new Date(maneuver.cooldown_end).getTime();
 
@@ -170,12 +175,10 @@ export const ManeuverGantt: React.FC = React.memo(() => {
         isPast,
         isCurrent,
         isFuture,
-        hasConflict: false,        // will be set in second pass
+        hasConflict: false,
         isBlackout,
       };
-    }).filter(block =>
-      block.startPct <= 100 && block.startPct + block.burnWidthPct + block.cooldownWidthPct >= 0
-    );
+    }).filter((b): b is ManeuverBlock => b !== null && b.startPct <= 100 && b.startPct + b.burnWidthPct + b.cooldownWidthPct >= 0);
 
     // Second pass – conflict detection (overlapping cooldowns)
     blocks.sort((a, b) => a.burnStartMs - b.burnStartMs);
@@ -196,7 +199,7 @@ export const ManeuverGantt: React.FC = React.memo(() => {
   }, []);
 
   const calculateDeltaVMagnitude = useCallback((vector: { x: number; y: number; z: number }): number => {
-    return Math.hypot(vector.x, vector.y, vector.z) * 1000; // km/s → m/s
+    return Math.hypot(vector.x, vector.y, vector.z) * 1000;
   }, []);
 
   const getBlockStyles = useCallback((block: ManeuverBlock) => {

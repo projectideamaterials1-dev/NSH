@@ -1,8 +1,7 @@
 // src/components/Header.tsx
-// Ultra-Optimized Command Center Header
-// Atomic Selectors | No Unnecessary Re-renders | 60 FPS Ready
+// Resilient Command Center Header | Crash-Proof | Crimson Nebula Theme
 
-import React, { useMemo, useEffect, useState, useRef } from 'react';
+import React, { useMemo, useEffect, useState, useRef, Component, ErrorInfo, ReactNode } from 'react';
 import { Terminal, ShieldAlert, Satellite, Wifi, WifiOff, Clock, Activity, Cpu } from 'lucide-react';
 import useOrbitalStore, {
   selectDebrisCount,
@@ -10,6 +9,67 @@ import useOrbitalStore, {
   selectHighRiskDebrisCount,
   selectConnectionState,
 } from '../store/useOrbitalStore';
+
+// ============================================================================
+// ERROR BOUNDARY (internal to header)
+// ============================================================================
+
+interface HeaderErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface HeaderErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class HeaderErrorBoundary extends Component<HeaderErrorBoundaryProps, HeaderErrorBoundaryState> {
+  constructor(props: HeaderErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): HeaderErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('[Header] Component crashed:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="h-16 glass-panel flex items-center justify-between px-6 w-full"
+          style={{
+            background: 'rgba(0, 0, 0, 0.70)',
+            backdropFilter: 'blur(16px)',
+            borderBottom: '1px solid rgba(255, 0, 51, 0.4)',
+            boxShadow: '0 0 20px rgba(220, 38, 38, 0.25)',
+          }}
+        >
+          <div className="flex items-center gap-4">
+            <Terminal className="w-5 h-5 text-laser-red" />
+            <div className="flex flex-col">
+              <h1 className="text-sm font-bold tracking-[0.25em] uppercase text-plasma-cyan">Orbital Insight</h1>
+              <span className="text-[9px] font-mono text-muted-gray">ACM COMMAND CENTER</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-laser-red font-mono text-xs animate-pulse">⚠️ HEADER ERROR</div>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-3 py-1 text-[10px] font-mono bg-laser-red/20 border border-laser-red rounded text-laser-red hover:bg-laser-red/30 transition"
+            >
+              RELOAD
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ============================================================================
 // CONSTANTS (Crimson Nebula Theme)
@@ -84,24 +144,32 @@ const SimClock: React.FC = React.memo(() => {
   const timestamp = useOrbitalStore(state => state.timestamp);
   const formattedTime = useMemo(() => {
     if (!timestamp) return '--:--:--.---Z';
-    return new Date(timestamp).toISOString().split('T')[1];
+    const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return '--:--:--.---Z';
+    return date.toISOString().split('T')[1];
   }, [timestamp]);
   return (
     <div
-      className="flex items-center gap-3 px-4 py-2 rounded border"
+      className="flex items-center gap-3 px-4 py-2 rounded border relative overflow-hidden"
       style={{
         borderColor: `${THEME.COLORS.AMBER}40`,
         background: 'rgba(210, 153, 34, 0.05)',
       }}
     >
+      {/* Subtle moving scanline effect */}
+      <div className="absolute inset-0 pointer-events-none opacity-20 animate-scanline" style={{
+        background: 'linear-gradient(180deg, transparent 0%, rgba(210,153,34,0.3) 50%, transparent 100%)',
+        transform: 'translateY(-100%)',
+        animation: 'scanline 3s linear infinite',
+      }} />
       <Clock
-        className="w-4 h-4"
+        className="w-4 h-4 relative z-10"
         style={{
           color: THEME.COLORS.AMBER,
           filter: `drop-shadow(0 0 5px ${THEME.COLORS.AMBER}80)`,
         }}
       />
-      <div className="flex flex-col">
+      <div className="flex flex-col relative z-10">
         <span className="text-[8px] font-mono uppercase opacity-60" style={{ color: THEME.COLORS.AMBER }}>
           SIM TIME
         </span>
@@ -143,7 +211,7 @@ const StatItem: React.FC<StatItemProps> = React.memo(
     const hexColor = colorMap[color];
     return (
       <div
-        className="flex items-center gap-2 px-3 py-1.5 bg-black/40 border rounded cursor-help"
+        className="flex items-center gap-2 px-3 py-1.5 bg-black/40 border rounded cursor-help transition-all duration-300 hover:scale-105"
         style={{
           borderColor: `${hexColor}40`,
           boxShadow: `0 0 8px ${hexColor}20`,
@@ -191,7 +259,7 @@ const ConnectionIndicator: React.FC<ConnectionIndicatorProps> = React.memo(({ st
   const { icon: Icon, color, label, pulse } = config[state];
   return (
     <div
-      className="flex items-center gap-2 px-3 py-1.5 bg-black/40 border rounded"
+      className="flex items-center gap-2 px-3 py-1.5 bg-black/40 border rounded transition-all duration-300 hover:scale-105"
       style={{
         borderColor: `${color}60`,
         boxShadow: `0 0 10px ${color}30`,
@@ -207,9 +275,9 @@ const ConnectionIndicator: React.FC<ConnectionIndicatorProps> = React.memo(({ st
       <span className="text-[10px] font-mono font-bold" style={{ color }}>
         {label}
       </span>
-      {latencyMs !== null && state === 'connected' && (
+      {latencyMs !== null && state === 'connected' && Number.isFinite(latencyMs) && (
         <span className="text-[9px] font-mono opacity-70" style={{ color: THEME.COLORS.MUTED_GRAY }}>
-          {latencyMs.toFixed(0)}ms
+          {Math.round(latencyMs)}ms
         </span>
       )}
     </div>
@@ -221,6 +289,7 @@ const ConnectionIndicator: React.FC<ConnectionIndicatorProps> = React.memo(({ st
 // ============================================================================
 
 function formatCount(count: number): string {
+  if (!Number.isFinite(count) || count < 0) return '0';
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(2)}M`;
   if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
   return count.toString();
@@ -228,10 +297,11 @@ function formatCount(count: number): string {
 
 function calculateDefconLevel(highRiskCount: number, connectionState: string): number {
   if (connectionState !== 'connected') return 1;
-  if (highRiskCount > 1000) return 1;
-  if (highRiskCount > 500) return 2;
-  if (highRiskCount > 100) return 3;
-  if (highRiskCount > 10) return 4;
+  const risk = highRiskCount || 0;
+  if (risk > 1000) return 1;
+  if (risk > 500) return 2;
+  if (risk > 100) return 3;
+  if (risk > 10) return 4;
   return 5;
 }
 
@@ -239,7 +309,7 @@ function calculateDefconLevel(highRiskCount: number, connectionState: string): n
 // MAIN HEADER COMPONENT (uses atomic selectors, no store object)
 // ============================================================================
 
-export const Header: React.FC = React.memo(() => {
+const HeaderContent: React.FC = () => {
   // Each selector subscribes only to its part of the state – no unnecessary re-renders
   const debrisCount = useOrbitalStore(selectDebrisCount);
   const satelliteCount = useOrbitalStore(selectSatelliteCount);
@@ -267,21 +337,27 @@ export const Header: React.FC = React.memo(() => {
       {/* LEFT: BRAND & VERSION */}
       <div className="flex items-center gap-4 justify-start">
         <div
-          className="flex items-center gap-3 px-4 py-2 rounded border"
+          className="flex items-center gap-3 px-4 py-2 rounded border relative overflow-hidden"
           style={{
             borderColor: `${THEME.COLORS.PLASMA_CYAN}60`,
             background: 'rgba(0, 255, 255, 0.05)',
             boxShadow: `0 0 15px ${THEME.COLORS.PLASMA_CYAN}30`,
           }}
         >
+          {/* Animated gradient overlay */}
+          <div className="absolute inset-0 pointer-events-none opacity-30 animate-gradient" style={{
+            background: 'linear-gradient(90deg, transparent, rgba(0,255,255,0.4), transparent)',
+            backgroundSize: '200% 100%',
+            animation: 'gradient 3s linear infinite',
+          }} />
           <Terminal
-            className="w-5 h-5"
+            className="w-5 h-5 relative z-10"
             style={{
               color: THEME.COLORS.PLASMA_CYAN,
               filter: `drop-shadow(0 0 8px ${THEME.COLORS.PLASMA_CYAN})`,
             }}
           />
-          <div className="flex flex-col">
+          <div className="flex flex-col relative z-10">
             <h1
               className="text-sm font-bold tracking-[0.25em] uppercase"
               style={{
@@ -360,9 +436,27 @@ export const Header: React.FC = React.memo(() => {
           {defconConfig.label}
         </div>
       </div>
+
+      {/* Add CSS animations */}
+      <style>{`
+        @keyframes scanline {
+          0% { transform: translateY(-100%); }
+          100% { transform: translateY(200%); }
+        }
+        @keyframes gradient {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+      `}</style>
     </header>
   );
-});
+};
+
+export const Header: React.FC = () => (
+  <HeaderErrorBoundary>
+    <HeaderContent />
+  </HeaderErrorBoundary>
+);
 
 Header.displayName = 'Header';
 export default Header;

@@ -1,5 +1,5 @@
 // src/components/DashboardLayout.tsx
-import React, { useMemo, useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { BullseyeRadar } from './BullseyeRadar';
 import { ResourceMetrics } from './ResourceMetrics';
 import { ManeuverGantt } from './ManeuverGantt';
@@ -16,11 +16,10 @@ import { Play, Square, Pause, RefreshCw, Activity, AlertTriangle, Satellite, Che
 // ============================================================================
 
 const SimulationControlPanel: React.FC<{ expanded: boolean; onToggle: () => void }> = ({ expanded, onToggle }) => {
-  const store = useOrbitalStore();
-  const simulation = store.simulation;
-  const stepSimulation = store.stepSimulation;
-  const setSimulationRunning = store.setSimulationRunning;
-  const resetSimulation = store.resetSimulation;
+  const simulation = useOrbitalStore(state => state.simulation);
+  const stepSimulation = useOrbitalStore(state => state.stepSimulation);
+  const setSimulationRunning = useOrbitalStore(state => state.setSimulationRunning);
+  const resetSimulation = useOrbitalStore(state => state.resetSimulation);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stepSeconds = 60;
@@ -57,12 +56,9 @@ const SimulationControlPanel: React.FC<{ expanded: boolean; onToggle: () => void
     };
   }, []);
 
-  const progressPercent = useMemo(() => {
-    if (simulation.totalSteps === 0) return 0;
-    return (simulation.currentStep / simulation.totalSteps) * 100;
-  }, [simulation.currentStep, simulation.totalSteps]);
+  const progressPercent = simulation.totalSteps === 0 ? 0 : (simulation.currentStep / simulation.totalSteps) * 100;
 
-  const statusColor = useMemo(() => {
+  const statusColor = (() => {
     switch (simulation.status) {
       case 'running': return '#00FFFF';
       case 'paused': return '#D29922';
@@ -70,13 +66,12 @@ const SimulationControlPanel: React.FC<{ expanded: boolean; onToggle: () => void
       case 'error': return '#FF0033';
       default: return '#888888';
     }
-  }, [simulation.status]);
+  })();
 
   return (
     <div className="glass-panel rounded-lg mb-4 overflow-hidden transition-all duration-300"
       style={{ background: 'rgba(0, 0, 0, 0.60)', backdropFilter: 'blur(12px)', border: `1px solid ${statusColor}40` }}>
       
-      {/* Header (always visible) */}
       <div 
         className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-white/5 transition-colors"
         onClick={onToggle}
@@ -99,10 +94,8 @@ const SimulationControlPanel: React.FC<{ expanded: boolean; onToggle: () => void
         </div>
       </div>
 
-      {/* Collapsible content */}
       {expanded && (
         <div className="p-4 pt-2">
-          {/* Progress Bar */}
           <div className="mb-4">
             <div className="flex justify-between text-[10px] font-mono mb-1.5">
               <span style={{ color: '#888888' }}>PROGRESS</span>
@@ -122,7 +115,6 @@ const SimulationControlPanel: React.FC<{ expanded: boolean; onToggle: () => void
             </div>
           </div>
 
-          {/* Buttons */}
           <div className="grid grid-cols-4 gap-2 mb-4">
             <button
               onClick={startSimulation}
@@ -170,7 +162,6 @@ const SimulationControlPanel: React.FC<{ expanded: boolean; onToggle: () => void
             </button>
           </div>
 
-          {/* Stats */}
           <div className="grid grid-cols-2 gap-2">
             <div className="p-2 bg-black/40 rounded border border-red-900/20">
               <div className="text-[8px] font-mono text-muted-gray mb-1">MANEUVERS</div>
@@ -373,14 +364,13 @@ const FPSMonitor: React.FC = () => {
 };
 
 // ============================================================================
-// MAIN DASHBOARD LAYOUT (with expandable sections)
+// MAIN DASHBOARD LAYOUT
 // ============================================================================
 
 export const DashboardLayout: React.FC = React.memo(() => {
-  const store = useOrbitalStore();
-  const satelliteCount = useMemo(() => selectSatelliteCount(store), [store]);
-  const debrisCount = useMemo(() => selectDebrisCount(store), [store]);
-  const connectionState = useMemo(() => selectConnectionState(store), [store]);
+  const satelliteCount = useOrbitalStore(selectSatelliteCount);
+  const debrisCount = useOrbitalStore(selectDebrisCount);
+  const connectionState = useOrbitalStore(selectConnectionState);
 
   // Section expansion states
   const [simExpanded, setSimExpanded] = useState(true);
