@@ -101,18 +101,21 @@ interface OrbitalState {
 
   // Simulation (tracked locally)
   simulation: {
-  status: 'idle' | 'running' | 'paused' | 'completed' | 'error';
-  currentStep: number;
-  totalSteps: number;
-  collisionsDetected: number;
-  maneuversExecuted: number;
-  lastStepResponse: SimulationStepResponse | null;
-  error: string | null;
-};
+    status: 'idle' | 'running' | 'paused' | 'completed' | 'error';
+    currentStep: number;
+    totalSteps: number;
+    collisionsDetected: number;
+    maneuversExecuted: number;
+    lastStepResponse: SimulationStepResponse | null;
+    error: string | null;
+  };
 
   // UI selection
   selectedSatelliteId: string | null;
   hoveredSatelliteId: string | null;
+
+  // Auto‑sync interval
+  _autoSyncInterval: NodeJS.Timeout | null;
 
   // Actions
   updateTelemetry: (
@@ -144,6 +147,11 @@ interface OrbitalState {
   stepSimulation: (stepSeconds: number) => Promise<SimulationStepResponse>;
   setSimulationRunning: (isRunning: boolean) => void;
   resetSimulation: () => void;
+
+  // NEW: Auto‑sync with backend snapshot
+  syncVisualizationSnapshot: () => Promise<boolean>;
+  startAutoSync: (intervalMs?: number) => void;
+  stopAutoSync: () => void;
 }
 
 // ============================================================================
@@ -167,6 +175,75 @@ function computeHighRiskCount(riskScores: Float32Array): number {
     if (riskScores[i] > 0.8) count++;
   }
   return count;
+}
+
+// Convert backend snapshot to binary buffers (simplified, no worker)
+function snapshotToBinaryBuffers(data: {
+  timestamp: string;
+  satellites: Array<{ id: string; lat: number; lon: number; alt?: number; fuel_kg: number; status: string }>;
+  debris_cloud: Array<[string, number, number, number]>;
+}): {
+  debris: DebrisBinaryData;
+  satellites: SatelliteBinaryData;
+  timestamp: string;
+} {
+  // Satellites
+  const satCount = data.satellites.length;
+  const satPositions = new Float32Array(satCount * 3);
+  const satColors = new Uint8ClampedArray(satCount * 4);
+  const satFuels = new Float32Array(satCount);
+  const satIds: string[] = new Array(satCount);
+  const satStatuses: string[] = new Array(satCount);
+
+  for (let i = 0; i < satCount; i++) {
+    const s = data.satellites[i];
+    satPositions[i * 3] = s.lon;
+    satPositions[i * 3 + 1] = s.lat;
+    satPositions[i * 3 + 2] = (s.alt ?? 400) * 1000; // km → meters
+    satFuels[i] = s.fuel_kg;
+    satIds[i] = s.id;
+    satStatuses[i] = s.status;
+
+    if (s.status === 'CRITICAL') satColors.set([255, 0, 51, 255], i * 4);
+    else if (s.status === 'WARNING') satColors.set([255, 191, 0, 255], i * 4);
+    else satColors.set([0, 255, 255, 255], i * 4);
+  }
+
+  // Debris
+  const debrisCount = data.debris_cloud.length;
+  const debrisPositions = new Float32Array(debrisCount * 3);
+  const debrisColors = new Uint8ClampedArray(debrisCount * 4);
+  const debrisRisk = new Float32Array(debrisCount);
+  const debrisIds: string[] = new Array(debrisCount);
+
+  for (let i = 0; i < debrisCount; i++) {
+    const d = data.debris_cloud[i];
+    debrisPositions[i * 3] = d[2];      // lon
+    debrisPositions[i * 3 + 1] = d[1];  // lat
+    debrisPositions[i * 3 + 2] = d[3] * 1000; // km → meters
+    debrisIds[i] = d[0];
+    debrisRisk[i] = 0;                   // no risk from snapshot
+    debrisColors.set([139, 0, 0, 120], i * 4); // nominal dark red
+  }
+
+  return {
+    debris: {
+      positions: debrisPositions,
+      colors: debrisColors,
+      ids: debrisIds,
+      riskScores: debrisRisk,
+      length: debrisCount,
+    },
+    satellites: {
+      positions: satPositions,
+      colors: satColors,
+      fuels: satFuels,
+      ids: satIds,
+      statuses: satStatuses,
+      length: satCount,
+    },
+    timestamp: data.timestamp,
+  };
 }
 
 // ============================================================================
@@ -205,6 +282,7 @@ const INITIAL_STATE = {
   simulation: INITIAL_SIMULATION,
   selectedSatelliteId: null,
   hoveredSatelliteId: null,
+  _autoSyncInterval: null as NodeJS.Timeout | null,
 };
 
 // ============================================================================
@@ -382,37 +460,37 @@ export const useOrbitalStore = create<OrbitalState>()(
     },
 
     stepSimulation: async (stepSeconds) => {
-    try {
-      const response = await fetch('/api/simulate/step', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ step_seconds: stepSeconds }),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data: SimulationStepResponse = await response.json();
-      set((state) => ({
-        simulation: {
-          ...state.simulation,
-          currentStep: state.simulation.currentStep + 1,
-          collisionsDetected: data.collisions_detected,
-          maneuversExecuted: data.maneuvers_executed,
-          lastStepResponse: data,
-          status: 'running',
-          error: null,
-        },
-      }));
-      return data;
-    } catch (error) {
-      set((state) => ({
-        simulation: {
-          ...state.simulation,
-          status: 'error',
-          error: error instanceof Error ? error.message : 'Unknown error',
-        },
-      }));
-      throw error;
-    }
-  },
+      try {
+        const response = await fetch('/api/simulate/step', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ step_seconds: stepSeconds }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data: SimulationStepResponse = await response.json();
+        set((state) => ({
+          simulation: {
+            ...state.simulation,
+            currentStep: state.simulation.currentStep + 1,
+            collisionsDetected: data.collisions_detected,
+            maneuversExecuted: data.maneuvers_executed,
+            lastStepResponse: data,
+            status: 'running',
+            error: null,
+          },
+        }));
+        return data;
+      } catch (error) {
+        set((state) => ({
+          simulation: {
+            ...state.simulation,
+            status: 'error',
+            error: error instanceof Error ? error.message : 'Unknown error',
+          },
+        }));
+        throw error;
+      }
+    },
 
     setSimulationRunning: (isRunning) => {
       set((state) => ({
@@ -422,8 +500,81 @@ export const useOrbitalStore = create<OrbitalState>()(
         },
       }));
     },
+
     resetSimulation: () => {
       set({ simulation: { ...INITIAL_SIMULATION } });
+    },
+
+    // ==========================================================================
+    // AUTO‑SYNC ACTIONS (NEW)
+    // ==========================================================================
+
+    syncVisualizationSnapshot: async () => {
+      try {
+        const response = await fetch('/api/visualization/snapshot');
+        if (!response.ok) {
+          if (response.status === 404) {
+            console.warn('[Store] /api/visualization/snapshot not implemented');
+            return false;
+          }
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+
+        // Validate structure
+        if (!data.timestamp || !Array.isArray(data.satellites) || !Array.isArray(data.debris_cloud)) {
+          throw new Error('Invalid snapshot structure');
+        }
+
+        // Convert to binary buffers
+        const { debris, satellites, timestamp } = snapshotToBinaryBuffers(data);
+
+        // Update store (same as updateTelemetry but without worker)
+        const state = get();
+        const now = Date.now();
+        set({
+          debris,
+          satellites,
+          timestamp,
+          lastUpdate: now,
+          connectionStatus: {
+            ...state.connectionStatus,
+            state: 'connected',
+            lastSuccessfulFetch: now,
+            consecutiveFailures: 0,
+            error: null,
+          },
+        });
+        return true;
+      } catch (error) {
+        console.error('[Store] syncVisualizationSnapshot failed:', error);
+        get().setConnectionStatus({
+          state: 'error',
+          error: error instanceof Error ? error.message : 'Sync failed',
+        });
+        return false;
+      }
+    },
+
+    startAutoSync: (intervalMs = 2000) => {
+      const { _autoSyncInterval, syncVisualizationSnapshot, stopAutoSync } = get();
+      if (_autoSyncInterval) stopAutoSync();
+
+      const interval = setInterval(() => {
+        syncVisualizationSnapshot();
+      }, intervalMs);
+
+      set({ _autoSyncInterval: interval });
+      console.log(`[Store] Auto-sync started (every ${intervalMs}ms)`);
+    },
+
+    stopAutoSync: () => {
+      const { _autoSyncInterval } = get();
+      if (_autoSyncInterval) {
+        clearInterval(_autoSyncInterval);
+        set({ _autoSyncInterval: null });
+        console.log('[Store] Auto-sync stopped');
+      }
     },
   }))
 );
@@ -474,5 +625,13 @@ export const selectManeuversForSatellite = (state: OrbitalState, satelliteId: st
   !satelliteId ? state.maneuvers : state.maneuvers.filter((m) => m.satellite_id === satelliteId);
 
 export const selectSimulationState = (state: OrbitalState) => state.simulation;
+
+// NEW: Simulation time selector and formatter
+export const selectSimulationTime = (state: OrbitalState) => state.timestamp;
+export const formatSimulationTime = (timestamp: string | null): string => {
+  if (!timestamp) return '--:--:--';
+  const date = new Date(timestamp);
+  return date.toISOString().replace('T', ' ').substring(0, 19) + 'Z';
+};
 
 export default useOrbitalStore;

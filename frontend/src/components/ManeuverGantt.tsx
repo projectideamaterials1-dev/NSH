@@ -1,8 +1,8 @@
 // src/components/ManeuverGantt.tsx
 // Optimized Maneuver Timeline / Gantt Scheduler
-// Millisecond Precision | Conflict Detection | Blackout Flags
+// Simulation‑Time Bound | Millisecond Precision | Conflict Detection
 
-import React, { useMemo, useCallback, useState, useEffect } from 'react';
+import React, { useMemo, useCallback, useState } from 'react';
 import useOrbitalStore, {
   selectSelectedSatellite,
   selectManeuversForSatellite,
@@ -14,7 +14,7 @@ import type { ManeuverEvent } from '../store/useOrbitalStore';
 // ============================================================================
 
 interface TimelineWindow {
-  start: number;      // ms
+  start: number;      // ms (simulation time)
   end: number;        // ms
   duration: number;   // ms
 }
@@ -76,8 +76,8 @@ const formatTimestamp = (ms: number): string => {
   return `${d.getUTCHours().toString().padStart(2, '0')}:${d.getUTCMinutes().toString().padStart(2, '0')}:${d.getUTCSeconds().toString().padStart(2, '0')}Z`;
 };
 
-const formatRelativeTime = (ms: number, now: number): string => {
-  const diff = ms - now;
+const formatRelativeTime = (ms: number, simNow: number): string => {
+  const diff = ms - simNow;
   const minutes = Math.floor(Math.abs(diff) / 60000);
   const seconds = Math.floor((Math.abs(diff) % 60000) / 1000);
   if (Math.abs(diff) < 1000) return 'NOW';
@@ -97,7 +97,7 @@ const isEclipseAtTime = (satLat: number, satLon: number, burnTimeMs: number): bo
   while (sunLon <= -180) sunLon += 360;
   while (sunLon > 180) sunLon -= 360;
 
-  const dtMs = burnTimeMs - Date.now();
+  const dtMs = burnTimeMs - (Date.now()); // note: uses real now for rough projection
   const projectedLon = satLon + (dtMs / 1000) * 0.000185; // approx 1° per 90 min
 
   const latRad = satLat * Math.PI / 180;
@@ -120,24 +120,19 @@ export const ManeuverGantt: React.FC = React.memo(() => {
     selectManeuversForSatellite(state, selectedSatellite?.id ?? null)
   );
 
-  const [currentTime, setCurrentTime] = useState(Date.now());
+  // 🔥 CRITICAL FIX: Use simulation time from store, not real clock
+  const simTime = useOrbitalStore(state => state.timestamp);
+  const simTimeMs = useMemo(() => simTime ? new Date(simTime).getTime() : Date.now(), [simTime]);
+
   const [hoveredManeuverId, setHoveredManeuverId] = useState<string | null>(null);
 
-  // Update current time less frequently (2 Hz) – enough for smooth timeline scrolling
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentTime(Date.now());
-    }, 500); // 500ms = 2 FPS for timeline movement
-    return () => clearInterval(interval);
-  }, []);
-
-  // Timeline window around current time
+  // Timeline window around simulation time (no interval needed)
   const timelineWindow = useMemo<TimelineWindow>(() => {
     const halfWindow = (THEME.TIMELINE_WINDOW_MINUTES / 2) * 60000;
-    const start = currentTime - halfWindow;
-    const end = currentTime + halfWindow;
+    const start = simTimeMs - halfWindow;
+    const end = simTimeMs + halfWindow;
     return { start, end, duration: end - start };
-  }, [currentTime]);
+  }, [simTimeMs]);
 
   // Build maneuver blocks
   const maneuverBlocks = useMemo<ManeuverBlock[]>(() => {
@@ -158,9 +153,9 @@ export const ManeuverGantt: React.FC = React.memo(() => {
       const burnWidthPct = Math.max(0.5, burnEndPct - startPct);
       const cooldownWidthPct = Math.max(0, cooldownEndPct - burnEndPct);
 
-      const isPast = burnEndMs < currentTime;
-      const isCurrent = burnStartMs <= currentTime && burnEndMs >= currentTime;
-      const isFuture = burnStartMs > currentTime;
+      const isPast = burnEndMs < simTimeMs;
+      const isCurrent = burnStartMs <= simTimeMs && burnEndMs >= simTimeMs;
+      const isFuture = burnStartMs > simTimeMs;
 
       const isBlackout = isEclipseAtTime(selectedSatellite.lat, selectedSatellite.lon, burnStartMs);
 
@@ -191,7 +186,7 @@ export const ManeuverGantt: React.FC = React.memo(() => {
     }
 
     return blocks;
-  }, [selectedSatellite, satelliteManeuvers, timelineWindow, currentTime]);
+  }, [selectedSatellite, satelliteManeuvers, timelineWindow, simTimeMs]);
 
   // Stable callbacks
   const getManeuverConfig = useCallback((type: string): ManeuverTypeConfig => {
@@ -259,7 +254,7 @@ export const ManeuverGantt: React.FC = React.memo(() => {
               <div
                 className="absolute inset-0 flex"
                 style={{
-                  transform: `translateX(-${((currentTime % 60000) / 60000) * 10}%)`,
+                  transform: `translateX(-${((simTimeMs % 60000) / 60000) * 10}%)`,
                   width: '110%',
                 }}
               >
@@ -272,7 +267,7 @@ export const ManeuverGantt: React.FC = React.memo(() => {
                 ))}
               </div>
 
-              {/* T‑0 playhead */}
+              {/* T‑0 playhead (current simulation time) */}
               <div
                 className="absolute top-0 bottom-0 w-px z-20"
                 style={{
@@ -390,7 +385,7 @@ export const ManeuverGantt: React.FC = React.memo(() => {
                                   : 'text-plasma-cyan'
                               }
                             >
-                              {formatRelativeTime(block.burnStartMs, currentTime)}
+                              {formatRelativeTime(block.burnStartMs, simTimeMs)}
                             </span>
                           </div>
                           <div className="flex justify-between">

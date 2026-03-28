@@ -130,12 +130,20 @@ const LocalClock: React.FC = React.memo(() => {
     const interval = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // Format in IST (Indian Standard Time)
+  const istTime = time.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+
   return (
     <div className="flex items-center gap-2 text-[9px] font-mono opacity-50">
-      <span style={{ color: THEME.COLORS.MUTED_GRAY }}>LOCAL:</span>
-      <span style={{ color: THEME.COLORS.MUTED_GRAY }}>
-        {time.toISOString().split('T')[1].split('.')[0]}Z
-      </span>
+      <span style={{ color: THEME.COLORS.MUTED_GRAY }}>IST:</span>
+      <span style={{ color: THEME.COLORS.MUTED_GRAY }}>{istTime}Z</span>
     </div>
   );
 });
@@ -375,14 +383,14 @@ const HeaderContent: React.FC = () => {
 
         <div className="flex items-center gap-2 px-3 py-1.5 bg-black/40 border border-red-900/40 rounded">
           <span className="text-[10px] font-mono" style={{ color: THEME.COLORS.MUTED_GRAY }}>
-            v2.0.4
+            Space
           </span>
-          <span className="text-[8px] font-mono opacity-50">///</span>
+          <span className="text-[8px] font-mono opacity-50">-LEO-</span>
           <span
             className="text-[10px] font-mono font-bold tracking-wider"
             style={{ color: THEME.COLORS.LASER_RED }}
           >
-            CYBER-COMMAND
+            CYBERCOMMAND
           </span>
         </div>
       </div>
