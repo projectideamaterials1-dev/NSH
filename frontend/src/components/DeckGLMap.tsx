@@ -1,10 +1,10 @@
 // src/components/DeckGLMap.tsx
 // National Space Hackathon 2026 – Orbital Insight Visualizer
-// ✅ Actual trails only (red base, selected bright red)
-// ✅ Burn markers from store maneuvers
-// ✅ Debris markers, ground stations, LOS arcs
+// ✅ All utility functions included (terminator, elevation, shadow, etc.)
+// ✅ Actual trails only (red base, selected bright red) – single world copy
+// ✅ Burn markers from store maneuvers – single world copy
+// ✅ Debris markers, ground stations, LOS arcs – triple world copies
 // ✅ Camera tracking for selected satellite
-// ✅ All utility functions included, TypeScript errors fixed
 
 import React, { useMemo, useState, useEffect, useRef, useCallback, Component, ErrorInfo, ReactNode } from 'react';
 import DeckGL from '@deck.gl/react';
@@ -235,7 +235,7 @@ export const DeckGLMap: React.FC = React.memo(() => {
   }, [isTracking, selectedSat?.lon, selectedSat?.lat]);
 
   // ==========================================================================
-  // 4. DATA PREPARATION – ACTUAL TRAILS ONLY
+  // 4. DATA PREPARATION – ACTUAL TRAILS ONLY (single world copy)
   // ==========================================================================
   const historicalTrailCopies = useMemo<TrailData[]>(() => {
     if (!trails || Object.keys(trails).length === 0) return [];
@@ -246,13 +246,12 @@ export const DeckGLMap: React.FC = React.memo(() => {
       const unwrapped = unwrapTrailCoordinates(rawPoints);
       const downsampled = downsampleTrail(unwrapped, TRAIL_DOWNSAMPLE_FACTOR);
       if (downsampled.length > 1) {
-        for (const offset of WORLD_OFFSETS) {
-          copies.push({
-            id: `${trail.satelliteId}_${offset}`,
-            parentId: trail.satelliteId,
-            path: downsampled.map(([lon, lat]) => [lon + offset, lat]),
-          });
-        }
+        // Only the primary copy (offset 0) – map repeats automatically
+        copies.push({
+          id: `${trail.satelliteId}`,
+          parentId: trail.satelliteId,
+          path: downsampled,
+        });
       }
     }
     return copies;
@@ -264,29 +263,27 @@ export const DeckGLMap: React.FC = React.memo(() => {
   }, [historicalTrailCopies, selectedSatelliteId]);
 
   // ==========================================================================
-  // 5. BURN MARKERS
+  // 5. BURN MARKERS (single world copy)
   // ==========================================================================
   const burnMarkers = useMemo<BurnMarker[]>(() => {
     if (!maneuvers || maneuvers.length === 0) return [];
     const markers: BurnMarker[] = [];
     for (const m of maneuvers) {
       if (m.lat !== undefined && m.lon !== undefined && Number.isFinite(m.lat) && Number.isFinite(m.lon)) {
-        for (const offset of WORLD_OFFSETS) {
-          markers.push({
-            position: [m.lon + offset, m.lat],
-            id: `${m.burn_id}_${offset}`,
-            satelliteId: m.satellite_id,
-            deltaV: m.delta_v_magnitude,
-            burnTime: m.burnTime,
-          });
-        }
+        markers.push({
+          position: [m.lon, m.lat],
+          id: m.burn_id,
+          satelliteId: m.satellite_id,
+          deltaV: m.delta_v_magnitude,
+          burnTime: m.burnTime,
+        });
       }
     }
     return markers;
   }, [maneuvers]);
 
   // ==========================================================================
-  // 6. OTHER DATA (terminator, arc data, debris, satellites)
+  // 6. OTHER DATA (terminator, arc data, debris, satellites – triple copies)
   // ==========================================================================
   const terminatorCopies = useMemo(() => {
     if (terminatorPoints.length === 0) return [];
@@ -309,7 +306,7 @@ export const DeckGLMap: React.FC = React.memo(() => {
   }, [selectedSat, hoveredSat]);
 
   // ==========================================================================
-  // 7. INSTANCED BUFFERS (optimised)
+  // 7. INSTANCED BUFFERS (triple copies)
   // ==========================================================================
   const instancedDebris = useMemo(() => {
     if (!debris || debris.length === 0 || !debris.positions || !debris.colors) return null;
@@ -372,12 +369,12 @@ export const DeckGLMap: React.FC = React.memo(() => {
   }, [satellites]);
 
   // ==========================================================================
-  // 8. WEBGL LAYERS (actual trails + burn markers)
+  // 8. WEBGL LAYERS (actual trails + burn markers – single copy)
   // ==========================================================================
   const layers = useMemo(() => {
     const layerList: any[] = [];
 
-    // Terminator
+    // Terminator (triple copies)
     if (terminatorCopies.length > 0) {
       layerList.push(new PolygonLayer({
         id: 'terminator',
@@ -390,7 +387,7 @@ export const DeckGLMap: React.FC = React.memo(() => {
       }));
     }
 
-    // ACTUAL TRAILS – unselected (faint red)
+    // ACTUAL TRAILS – unselected (faint red, single copy)
     if (historicalTrailCopies.length > 0) {
       layerList.push(new PathLayer({
         id: 'historical-trails-base',
@@ -414,7 +411,7 @@ export const DeckGLMap: React.FC = React.memo(() => {
       }));
     }
 
-    // ACTUAL TRAILS – selected (bright red glow)
+    // ACTUAL TRAILS – selected (bright red glow, single copy)
     if (highlightedHistoricalTrails.length > 0) {
       layerList.push(
         new PathLayer({
@@ -440,7 +437,7 @@ export const DeckGLMap: React.FC = React.memo(() => {
       );
     }
 
-    // BURN MARKERS (orange)
+    // BURN MARKERS (orange, single copy)
     if (burnMarkers.length > 0) {
       layerList.push(new ScatterplotLayer({
         id: 'burn-markers',
@@ -455,13 +452,12 @@ export const DeckGLMap: React.FC = React.memo(() => {
         highlightColor: [255, 255, 255, 255],
         wrapLongitude: false,
         onHover: ({ object }: { object?: BurnMarker }) => {
-          // optional: tooltip logging (can be replaced with actual tooltip)
           if (object) console.log(`Burn: ${object.satelliteId} Δv=${object.deltaV.toFixed(3)} m/s`);
         },
       }));
     }
 
-    // Debris field
+    // Debris field (triple copies)
     if (instancedDebris) {
       layerList.push(new ScatterplotLayer({
         id: 'debris',
@@ -480,7 +476,7 @@ export const DeckGLMap: React.FC = React.memo(() => {
       }));
     }
 
-    // Ground stations
+    // Ground stations (triple copies)
     layerList.push(new ScatterplotLayer({
       id: 'ground-stations',
       data: GROUND_STATIONS.flatMap(gs => WORLD_OFFSETS.map(offset => ({
@@ -498,7 +494,7 @@ export const DeckGLMap: React.FC = React.memo(() => {
       wrapLongitude: false,
     }));
 
-    // Satellites (instanced, clickable)
+    // Satellites (triple copies, clickable)
     if (instancedSatellites) {
       layerList.push(new ScatterplotLayer({
         id: 'satellites',
@@ -543,7 +539,7 @@ export const DeckGLMap: React.FC = React.memo(() => {
       }));
     }
 
-    // Target lock indicator
+    // Target lock indicator (triple copies)
     if (selectedSat && Number.isFinite(selectedSat.lon) && Number.isFinite(selectedSat.lat)) {
       const lockData = WORLD_OFFSETS.map(offset => ({
         ...selectedSat,
@@ -565,7 +561,7 @@ export const DeckGLMap: React.FC = React.memo(() => {
       }));
     }
 
-    // LOS arcs
+    // LOS arcs (triple copies)
     if (arcData.length > 0) {
       layerList.push(new ArcLayer({
         id: 'los-arc',

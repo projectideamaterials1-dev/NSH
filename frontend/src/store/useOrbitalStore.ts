@@ -171,6 +171,8 @@ function appendTrails(stateTrails: Record<string, SatelliteTrail>, satellites: S
       satellites.positions[i * 3 + 2],
     ];
     const existing = stateTrails[id];
+    // Optional log to confirm trail creation
+    // if (!existing) console.log(`[Store] Created trail for ${id}`);
     const updatedPositions = existing ? [...existing.positions, pos] : [pos];
     const updatedTimestamps = existing ? [...existing.timestamps, timestamp] : [timestamp];
     if (updatedPositions.length > CONSTANTS.MAX_TRAIL_POINTS) {
@@ -222,33 +224,54 @@ function inferManeuverFromFuelDrop(
   };
 }
 
+// src/store/useOrbitalStore.ts
+// (full file as above, but with logging added – I'll show only the modified sections)
+
+// ============================================================================
+// DETECT MANEUVERS (with logging)
+// ============================================================================
+
 function detectManeuvers(
   oldSatellites: SatelliteBinaryData | null,
   newSatellites: SatelliteBinaryData,
   timestamp: string,
   existingManeuvers: ManeuverEvent[]
 ): ManeuverEvent[] {
-  if (!oldSatellites || oldSatellites.length !== newSatellites.length) return [];
+  if (!oldSatellites || oldSatellites.length !== newSatellites.length) {
+    console.log('[Store] detectManeuvers: old or new satellites missing/length mismatch', {
+      oldLength: oldSatellites?.length,
+      newLength: newSatellites.length,
+    });
+    return [];
+  }
 
   const newManeuvers: ManeuverEvent[] = [];
   for (let i = 0; i < newSatellites.length; i++) {
     const id = newSatellites.ids[i];
     const oldFuel = oldSatellites.fuels[i];
     const newFuel = newSatellites.fuels[i];
-
-    if (oldFuel > newFuel + 0.001) {
+    const diff = oldFuel - newFuel;
+    if (diff > 0.001) {
+      console.log(`[Store] Fuel drop for ${id}: ${oldFuel.toFixed(4)} -> ${newFuel.toFixed(4)} kg (Δ = ${diff.toFixed(4)} kg)`);
       const lon = newSatellites.positions[i * 3];
       const lat = newSatellites.positions[i * 3 + 1];
-
       const inferred = inferManeuverFromFuelDrop(id, oldFuel, newFuel, timestamp, lat, lon);
       if (inferred) {
+        // check duplicate
         const exists = existingManeuvers.some(
           m =>
             m.satellite_id === id &&
             Math.abs(m.delta_v_magnitude - inferred.delta_v_magnitude) < 0.001 &&
             Math.abs(new Date(m.burnTime).getTime() - new Date(timestamp).getTime()) < 5000
         );
-        if (!exists) newManeuvers.push(inferred);
+        if (!exists) {
+          console.log(`[Store] ✅ Inferred new maneuver for ${id}`, inferred);
+          newManeuvers.push(inferred);
+        } else {
+          console.log(`[Store] ⚠️ Duplicate maneuver for ${id} ignored`);
+        }
+      } else {
+        console.log(`[Store] inferManeuverFromFuelDrop returned null for ${id} (diff=${diff})`);
       }
     }
   }
@@ -452,18 +475,26 @@ export const useOrbitalStore = create<OrbitalState>()(
       }
     },
 
+
     // ==========================================================================
-    // SNAPSHOT POLLING (HTTP)
+    // SNAPSHOT POLLING (with logging)
     // ==========================================================================
 
     syncVisualizationSnapshot: async () => {
       try {
+        console.log('[Store] Fetching /api/visualization/snapshot...');
         const response = await fetch('/api/visualization/snapshot');
         if (!response.ok) {
           if (response.status === 404) return false;
           throw new Error(`HTTP ${response.status}`);
         }
         const data = await response.json();
+        console.log('[Store] Snapshot received:', {
+          timestamp: data.timestamp,
+          satelliteCount: data.satellites.length,
+          firstSat: data.satellites[0],
+        });
+
         if (!data.timestamp || !Array.isArray(data.satellites) || !Array.isArray(data.debris_cloud))
           throw new Error('Invalid snapshot structure');
 
@@ -471,9 +502,22 @@ export const useOrbitalStore = create<OrbitalState>()(
         const state = get();
         const now = Date.now();
 
+        // Log fuels from old state (if any)
+        if (state.satellites) {
+          console.log('[Store] Old fuel samples:', Array.from(state.satellites.fuels).slice(0, 5).map(f => f.toFixed(4)));
+        } else {
+          console.log('[Store] No previous satellites state (first snapshot)');
+        }
+        console.log('[Store] New fuel samples:', Array.from(satellites.fuels).slice(0, 5).map(f => f.toFixed(4)));
+
         // 1. Detect maneuvers (fuel drops)
         const newManeuvers = detectManeuvers(state.satellites, satellites, timestamp, state.maneuvers);
-        if (newManeuvers.length > 0) get().addManeuvers(newManeuvers);
+        if (newManeuvers.length > 0) {
+          console.log(`[Store] 🔥 Adding ${newManeuvers.length} new maneuvers`);
+          get().addManeuvers(newManeuvers);
+        } else {
+          console.log('[Store] No new maneuvers detected');
+        }
 
         // 2. Update trails
         const newTrails = appendTrails(state.trails, satellites, timestamp);
@@ -494,7 +538,7 @@ export const useOrbitalStore = create<OrbitalState>()(
           },
         });
 
-        // 4. 🔥 ADD FUEL METRIC (same as in updateTelemetry)
+        // 4. Add fuel metric (throttled)
         const lastMetric = state.fuelHistory[state.fuelHistory.length - 1];
         const lastUpdateTime = lastMetric?._updateTime ?? 0;
         if (now - lastUpdateTime >= CONSTANTS.FUEL_UPDATE_INTERVAL_MS && satellites.length > 0) {
@@ -508,10 +552,12 @@ export const useOrbitalStore = create<OrbitalState>()(
             maneuversExecuted: state.maneuvers.length,
             _updateTime: now,
           });
+          console.log('[Store] Added fuel metric:', { timestamp, totalFuelKg: totalFuel.toFixed(2), avg: (totalFuel / satellites.fuels.length).toFixed(2) });
         }
 
         return true;
       } catch (error) {
+        console.error('[Store] syncVisualizationSnapshot failed:', error);
         get().setConnectionStatus({
           state: 'error',
           error: error instanceof Error ? error.message : 'Sync failed',
@@ -519,7 +565,6 @@ export const useOrbitalStore = create<OrbitalState>()(
         return false;
       }
     },
-
     // ==========================================================================
     // SIMPLE SETTERS
     // ==========================================================================

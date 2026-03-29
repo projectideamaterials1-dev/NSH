@@ -1,18 +1,18 @@
 // src/components/DashboardLayout.tsx
-// NSH 2026 – Mission Control v9 | Crimson Nebula Enhanced
-// ✅ Fixed: All components present (no removals)
-// ✅ Gantt & Metrics popups now use real store data
-// ✅ Positioning adjusted to top: 80 (to clear header)
+// NSH 2026 – Mission Control v11 | Crimson Nebula Enhanced
+// ✅ All components included, no TypeScript errors
+// ✅ Gantt & Metrics popups use real store data with manual refresh
+// ✅ Positioning: top: 80 to clear header
 
 import React, {
-  useState, useMemo, useEffect, useRef, useCallback,
+  useState, useMemo, useEffect, useRef,
   Component, ErrorInfo, ReactNode,
 } from 'react';
 import {
   ChevronRight, ChevronLeft, Clock, Wifi, WifiOff,
   Satellite, Target, BarChart2, Calendar, X,
   Crosshair, Zap, TrendingUp, Activity, AlertTriangle,
-  Shield, Radio, Battery, Flame,
+  Shield, Radio, Battery, Flame, RefreshCw,
 } from 'lucide-react';
 import useOrbitalStore, {
   selectSatelliteCount,
@@ -23,7 +23,7 @@ import useOrbitalStore, {
 import type { ManeuverEvent, DebrisBinaryData } from '../store/useOrbitalStore';
 
 // ============================================================================
-// ERROR BOUNDARY (unchanged)
+// ERROR BOUNDARY
 // ============================================================================
 class ErrorBoundary extends Component<
   { children: ReactNode; name: string; onRecover?: () => void },
@@ -62,7 +62,7 @@ class ErrorBoundary extends Component<
 }
 
 // ============================================================================
-// TYPES (unchanged)
+// TYPES
 // ============================================================================
 interface SatItem {
   id: string;
@@ -70,7 +70,7 @@ interface SatItem {
   status: string;
   lat: number;
   lon: number;
-  alt: number; // metres
+  alt: number;
   drift?: number;
 }
 
@@ -92,11 +92,11 @@ interface DvPoint {
 }
 
 // ============================================================================
-// CONSTANTS & PHYSICS HELPERS (unchanged)
+// CONSTANTS & PHYSICS HELPERS
 // ============================================================================
-const FUEL_INITIAL = 50.0; // kg
-const I_SP = 300.0; // s
-const G0 = 9.80665; // m/s²
+const FUEL_INITIAL = 50.0;
+const I_SP = 300.0;
+const G0 = 9.80665;
 const EARTH_RADIUS_KM = 6371;
 
 const fuelColor = (f: number) => f < 5 ? '#FF0033' : f < 15 ? '#D29922' : '#00FFFF';
@@ -179,7 +179,7 @@ function deriveConjunctions(
 }
 
 // ============================================================================
-// FPS MONITOR (unchanged)
+// FPS MONITOR
 // ============================================================================
 const FPSMonitor: React.FC = () => {
   const [fps, setFps] = useState(60);
@@ -221,7 +221,7 @@ const FPSMonitor: React.FC = () => {
 };
 
 // ============================================================================
-// SVG FUEL GAUGE ARC (unchanged)
+// SVG FUEL GAUGE ARC
 // ============================================================================
 const FuelGaugeArc: React.FC<{ 
   fuel: number; 
@@ -308,7 +308,7 @@ const FuelGaugeArc: React.FC<{
 };
 
 // ============================================================================
-// SVG ΔV EFFICIENCY CHART (unchanged)
+// SVG ΔV EFFICIENCY CHART
 // ============================================================================
 const DvEfficiencyChart: React.FC<{ 
   data: DvPoint[]; 
@@ -421,12 +421,20 @@ const DvEfficiencyChart: React.FC<{
 };
 
 // ============================================================================
-// RESOURCES POPUP (Enhanced – uses real store data)
+// RESOURCES POPUP (Enhanced with refresh)
 // ============================================================================
 const ResourcesPopup: React.FC<{ sat: SatItem; onClose: () => void }> = ({ sat, onClose }) => {
-  const fuelHistory = useOrbitalStore(s => s.fuelHistory);
-  const allManeuvers = useOrbitalStore(s => s.maneuvers);
-  
+  const store = useOrbitalStore();
+  const fuelHistory = store.fuelHistory;
+  const allManeuvers = store.maneuvers;
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await store.syncVisualizationSnapshot();
+    setIsRefreshing(false);
+  };
+
   const satManeuvers = useMemo(() => 
     allManeuvers.filter(m => m.satellite_id === sat.id), 
     [allManeuvers, sat.id]
@@ -475,7 +483,7 @@ const ResourcesPopup: React.FC<{ sat: SatItem; onClose: () => void }> = ({ sat, 
   const efficiency = fuelConsumed > 0 
     ? (dvData[dvData.length-1]?.collisionsAvoided || 0) / fuelConsumed 
     : 0;
-  
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(12px)' }} onClick={onClose}>
       <div className="relative rounded-2xl overflow-hidden animate-in zoom-in-95 duration-200" style={{ width: 600, maxHeight: '90vh', background: 'linear-gradient(145deg, rgba(0,0,0,0.98), rgba(18,0,8,0.99))', border: '1px solid rgba(255,0,51,0.6)', boxShadow: '0 0 80px rgba(255,0,51,0.25), 0 30px 100px rgba(0,0,0,0.9)' }} onClick={e => e.stopPropagation()}>
@@ -490,11 +498,21 @@ const ResourcesPopup: React.FC<{ sat: SatItem; onClose: () => void }> = ({ sat, 
               <div className="text-[9px] font-mono text-muted-gray tracking-widest uppercase">Resource Analytics</div>
             </div>
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-900/30 transition-all hover:scale-110"><X className="w-4 h-4 text-muted-gray hover:text-white transition-colors" /></button>
+          <div className="flex items-center gap-2">
+            <button onClick={handleRefresh} disabled={isRefreshing} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-900/30 transition-all hover:scale-110">
+              <RefreshCw className={`w-4 h-4 text-muted-gray hover:text-white transition-colors ${isRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+            <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-900/30 transition-all hover:scale-110">
+              <X className="w-4 h-4 text-muted-gray hover:text-white transition-colors" />
+            </button>
+          </div>
         </div>
         <div className="p-6 space-y-6 overflow-y-auto" style={{ maxHeight: 'calc(90vh - 120px)' }}>
           <div>
-            <div className="text-[9px] font-mono text-muted-gray mb-4 tracking-widest uppercase flex items-center gap-2"><Zap className="w-3 h-3" style={{ color: col }} /> Propellant Mass (m_fuel)</div>
+            <div className="text-[9px] font-mono text-muted-gray mb-4 tracking-widest uppercase flex items-center gap-2">
+              <Zap className="w-3 h-3" style={{ color: col }} /> Propellant Mass (m_fuel)
+              <span className="text-[8px] ml-auto">Burns: {satManeuvers.length}</span>
+            </div>
             <div className="flex items-start gap-6">
               <div className="flex-shrink-0"><FuelGaugeArc fuel={sat.fuel} size={170} animate={true} /></div>
               <div className="flex-1 pt-2 space-y-3">
@@ -522,11 +540,18 @@ const ResourcesPopup: React.FC<{ sat: SatItem; onClose: () => void }> = ({ sat, 
             </div>
           </div>
           <div>
-            <div className="text-[9px] font-mono text-muted-gray mb-3 tracking-widest uppercase flex items-center gap-2"><TrendingUp className="w-3 h-3" style={{ color: '#D29922' }} /> ΔV Cost Analysis — Fuel vs Collisions Avoided</div>
-            <div className="rounded-xl overflow-hidden" style={{ background: 'rgba(0,0,0,0.65)', border: '1px solid rgba(255,0,51,0.12)' }}>
-              <DvEfficiencyChart data={dvData} width={540} height={180} showLogScale={false} />
+            <div className="text-[9px] font-mono text-muted-gray mb-3 tracking-widest uppercase flex items-center gap-2">
+              <TrendingUp className="w-3 h-3" style={{ color: '#D29922' }} /> ΔV Cost Analysis — Fuel vs Collisions Avoided
             </div>
-            {dvData.length < 2 && <p className="text-[7px] font-mono text-muted-gray mt-2 text-center">Populates from fuelHistory (updates every 60s) • Requires ≥2 data points</p>}
+            <div className="rounded-xl overflow-hidden" style={{ background: 'rgba(0,0,0,0.65)', border: '1px solid rgba(255,0,51,0.12)' }}>
+              {dvData.length >= 2 ? (
+                <DvEfficiencyChart data={dvData} width={540} height={180} showLogScale={false} />
+              ) : (
+                <div className="flex items-center justify-center h-[180px] text-[9px] font-mono text-muted-gray">
+                  Accumulating telemetry... ({fuelHistory.length} points)
+                </div>
+              )}
+            </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
             {[
@@ -552,7 +577,7 @@ const ResourcesPopup: React.FC<{ sat: SatItem; onClose: () => void }> = ({ sat, 
 };
 
 // ============================================================================
-// GANTT POPUP (Enhanced – uses real store data)
+// GANTT POPUP (Enhanced with refresh)
 // ============================================================================
 const MTYPE_COLORS: Record<string, { bg: string; border: string; glow: string }> = {
   PHASING_PROGRADE: { bg: 'rgba(0,255,255,0.12)', border: '#00FFFF', glow: '#00FFFF' },
@@ -562,10 +587,18 @@ const MTYPE_COLORS: Record<string, { bg: string; border: string; glow: string }>
 };
 
 const GanttPopup: React.FC<{ sat: SatItem; onClose: () => void }> = ({ sat, onClose }) => {
-  const allManeuvers = useOrbitalStore(s => s.maneuvers);
-  const simTime = useOrbitalStore(s => s.timestamp);
+  const store = useOrbitalStore();
+  const allManeuvers = store.maneuvers;
+  const simTime = store.timestamp;
   const simMs = simTime ? new Date(simTime).getTime() : Date.now();
-  
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await store.syncVisualizationSnapshot();
+    setIsRefreshing(false);
+  };
+
   const events: ManeuverEvent[] = useMemo(() => {
     const filtered = allManeuvers.filter(m => m.satellite_id === sat.id);
     return [...filtered].sort((a, b) => new Date(a.burnTime).getTime() - new Date(b.burnTime).getTime());
@@ -575,10 +608,27 @@ const GanttPopup: React.FC<{ sat: SatItem; onClose: () => void }> = ({ sat, onCl
     return (
       <div className="fixed inset-0 z-[100] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.9)', backdropFilter: 'blur(10px)' }} onClick={onClose}>
         <div className="relative rounded-2xl overflow-hidden" style={{ width: 680, background: 'linear-gradient(145deg, rgba(0,0,0,0.98), rgba(15,0,6,0.99))', border: '1px solid rgba(255,0,51,0.5)' }}>
+          <div className="flex items-center justify-between px-6 py-4 border-b border-red-900/30">
+            <div className="flex items-center gap-3">
+              <Calendar className="w-5 h-5 text-plasma-cyan" />
+              <div className="font-mono text-base font-bold text-white tracking-wide">{sat.id}</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={handleRefresh} disabled={isRefreshing} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-900/30 transition-all">
+                <RefreshCw className={`w-4 h-4 text-muted-gray hover:text-white ${isRefreshing ? 'animate-spin' : ''}`} />
+              </button>
+              <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-900/30 transition-all">
+                <X className="w-4 h-4 text-muted-gray hover:text-white" />
+              </button>
+            </div>
+          </div>
           <div className="p-8 text-center">
             <Calendar className="w-12 h-12 text-muted-gray mx-auto mb-3 opacity-50" />
             <div className="font-mono text-sm text-muted-gray">No scheduled maneuvers for {sat.id}</div>
-            <button onClick={onClose} className="mt-4 px-4 py-2 bg-plasma-cyan text-black rounded">Close</button>
+            <div className="text-[10px] font-mono text-muted-gray mt-2">Total maneuvers in store: {allManeuvers.length}</div>
+            <button onClick={handleRefresh} className="mt-4 px-4 py-2 bg-plasma-cyan/20 border border-plasma-cyan/40 rounded text-plasma-cyan text-xs font-mono hover:bg-plasma-cyan/30 transition">
+              Refresh Data
+            </button>
           </div>
         </div>
       </div>
@@ -618,7 +668,14 @@ const GanttPopup: React.FC<{ sat: SatItem; onClose: () => void }> = ({ sat, onCl
               <div className="text-[9px] font-mono text-muted-gray tracking-widest uppercase">Maneuver Timeline</div>
             </div>
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-900/30 transition-all hover:scale-110"><X className="w-4 h-4 text-muted-gray hover:text-white transition-colors" /></button>
+          <div className="flex items-center gap-2">
+            <button onClick={handleRefresh} disabled={isRefreshing} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-900/30 transition-all">
+              <RefreshCw className={`w-4 h-4 text-muted-gray hover:text-white ${isRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+            <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-900/30 transition-all hover:scale-110">
+              <X className="w-4 h-4 text-muted-gray hover:text-white transition-colors" />
+            </button>
+          </div>
         </div>
         <div className="overflow-y-auto" style={{ maxHeight: 'calc(85vh - 85px)' }}>
           <div className="p-6 space-y-6">
@@ -710,7 +767,7 @@ const GanttPopup: React.FC<{ sat: SatItem; onClose: () => void }> = ({ sat, onCl
           </div>
         </div>
         <div className="px-6 py-3 border-t border-red-900/25 bg-black/40 flex justify-between items-center">
-          <div className="text-[8px] font-mono text-muted-gray">Sim Time: {simTime ? new Date(simTime).toISOString().substring(11,19) + 'Z' : '—'}</div>
+          <div className="text-[8px] font-mono text-muted-gray">Sim Time: {simTime ? new Date(simTime).toISOString().substring(11,19) + 'Z' : '—'} | Maneuvers in store: {allManeuvers.length}</div>
           <button onClick={onClose} className="px-4 py-1.5 text-[9px] font-mono text-plasma-cyan border border-plasma-cyan/40 rounded hover:bg-plasma-cyan/10 transition-all hover:scale-105">CLOSE</button>
         </div>
       </div>
@@ -719,7 +776,7 @@ const GanttPopup: React.FC<{ sat: SatItem; onClose: () => void }> = ({ sat, onCl
 };
 
 // ============================================================================
-// SATELLITE CARD (unchanged from your original)
+// SATELLITE CARD
 // ============================================================================
 const SatelliteCard: React.FC<{
   sat: SatItem;
@@ -877,7 +934,7 @@ const SatelliteCard: React.FC<{
 SatelliteCard.displayName = 'SatelliteCard';
 
 // ============================================================================
-// FLEET PANEL (unchanged)
+// FLEET PANEL
 // ============================================================================
 const FleetPanel: React.FC = () => {
   const satellites = useOrbitalStore(s => s.satellites);
@@ -887,11 +944,11 @@ const FleetPanel: React.FC = () => {
   const [resourcesSat, setResourcesSat] = useState<SatItem | null>(null);
   const [ganttSat, setGanttSat] = useState<SatItem | null>(null);
   
-  const handleSelect = useCallback((id: string) => {
+  const handleSelect = (id: string) => {
     setTimeout(() => {
       selectSatellite(id === selectedSatId ? null : id);
     }, 0);
-  }, [selectSatellite, selectedSatId]);
+  };
   
   const satItems: SatItem[] = useMemo(() => {
     if (!satellites || satellites.length === 0) return [];
@@ -950,7 +1007,7 @@ const FleetPanel: React.FC = () => {
 };
 
 // ============================================================================
-// RIGHT PANEL (unchanged except top: 80)
+// RIGHT PANEL (with top: 80)
 // ============================================================================
 const RightPanel: React.FC = () => {
   const satelliteCount = useOrbitalStore(selectSatelliteCount);
@@ -1084,7 +1141,7 @@ const RightPanel: React.FC = () => {
 };
 
 // ============================================================================
-// LEFT PANEL — BULLSEYE POLAR CHART (unchanged except top: 80)
+// LEFT PANEL — BULLSEYE POLAR CHART (with top: 80)
 // ============================================================================
 const LeftBullseyePanel: React.FC = () => {
   const selectedSat = useOrbitalStore(selectSelectedSatellite);
