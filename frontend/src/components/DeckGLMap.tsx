@@ -1,501 +1,469 @@
 // src/components/DeckGLMap.tsx
-// NSH 2026 – Orbital Insight Visualizer v5 | Crimson Nebula
-// STORE SYNC: positions[i*3]=lon, [i*3+1]=lat, [i*3+2]=alt_m
-// Crash-proof satellite selection | Trail isolation | 90+ FPS
-// Antimeridian-safe triple-copy | Predicted tracks | Terminator
+// National Space Hackathon 2026 – Orbital Insight Visualizer
+// ✅ Actual trails only (red base, selected bright red)
+// ✅ Burn markers from store maneuvers
+// ✅ Debris markers, ground stations, LOS arcs
+// ✅ Camera tracking for selected satellite
+// ✅ All utility functions included, TypeScript errors fixed
 
-import React, {
-  useMemo, useState, useEffect, useRef, useCallback,
-  Component, ErrorInfo, ReactNode,
-} from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback, Component, ErrorInfo, ReactNode } from 'react';
 import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer, ArcLayer, PolygonLayer, PathLayer } from '@deck.gl/layers';
 import { Map as MapGL } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { MapViewState, ViewStateChangeParameters } from '@deck.gl/core';
 
-import useOrbitalStore, {
-  selectSelectedSatellite,
-  selectHoveredSatellite,
-} from '../store/useOrbitalStore';
+import useOrbitalStore, { selectSelectedSatellite, selectHoveredSatellite } from '../store/useOrbitalStore';
 import { GROUND_STATIONS } from '../lib/constants';
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ============================================================================
 // ERROR BOUNDARY
-// ─────────────────────────────────────────────────────────────────────────────
-
-class ErrorBoundary extends Component<
-  { children: ReactNode; fallback: ReactNode },
-  { hasError: boolean }
-> {
-  state = { hasError: false };
-  static getDerivedStateFromError() { return { hasError: true }; }
-  componentDidCatch(e: Error, i: ErrorInfo) { console.error('[DeckGLMap]', e, i); }
+// ============================================================================
+interface ErrorBoundaryProps { children: ReactNode; fallback: ReactNode; }
+interface ErrorBoundaryState { hasError: boolean; }
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) { super(props); this.state = { hasError: false }; }
+  static getDerivedStateFromError(): ErrorBoundaryState { return { hasError: true }; }
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) { console.error('[DeckGLMap] WebGL Error Boundary:', error, errorInfo); }
   render() { return this.state.hasError ? this.props.fallback : this.props.children; }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TYPES
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ============================================================================
+// TYPE DEFINITIONS
+// ============================================================================
 interface TrailData {
   id: string;
   parentId: string;
   path: [number, number][];
-  isSelected: boolean;
 }
-
 interface ArcData {
   source: [number, number, number];
   target: [number, number];
   stationId: string;
+  stationName: string;
+}
+interface BurnMarker {
+  position: [number, number];
+  id: string;
+  satelliteId: string;
+  deltaV: number;
+  burnTime: string;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ============================================================================
 // CONSTANTS
-// ─────────────────────────────────────────────────────────────────────────────
-
-const MAP_STYLE     = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+// ============================================================================
+const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+const INITIAL_VIEW_STATE: MapViewState = Object.freeze({ longitude: 0, latitude: 0, zoom: 1.5, pitch: 0, bearing: 0 });
 const WORLD_OFFSETS = [-360, 0, 360] as const;
-const INCLINATION   = 51.6;
+const TRAIL_DOWNSAMPLE_FACTOR = 3;
 
-const INITIAL_VIEW: MapViewState = Object.freeze({
-  longitude: 0, latitude: 20, zoom: 1.8, pitch: 0, bearing: 0,
-});
-
-// Trail colours
-const TRAIL_SELECTED:  [number,number,number,number] = [0, 255, 255, 240];
-const TRAIL_OTHER:     [number,number,number,number] = [0, 160, 200, 60];
-const TRAIL_PREDICTED: [number,number,number,number] = [0, 180, 220, 40];
-const TRAIL_SEL_PRED:  [number,number,number,number] = [0, 220, 255, 110];
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PURE MATH
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ============================================================================
+// UTILITIES (all functions needed)
+// ============================================================================
 function getDayOfYear(date: Date): number {
   const start = new Date(date.getFullYear(), 0, 1);
-  return Math.floor((date.getTime() - start.getTime()) / 86_400_000) + 1;
+  return Math.floor((date.getTime() - start.getTime()) / 86400000) + 1;
 }
 
-function solarParams(timestamp: string): { decl: number; sunLon: number } {
+function getSolarDeclinationAndLon(timestamp: string): { declination: number; sunLon: number } {
   const date = new Date(timestamp);
-  const doy  = getDayOfYear(date);
-  const decl = -23.44 * Math.cos((2 * Math.PI / 365) * (doy + 10));
-  const utcH = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
-  let sunLon = 180 - 15 * utcH;
-  if (sunLon >  180) sunLon -= 360;
-  if (sunLon < -180) sunLon += 360;
-  return { decl, sunLon };
+  const dayOfYear = getDayOfYear(date);
+  const declination = -23.44 * Math.cos((360 / 365) * (dayOfYear + 10) * (Math.PI / 180));
+  const utcHours = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+  let sunLon = 180 - 15 * utcHours;
+  while (sunLon <= -180) sunLon += 360;
+  while (sunLon > 180) sunLon -= 360;
+  return { declination, sunLon };
 }
 
 const terminatorCache = new Map<string, [number, number][]>();
 
-function buildTerminator(timestamp: string): [number, number][] {
-  const key = timestamp.slice(0, 16);
-  if (terminatorCache.has(key)) return terminatorCache.get(key)!;
+function calculateTerminatorPolygon(timestamp: string): [number, number][] {
+  const cacheKey = timestamp.slice(0, 16);
+  if (terminatorCache.has(cacheKey)) return terminatorCache.get(cacheKey)!;
 
-  const { decl, sunLon } = solarParams(timestamp);
-  const decRad = decl * Math.PI / 180;
-  const pts: [number, number][] = [];
+  const { declination, sunLon } = getSolarDeclinationAndLon(timestamp);
+  const points: [number, number][] = [];
+  const decRad = declination * (Math.PI / 180);
 
-  for (let lon = -180; lon <= 180; lon += 3) {
+  for (let lon = -180; lon <= 180; lon += 4) {
     const lonRad = ((lon - sunLon) * Math.PI) / 180;
-    const tanD   = Math.tan(decRad);
-    const arg    = -Math.cos(lonRad) / (Math.abs(tanD) < 1e-9 ? 1e-9 : tanD);
-    const lat    = Math.atan(arg) * 180 / Math.PI;
-    if (Number.isFinite(lat)) pts.push([lon, Math.max(-90, Math.min(90, lat))]);
+    const tanDec = Math.tan(decRad);
+    const safeTan = Math.max(-1e10, Math.min(1e10, tanDec));
+    const divisor = safeTan || 0.001;
+    const arg = -Math.cos(lonRad) / divisor;
+    const clampedArg = Math.max(-1e10, Math.min(1e10, arg));
+    const latRad = Math.atan(clampedArg);
+    const lat = latRad * (180 / Math.PI);
+    if (Number.isFinite(lat)) points.push([lon, Math.max(-90, Math.min(90, lat))]);
   }
-  pts.push([180, decl > 0 ? -90 : 90], [-180, decl > 0 ? -90 : 90]);
+  points.push([180, declination > 0 ? -90 : 90]);
+  points.push([-180, declination > 0 ? -90 : 90]);
 
-  terminatorCache.set(key, pts);
-  if (terminatorCache.size > 30) terminatorCache.delete(terminatorCache.keys().next().value!);
-  return pts;
+  terminatorCache.set(cacheKey, points);
+  if (terminatorCache.size > 20) terminatorCache.delete(terminatorCache.keys().next().value!);
+  return points;
 }
 
-function unwrapTrail(pts: [number, number][]): [number, number][] {
-  if (pts.length < 2) return pts.slice();
-  const out: [number, number][] = [[pts[0][0], pts[0][1]]];
+function unwrapTrailCoordinates(points: [number, number][]): [number, number][] {
+  if (!points || points.length < 2) return [];
+  const result: [number, number][] = [[points[0][0], points[0][1]]];
   let offset = 0;
-  for (let i = 1; i < pts.length; i++) {
-    const diff = pts[i][0] - pts[i - 1][0];
-    if (diff >  180) offset -= 360;
-    if (diff < -180) offset += 360;
-    if (Number.isFinite(pts[i][0]) && Number.isFinite(pts[i][1]))
-      out.push([pts[i][0] + offset, pts[i][1]]);
+  for (let i = 1; i < points.length; i++) {
+    const prevLon = points[i - 1][0];
+    const currLon = points[i][0];
+    const diff = currLon - prevLon;
+    if (diff > 180) offset -= 360;
+    else if (diff < -180) offset += 360;
+    if (Number.isFinite(currLon) && Number.isFinite(points[i][1])) {
+      result.push([currLon + offset, points[i][1]]);
+    }
   }
-  return out;
+  return result;
 }
 
-function downsample(path: [number, number][], factor: number): [number, number][] {
-  if (factor <= 1 || path.length <= 8) return path;
-  const out: [number, number][] = [];
-  for (let i = 0; i < path.length; i += factor) out.push(path[i]);
-  if (out[out.length - 1] !== path[path.length - 1]) out.push(path[path.length - 1]);
-  return out;
+function downsampleTrail(path: [number, number][], factor: number): [number, number][] {
+  if (factor <= 1 || path.length <= 10) return path;
+  const result: [number, number][] = [];
+  for (let i = 0; i < path.length; i += factor) {
+    result.push(path[i]);
+  }
+  if (result[result.length - 1] !== path[path.length - 1]) {
+    result.push(path[path.length - 1]);
+  }
+  return result;
 }
 
-function hasLOS(
+function calculateElevationAngle(
   satLat: number, satLon: number, satAltKm: number,
-  gsLat: number, gsLon: number, minElev: number
+  gsLat: number, gsLon: number, minElev: number = 5.0
 ): boolean {
-  const R  = 6371;
-  const p1 = satLat * Math.PI / 180, p2 = gsLat * Math.PI / 180;
-  const dl = (satLon - gsLon) * Math.PI / 180;
-  const central = Math.acos(
-    Math.max(-1, Math.min(1, Math.sin(p1) * Math.sin(p2) + Math.cos(p1) * Math.cos(p2) * Math.cos(dl)))
-  );
-  if (!Number.isFinite(central) || central * 180 / Math.PI > 30) return false;
-  const elevRad = Math.atan((Math.cos(central) - R / (R + satAltKm)) / Math.sin(central));
-  return elevRad * 180 / Math.PI >= minElev;
+  const R = 6371;
+  const φ1 = satLat * Math.PI / 180;
+  const φ2 = gsLat * Math.PI / 180;
+  const Δλ = (satLon - gsLon) * Math.PI / 180;
+
+  const dotProduct = Math.sin(φ1) * Math.sin(φ2) + Math.cos(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  const clampedDot = Math.max(-1, Math.min(1, dotProduct));
+  const centralAngle = Math.acos(clampedDot);
+  const satRadius = R + satAltKm;
+  const elevationRad = Math.atan((Math.cos(centralAngle) - R / satRadius) / Math.sin(centralAngle));
+  const elevationDeg = elevationRad * (180 / Math.PI);
+  return elevationDeg >= minElev && centralAngle * (180 / Math.PI) <= 22;
 }
 
-function inEclipse(satLat: number, satLon: number, sunLon: number): boolean {
-  const latR  = satLat * Math.PI / 180;
-  const dLonR = (satLon - sunLon) * Math.PI / 180;
-  return Math.cos(latR) * Math.cos(dLonR) < -0.1;
+function isInEarthShadow(satLat: number, satLon: number, satAltKm: number, sunLon: number): boolean {
+  const R = 6371;
+  const satDist = R + satAltKm;
+  const latRad = satLat * Math.PI / 180, lonRad = satLon * Math.PI / 180;
+  const satVec = {
+    x: satDist * Math.cos(latRad) * Math.cos(lonRad),
+    y: satDist * Math.cos(latRad) * Math.sin(lonRad),
+    z: satDist * Math.sin(latRad),
+  };
+  const sunVec = { x: Math.cos(sunLon * Math.PI / 180), y: Math.sin(sunLon * Math.PI / 180), z: 0 };
+  const dot = satVec.x * sunVec.x + satVec.y * sunVec.y + satVec.z * sunVec.z;
+  const angle = Math.acos(Math.max(-1, Math.min(1, dot / satDist)));
+  const shadowAngle = Math.asin(R / satDist);
+  return angle > Math.PI / 2 + shadowAngle;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BUFFER POOL (ref-scoped, not module-level)
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface BufPool {
-  debPos: Float32Array | null;
-  debCol: Uint8ClampedArray | null;
-  satPos: Float32Array | null;
-  satCol: Uint8ClampedArray | null;
-}
-
-function ensureBuf<T extends Float32Array | Uint8ClampedArray>(
-  cur: T | null, need: number, make: () => T
-): T {
-  if (cur && cur.length >= need) { cur.fill(0); return cur; }
-  return make();
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
+// ============================================================================
 // MAIN COMPONENT
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ============================================================================
 export const DeckGLMap: React.FC = React.memo(() => {
-  // ── Store selectors (atomic, fine-grained) ─────────────────────────────────
-  const debris          = useOrbitalStore(s => s.debris);
-  const satellites      = useOrbitalStore(s => s.satellites);
-  const timestamp       = useOrbitalStore(s => s.timestamp);
-  const selectedSatId   = useOrbitalStore(s => s.selectedSatelliteId);
-  const trails          = useOrbitalStore(s => s.trails);
-  const selectSatellite = useOrbitalStore(s => s.selectSatellite);
-  const hoverSatellite  = useOrbitalStore(s => s.hoverSatellite);
+  // ===== STORE SELECTORS =====
+  const debris = useOrbitalStore(state => state.debris);
+  const satellites = useOrbitalStore(state => state.satellites);
+  const timestamp = useOrbitalStore(state => state.timestamp);
+  const selectedSatelliteId = useOrbitalStore(state => state.selectedSatelliteId);
+  const trails = useOrbitalStore(state => state.trails);
+  const maneuvers = useOrbitalStore(state => state.maneuvers);
 
-  // These selectors use positions stride internally (safe)
+  const selectSatellite = useOrbitalStore(state => state.selectSatellite);
+  const hoverSatellite = useOrbitalStore(state => state.hoverSatellite);
   const selectedSat = useOrbitalStore(selectSelectedSatellite);
-  const hoveredSat  = useOrbitalStore(selectHoveredSatellite);
+  const hoveredSat = useOrbitalStore(selectHoveredSatellite);
 
-  // ── Local state ─────────────────────────────────────────────────────────────
-  const [viewState,       setViewState]       = useState<MapViewState>(INITIAL_VIEW);
-  const [terminator,      setTerminator]       = useState<[number, number][]>([]);
-  const [predictedTrails, setPredictedTrails]  = useState<TrailData[]>([]);
-  const [eclipse,         setEclipse]          = useState(false);
+  // ===== LOCAL STATE =====
+  const [viewState, setViewState] = useState<MapViewState>(INITIAL_VIEW_STATE);
+  const [terminatorPoints, setTerminatorPoints] = useState<[number, number][]>([]);
+  const [isTracking, setIsTracking] = useState<boolean>(false);
+  const [isEclipse, setIsEclipse] = useState<boolean>(false);
 
-  // ── Refs ───────────────────────────────────────────────────────────────────
-  const bufPool     = useRef<BufPool>({ debPos: null, debCol: null, satPos: null, satCol: null });
-  const isDragging  = useRef(false);
-  const predPending = useRef(false);
-  const predTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ===== REFS =====
+  const isNavigatingRef = useRef<boolean>(false);
+  const lastTerminatorUpdateRef = useRef<number>(0);
 
-  // ── 1. TERMINATOR (60 s interval) ─────────────────────────────────────────
+  const canRender = useMemo(() => satellites && satellites.length > 0, [satellites]);
+
+  // ==========================================================================
+  // 1. TERMINATOR UPDATE (throttled every 60s)
+  // ==========================================================================
   useEffect(() => {
     if (!timestamp) return;
-    setTerminator(buildTerminator(timestamp));
-    const id = setInterval(() => setTerminator(buildTerminator(timestamp)), 60_000);
-    return () => clearInterval(id);
+    const now = Date.now();
+    if (now - lastTerminatorUpdateRef.current < 60000) return;
+    lastTerminatorUpdateRef.current = now;
+    setTerminatorPoints(calculateTerminatorPolygon(timestamp));
   }, [timestamp]);
 
-  // ── 2. ECLIPSE (500 ms debounce) ───────────────────────────────────────────
+  // ==========================================================================
+  // 2. ECLIPSE DETECTION
+  // ==========================================================================
   useEffect(() => {
-    if (!selectedSat || !timestamp) { setEclipse(false); return; }
-    const tid = setTimeout(() => {
-      const { sunLon } = solarParams(timestamp);
-      setEclipse(inEclipse(selectedSat.lat, selectedSat.lon, sunLon));
+    if (!selectedSat || !timestamp || !Number.isFinite(selectedSat.lon)) {
+      setIsEclipse(false);
+      return;
+    }
+    const timeout = setTimeout(() => {
+      const { sunLon } = getSolarDeclinationAndLon(timestamp);
+      const altKm = (selectedSat.alt ?? 400000) / 1000;
+      setIsEclipse(isInEarthShadow(selectedSat.lat, selectedSat.lon, altKm, sunLon));
     }, 500);
-    return () => clearTimeout(tid);
+    return () => clearTimeout(timeout);
   }, [selectedSat?.lat, selectedSat?.lon, timestamp]);
 
-  // ── 3. PREDICTED TRAILS (debounced 300 ms, idle callback) ─────────────────
+  // ==========================================================================
+  // 3. CAMERA TRACKING (follow selected satellite)
+  // ==========================================================================
   useEffect(() => {
-    if (!satellites || satellites.length === 0) return;
-    if (predPending.current) return;
-    predPending.current = true;
+    if (isTracking && selectedSat && Number.isFinite(selectedSat.lon) && Number.isFinite(selectedSat.lat)) {
+      setViewState(prev => ({ ...prev, longitude: selectedSat.lon, latitude: selectedSat.lat }));
+    }
+  }, [isTracking, selectedSat?.lon, selectedSat?.lat]);
 
-    if (predTimer.current) clearTimeout(predTimer.current);
-    predTimer.current = setTimeout(() => {
-      const run = () => {
-        if (!satellites) { predPending.current = false; return; }
-        const result: TrailData[] = [];
-
-        for (let i = 0; i < satellites.length; i++) {
-          const id  = satellites.ids[i];
-          // positions stride: lon=[i*3], lat=[i*3+1]
-          const lon = satellites.positions[i * 3];
-          const lat = satellites.positions[i * 3 + 1];
-          if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
-
-          const isSel = id === selectedSatId;
-          const path: [number, number][] = [];
-          const phase = Math.asin(Math.max(-1, Math.min(1, lat / INCLINATION))) || 0;
-
-          for (let t = 0; t <= 5400; t += 60) {
-            const progress = t / 5400;
-            const pLon = lon + progress * 360;
-            const pLat = INCLINATION * Math.sin(phase + progress * Math.PI * 2);
-            path.push([pLon, Math.max(-INCLINATION, Math.min(INCLINATION, pLat))]);
-          }
-
-          const unwrapped  = unwrapTrail(path);
-          const downsampled = downsample(unwrapped, 3);
-          if (downsampled.length < 2) continue;
-
-          for (const offset of WORLD_OFFSETS) {
-            result.push({
-              id: `${id}_pred_${offset}`,
-              parentId: id,
-              isSelected: isSel,
-              path: downsampled.map(([lo, la]) => [lo + offset, la]),
-            });
-          }
-        }
-
-        setPredictedTrails(result);
-        predPending.current = false;
-      };
-
-      // Use requestIdleCallback when available, else setTimeout
-      if (typeof requestIdleCallback !== 'undefined') requestIdleCallback(run, { timeout: 2000 });
-      else setTimeout(run, 0);
-    }, 300);
-  }, [satellites, selectedSatId]);
-
-  // ── 4. HISTORICAL TRAILS (derived from store.trails) ──────────────────────
-  const historicalTrails = useMemo<TrailData[]>(() => {
+  // ==========================================================================
+  // 4. DATA PREPARATION – ACTUAL TRAILS ONLY
+  // ==========================================================================
+  const historicalTrailCopies = useMemo<TrailData[]>(() => {
     if (!trails || Object.keys(trails).length === 0) return [];
-    const result: TrailData[] = [];
-
-    for (const trail of Object.values(trails)) {
-      if (!trail.positions || trail.positions.length < 2) continue;
-      const isSel = trail.satelliteId === selectedSatId;
-      const rawPts = trail.positions.map(([lo, la]) => [lo, la] as [number, number]);
-      const unwrapped  = unwrapTrail(rawPts);
-      const downsampled = downsample(unwrapped, 2);
-      if (downsampled.length < 2) continue;
-
-      for (const offset of WORLD_OFFSETS) {
-        result.push({
-          id: `${trail.satelliteId}_hist_${offset}`,
-          parentId: trail.satelliteId,
-          isSelected: isSel,
-          path: downsampled.map(([lo, la]) => [lo + offset, la]),
-        });
+    const copies: TrailData[] = [];
+    const validTrails = Object.values(trails).filter(t => t && t.positions && t.positions.length > 1);
+    for (const trail of validTrails) {
+      const rawPoints = trail.positions.map(([lon, lat]) => [Number(lon), Number(lat)] as [number, number]);
+      const unwrapped = unwrapTrailCoordinates(rawPoints);
+      const downsampled = downsampleTrail(unwrapped, TRAIL_DOWNSAMPLE_FACTOR);
+      if (downsampled.length > 1) {
+        for (const offset of WORLD_OFFSETS) {
+          copies.push({
+            id: `${trail.satelliteId}_${offset}`,
+            parentId: trail.satelliteId,
+            path: downsampled.map(([lon, lat]) => [lon + offset, lat]),
+          });
+        }
       }
     }
-    return result;
-  }, [trails, selectedSatId]);
+    return copies;
+  }, [trails]);
 
-  // ── 5. TERMINATOR COPIES ───────────────────────────────────────────────────
+  const highlightedHistoricalTrails = useMemo<TrailData[]>(() => {
+    if (!selectedSatelliteId) return [];
+    return historicalTrailCopies.filter(t => String(t.parentId) === String(selectedSatelliteId));
+  }, [historicalTrailCopies, selectedSatelliteId]);
+
+  // ==========================================================================
+  // 5. BURN MARKERS
+  // ==========================================================================
+  const burnMarkers = useMemo<BurnMarker[]>(() => {
+    if (!maneuvers || maneuvers.length === 0) return [];
+    const markers: BurnMarker[] = [];
+    for (const m of maneuvers) {
+      if (m.lat !== undefined && m.lon !== undefined && Number.isFinite(m.lat) && Number.isFinite(m.lon)) {
+        for (const offset of WORLD_OFFSETS) {
+          markers.push({
+            position: [m.lon + offset, m.lat],
+            id: `${m.burn_id}_${offset}`,
+            satelliteId: m.satellite_id,
+            deltaV: m.delta_v_magnitude,
+            burnTime: m.burnTime,
+          });
+        }
+      }
+    }
+    return markers;
+  }, [maneuvers]);
+
+  // ==========================================================================
+  // 6. OTHER DATA (terminator, arc data, debris, satellites)
+  // ==========================================================================
   const terminatorCopies = useMemo(() => {
-    if (!terminator.length) return [];
-    return WORLD_OFFSETS.map(offset => terminator.map(([lo, la]) => [lo + offset, la] as [number, number]));
-  }, [terminator]);
+    if (terminatorPoints.length === 0) return [];
+    return WORLD_OFFSETS.map(offset => terminatorPoints.map(([lon, lat]) => [lon + offset, lat] as [number, number]));
+  }, [terminatorPoints]);
 
-  // ── 6. LOS ARCS ────────────────────────────────────────────────────────────
   const arcData = useMemo<ArcData[]>(() => {
-    const sat = selectedSat ?? hoveredSat;
-    if (!sat || !Number.isFinite(sat.lon)) return [];
-    // alt from store is in metres, hasLOS expects km
-    const altKm = (sat.alt ?? 400_000) / 1_000;
+    const activeSat = selectedSat || hoveredSat;
+    if (!activeSat || !Number.isFinite(activeSat.lon) || !Number.isFinite(activeSat.lat)) return [];
+    const sLat = Number(activeSat.lat), sLon = Number(activeSat.lon);
+    const sAlt = Number(activeSat.alt) || 400000;
+    const altKm = sAlt / 1000;
+    return GROUND_STATIONS.filter(gs => calculateElevationAngle(sLat, sLon, altKm, Number(gs.coordinates[1]), Number(gs.coordinates[0]), gs.minElevationAngle))
+      .flatMap(gs => WORLD_OFFSETS.map(offset => ({
+        source: [sLon + offset, sLat, sAlt] as [number, number, number],
+        target: [Number(gs.coordinates[0]) + offset, Number(gs.coordinates[1])] as [number, number],
+        stationId: `${gs.id}_${offset}`,
+        stationName: gs.name,
+      })));
+  }, [selectedSat, hoveredSat]);
 
-    return GROUND_STATIONS.flatMap(gs =>
-      hasLOS(sat.lat, sat.lon, altKm, gs.coordinates[1], gs.coordinates[0], gs.minElevationAngle)
-        ? WORLD_OFFSETS.map(offset => ({
-            source: [sat.lon + offset, sat.lat, sat.alt ?? 400_000] as [number, number, number],
-            target: [gs.coordinates[0] + offset, gs.coordinates[1]] as [number, number],
-            stationId: `${gs.id}_${offset}`,
-          }))
-        : []
-    );
-  }, [selectedSat?.id, selectedSat?.lon, selectedSat?.lat, hoveredSat?.id]);
-
-  // ── 7. INSTANCED DEBRIS ────────────────────────────────────────────────────
+  // ==========================================================================
+  // 7. INSTANCED BUFFERS (optimised)
+  // ==========================================================================
   const instancedDebris = useMemo(() => {
-    if (!debris || debris.length === 0) return null;
-    if (!debris.positions || debris.positions.length < debris.length * 3) return null;
-    if (!debris.colors    || debris.colors.length    < debris.length * 4) return null;
-
-    const N = debris.length;
-    bufPool.current.debPos = ensureBuf(bufPool.current.debPos, N * 9, () => new Float32Array(N * 9));
-    bufPool.current.debCol = ensureBuf(bufPool.current.debCol, N * 12, () => new Uint8ClampedArray(N * 12));
-
-    const pos = bufPool.current.debPos!;
-    const col = bufPool.current.debCol!;
-
-    for (let w = 0; w < 3; w++) {
+    if (!debris || debris.length === 0 || !debris.positions || !debris.colors) return null;
+    const len = debris.length;
+    const pos = new Float32Array(len * 3 * 3);
+    const col = new Uint8ClampedArray(len * 4 * 3);
+    for (let w = 0; w < WORLD_OFFSETS.length; w++) {
       const offset = WORLD_OFFSETS[w];
-      const pBase = w * N * 3, cBase = w * N * 4;
-      for (let i = 0; i < N; i++) {
-        pos[pBase + i * 3]     = debris.positions[i * 3] + offset;
-        pos[pBase + i * 3 + 1] = debris.positions[i * 3 + 1];
-        pos[pBase + i * 3 + 2] = debris.positions[i * 3 + 2];
-        col[cBase + i * 4]     = debris.colors[i * 4];
-        col[cBase + i * 4 + 1] = debris.colors[i * 4 + 1];
-        col[cBase + i * 4 + 2] = debris.colors[i * 4 + 2];
-        col[cBase + i * 4 + 3] = debris.colors[i * 4 + 3];
+      const destPos = w * len * 3;
+      const destCol = w * len * 4;
+      for (let i = 0; i < len; i++) {
+        const px = debris.positions[i * 3];
+        const py = debris.positions[i * 3 + 1];
+        const pz = debris.positions[i * 3 + 2];
+        pos[destPos + i * 3] = Number.isFinite(px) ? px + offset : 0;
+        pos[destPos + i * 3 + 1] = Number.isFinite(py) ? py : 0;
+        pos[destPos + i * 3 + 2] = Number.isFinite(pz) ? pz : 0;
+
+        const cr = debris.colors[i * 4];
+        const cg = debris.colors[i * 4 + 1];
+        const cb = debris.colors[i * 4 + 2];
+        const ca = debris.colors[i * 4 + 3];
+        col[destCol + i * 4] = Number.isFinite(cr) ? cr : 0;
+        col[destCol + i * 4 + 1] = Number.isFinite(cg) ? cg : 255;
+        col[destCol + i * 4 + 2] = Number.isFinite(cb) ? cb : 255;
+        col[destCol + i * 4 + 3] = Number.isFinite(ca) ? ca : 100;
       }
     }
-    return { length: N * 3, positions: pos, colors: col };
+    return { length: len * 3, positions: pos, colors: col };
   }, [debris]);
 
-  // ── 8. INSTANCED SATELLITES  (per-sat colour override for selected/hovered) ─
   const instancedSatellites = useMemo(() => {
-    if (!satellites || satellites.length === 0) return null;
-
-    const N = satellites.length;
-    bufPool.current.satPos = ensureBuf(bufPool.current.satPos, N * 9, () => new Float32Array(N * 9));
-    bufPool.current.satCol = ensureBuf(bufPool.current.satCol, N * 12, () => new Uint8ClampedArray(N * 12));
-
-    const pos = bufPool.current.satPos!;
-    const col = bufPool.current.satCol!;
-
-    for (let w = 0; w < 3; w++) {
+    if (!satellites || satellites.length === 0 || !satellites.positions || !satellites.colors) return null;
+    const len = satellites.length;
+    const pos = new Float32Array(len * 3 * 3);
+    const col = new Uint8ClampedArray(len * 4 * 3);
+    for (let w = 0; w < WORLD_OFFSETS.length; w++) {
       const offset = WORLD_OFFSETS[w];
-      const pBase = w * N * 3, cBase = w * N * 4;
-      for (let i = 0; i < N; i++) {
-        // positions stride: lon=[i*3], lat=[i*3+1], alt=[i*3+2]
-        pos[pBase + i * 3]     = satellites.positions[i * 3] + offset;
-        pos[pBase + i * 3 + 1] = satellites.positions[i * 3 + 1];
-        pos[pBase + i * 3 + 2] = satellites.positions[i * 3 + 2];
+      const destPos = w * len * 3;
+      const destCol = w * len * 4;
+      for (let i = 0; i < len; i++) {
+        const px = satellites.positions[i * 3];
+        const py = satellites.positions[i * 3 + 1];
+        const pz = satellites.positions[i * 3 + 2];
+        pos[destPos + i * 3] = Number.isFinite(px) ? px + offset : 0;
+        pos[destPos + i * 3 + 1] = Number.isFinite(py) ? py : 0;
+        pos[destPos + i * 3 + 2] = Number.isFinite(pz) ? pz : 0;
 
-        const id = satellites.ids[i];
-        if (id === selectedSatId) {
-          col[cBase + i * 4]     = 255;
-          col[cBase + i * 4 + 1] = 255;
-          col[cBase + i * 4 + 2] = 255;
-          col[cBase + i * 4 + 3] = 255;
-        } else if (id === hoveredSat?.id) {
-          col[cBase + i * 4]     = 160;
-          col[cBase + i * 4 + 1] = 255;
-          col[cBase + i * 4 + 2] = 255;
-          col[cBase + i * 4 + 3] = 255;
-        } else {
-          col[cBase + i * 4]     = satellites.colors[i * 4];
-          col[cBase + i * 4 + 1] = satellites.colors[i * 4 + 1];
-          col[cBase + i * 4 + 2] = satellites.colors[i * 4 + 2];
-          col[cBase + i * 4 + 3] = satellites.colors[i * 4 + 3];
-        }
+        const cr = satellites.colors[i * 4];
+        const cg = satellites.colors[i * 4 + 1];
+        const cb = satellites.colors[i * 4 + 2];
+        const ca = satellites.colors[i * 4 + 3];
+        col[destCol + i * 4] = Number.isFinite(cr) ? cr : 255;
+        col[destCol + i * 4 + 1] = Number.isFinite(cg) ? cg : 255;
+        col[destCol + i * 4 + 2] = Number.isFinite(cb) ? cb : 255;
+        col[destCol + i * 4 + 3] = Number.isFinite(ca) ? ca : 255;
       }
     }
-    return { length: N * 3, originalLength: N, positions: pos, colors: col };
-  }, [satellites, selectedSatId, hoveredSat?.id]);
+    return { length: len * 3, positions: pos, colors: col, originalLength: len };
+  }, [satellites]);
 
-  // ── 9. GROUND STATION DATA (memoised once) ─────────────────────────────────
-  const gsData = useMemo(() =>
-    GROUND_STATIONS.flatMap(gs =>
-      WORLD_OFFSETS.map(offset => ({
-        id: `${gs.id}_${offset}`,
-        coordinates: [gs.coordinates[0] + offset, gs.coordinates[1]] as [number, number],
-      }))
-    ),
-  []);
-
-  // ── 10. SATELLITE CLICK / HOVER HANDLERS (crash-proof) ────────────────────
-  // Key: use setTimeout(0) + try/catch + safe index % originalLength
-
-  const handleSatClick = useCallback(
-    ({ index }: { index?: number }) => {
-      if (isDragging.current || index === undefined) return;
-      setTimeout(() => {
-        try {
-          if (!satellites?.ids || !instancedSatellites?.originalLength) return;
-          const safeIdx = ((index % instancedSatellites.originalLength) + instancedSatellites.originalLength) % instancedSatellites.originalLength;
-          if (safeIdx >= satellites.ids.length) return;
-          const newId = satellites.ids[safeIdx];
-          if (newId) selectSatellite?.(newId === selectedSatId ? null : newId);
-        } catch (e) { console.error('[DeckGLMap] onClick', e); }
-      }, 0);
-    },
-    [satellites, instancedSatellites?.originalLength, selectedSatId, selectSatellite]
-  );
-
-  const handleSatHover = useCallback(
-    ({ index }: { index?: number }) => {
-      if (isDragging.current) return;
-      setTimeout(() => {
-        try {
-          if (index === undefined || index < 0 || !satellites?.ids || !instancedSatellites?.originalLength) {
-            hoverSatellite?.(null); return;
-          }
-          const safeIdx = ((index % instancedSatellites.originalLength) + instancedSatellites.originalLength) % instancedSatellites.originalLength;
-          if (safeIdx >= satellites.ids.length) { hoverSatellite?.(null); return; }
-          hoverSatellite?.(satellites.ids[safeIdx]);
-        } catch (e) { hoverSatellite?.(null); }
-      }, 0);
-    },
-    [satellites, instancedSatellites?.originalLength, hoverSatellite]
-  );
-
-  // ── 11. LAYERS ─────────────────────────────────────────────────────────────
+  // ==========================================================================
+  // 8. WEBGL LAYERS (actual trails + burn markers)
+  // ==========================================================================
   const layers = useMemo(() => {
-    const ls: any[] = [];
+    const layerList: any[] = [];
 
-    // Terminator (night shadow)
+    // Terminator
     if (terminatorCopies.length > 0) {
-      ls.push(new PolygonLayer({
+      layerList.push(new PolygonLayer({
         id: 'terminator',
         data: terminatorCopies,
         getPolygon: (d: [number, number][]) => d,
-        getFillColor: [0, 0, 0, 145],
+        getFillColor: [0, 0, 0, 160],
         stroked: false,
         pickable: false,
         wrapLongitude: false,
       }));
     }
 
-    // Predicted trails (dashed)
-    if (predictedTrails.length > 0) {
-      ls.push(new PathLayer({
-        id: 'predicted-trails',
-        data: predictedTrails,
+    // ACTUAL TRAILS – unselected (faint red)
+    if (historicalTrailCopies.length > 0) {
+      layerList.push(new PathLayer({
+        id: 'historical-trails-base',
+        data: historicalTrailCopies,
         getPath: (d: TrailData) => d.path,
-        getColor: (d: TrailData) => d.isSelected ? TRAIL_SEL_PRED : TRAIL_PREDICTED,
-        getWidth: (d: TrailData) => d.isSelected ? 1.8 : 1,
-        widthMinPixels: 1,
-        widthMaxPixels: 3,
-        dashArray: [6, 4],
-        pickable: false,
+        getColor: [255, 0, 0, 40],
+        widthMinPixels: 2,
+        widthMaxPixels: 4,
+        pickable: true,
+        autoHighlight: false,
         wrapLongitude: false,
-        updateTriggers: { getColor: [selectedSatId], getWidth: [selectedSatId] },
+        onClick: (info: any) => {
+          setTimeout(() => {
+            try {
+              if (info?.object?.parentId && typeof selectSatellite === 'function') {
+                selectSatellite(String(info.object.parentId));
+              }
+            } catch (err) { console.error('[DeckGLMap] Trail click error:', err); }
+          }, 0);
+        },
       }));
     }
 
-    // Historical trails (solid, thicker for selected)
-    if (historicalTrails.length > 0) {
-      ls.push(new PathLayer({
-        id: 'historical-trails',
-        data: historicalTrails,
-        getPath: (d: TrailData) => d.path,
-        getColor: (d: TrailData) => d.isSelected ? TRAIL_SELECTED : TRAIL_OTHER,
-        getWidth: (d: TrailData) => d.isSelected ? 3 : 1.5,
-        widthMinPixels: 1.5,
-        widthMaxPixels: 7,
-        opacity: 1,
-        pickable: false,
+    // ACTUAL TRAILS – selected (bright red glow)
+    if (highlightedHistoricalTrails.length > 0) {
+      layerList.push(
+        new PathLayer({
+          id: 'historical-trails-glow',
+          data: highlightedHistoricalTrails,
+          getPath: (d: TrailData) => d.path,
+          getColor: [255, 0, 0, 80],
+          widthMinPixels: 10,
+          widthMaxPixels: 14,
+          pickable: false,
+          wrapLongitude: false,
+        }),
+        new PathLayer({
+          id: 'historical-trails-highlight',
+          data: highlightedHistoricalTrails,
+          getPath: (d: TrailData) => d.path,
+          getColor: [255, 0, 0, 255],
+          widthMinPixels: 4,
+          widthMaxPixels: 6,
+          pickable: false,
+          wrapLongitude: false,
+        })
+      );
+    }
+
+    // BURN MARKERS (orange)
+    if (burnMarkers.length > 0) {
+      layerList.push(new ScatterplotLayer({
+        id: 'burn-markers',
+        data: burnMarkers,
+        getPosition: (d: BurnMarker) => d.position,
+        getFillColor: [255, 140, 0, 200],
+        getRadius: 3,
+        radiusMinPixels: 3,
+        radiusMaxPixels: 6,
+        pickable: true,
+        autoHighlight: true,
+        highlightColor: [255, 255, 255, 255],
         wrapLongitude: false,
-        updateTriggers: { getColor: [selectedSatId], getWidth: [selectedSatId] },
+        onHover: ({ object }: { object?: BurnMarker }) => {
+          // optional: tooltip logging (can be replaced with actual tooltip)
+          if (object) console.log(`Burn: ${object.satelliteId} Δv=${object.deltaV.toFixed(3)} m/s`);
+        },
       }));
     }
 
-    // Debris (instanced, no picking – too many)
+    // Debris field
     if (instancedDebris) {
-      ls.push(new ScatterplotLayer({
+      layerList.push(new ScatterplotLayer({
         id: 'debris',
         data: {
           length: instancedDebris.length,
@@ -504,38 +472,35 @@ export const DeckGLMap: React.FC = React.memo(() => {
             getFillColor: { value: instancedDebris.colors, size: 4 },
           },
         },
-        getRadius: 1200,
+        getRadius: 1,
         radiusMinPixels: 1,
-        radiusMaxPixels: 2,
         opacity: 0.5,
         pickable: false,
         wrapLongitude: false,
-        updateTriggers: { getPosition: [instancedDebris.positions], getFillColor: [instancedDebris.colors] },
       }));
     }
 
     // Ground stations
-    ls.push(new ScatterplotLayer({
+    layerList.push(new ScatterplotLayer({
       id: 'ground-stations',
-      data: gsData,
-      getPosition: (d: any) => [d.coordinates[0], d.coordinates[1]],
+      data: GROUND_STATIONS.flatMap(gs => WORLD_OFFSETS.map(offset => ({
+        ...gs,
+        coordinates: [Number(gs.coordinates[0]) + offset, Number(gs.coordinates[1])],
+      }))),
+      getPosition: (d: any) => d.coordinates,
       getFillColor: [255, 0, 51, 255],
-      getRadius: 3500,
-      radiusMinPixels: 5,
-      radiusMaxPixels: 10,
-      stroked: true,
-      lineWidthMinPixels: 1.5,
-      getLineColor: [255, 100, 100, 180],
-      opacity: 1,
+      getRadius: 1.5,
+      radiusMinPixels: 4,
+      opacity: 1.0,
       pickable: true,
       autoHighlight: true,
       highlightColor: [255, 255, 255, 255],
       wrapLongitude: false,
     }));
 
-    // Satellites (instanced with per-sat colour override)
+    // Satellites (instanced, clickable)
     if (instancedSatellites) {
-      ls.push(new ScatterplotLayer({
+      layerList.push(new ScatterplotLayer({
         id: 'satellites',
         data: {
           length: instancedSatellites.length,
@@ -544,255 +509,206 @@ export const DeckGLMap: React.FC = React.memo(() => {
             getFillColor: { value: instancedSatellites.colors, size: 4 },
           },
         },
-        getRadius: 4500,
-        radiusMinPixels: 3,
-        radiusMaxPixels: 12,
-        opacity: 1,
+        getRadius: 2.5,
+        radiusMinPixels: 4,
+        opacity: 1.0,
         stroked: true,
-        lineWidthMinPixels: 0.5,
-        getLineColor: [255, 255, 255, 50],
+        lineWidthMinPixels: 1,
+        getLineColor: [255, 255, 255, 180],
         pickable: true,
-        autoHighlight: false,
+        autoHighlight: true,
+        highlightColor: [255, 255, 255, 255],
         wrapLongitude: false,
-        onHover: handleSatHover,
-        onClick: handleSatClick,
-        updateTriggers: {
-          getPosition: [instancedSatellites.positions],
-          getFillColor: [instancedSatellites.colors],
+        onHover: ({ index }: { index?: number }) => {
+          if (isNavigatingRef.current) return;
+          setTimeout(() => {
+            try {
+              if (index !== undefined && index !== -1 && satellites?.ids && instancedSatellites?.originalLength) {
+                const safeIndex = index % instancedSatellites.originalLength;
+                hoverSatellite(satellites.ids[safeIndex] || null);
+              } else { hoverSatellite(null); }
+            } catch (err) {}
+          }, 0);
+        },
+        onClick: ({ index }: { index?: number }) => {
+          setTimeout(() => {
+            try {
+              if (index !== undefined && index !== -1 && satellites?.ids && instancedSatellites?.originalLength) {
+                const safeIndex = index % instancedSatellites.originalLength;
+                selectSatellite(satellites.ids[safeIndex] || null);
+              } else { selectSatellite(null); }
+            } catch (err) {}
+          }, 0);
         },
       }));
     }
 
-    // Selected satellite — two concentric glowing rings
-    if (selectedSat && Number.isFinite(selectedSat.lon)) {
+    // Target lock indicator
+    if (selectedSat && Number.isFinite(selectedSat.lon) && Number.isFinite(selectedSat.lat)) {
       const lockData = WORLD_OFFSETS.map(offset => ({
         ...selectedSat,
-        lon: selectedSat.lon + offset,
+        lon: Number(selectedSat.lon) + offset,
+        lat: Number(selectedSat.lat),
+        alt: Number(selectedSat.alt) || 400000,
       }));
-      ls.push(new ScatterplotLayer({
-        id: 'target-ring-outer',
+      layerList.push(new ScatterplotLayer({
+        id: 'target-lock',
         data: lockData,
-        getPosition: (d: any) => [d.lon, d.lat, d.alt ?? 400_000],
-        getFillColor: [0, 255, 255, 0],
-        getLineColor: [0, 255, 255, 190],
-        getRadius: 16_000,
-        radiusMinPixels: 14,
-        radiusMaxPixels: 22,
-        stroked: true,
+        getPosition: d => [d.lon, d.lat, d.alt],
+        getFillColor: [0, 255, 255, 80],
+        getLineColor: [0, 255, 255, 255],
         lineWidthMinPixels: 2,
-        wrapLongitude: false,
-        updateTriggers: { getPosition: [selectedSat.lon, selectedSat.lat] },
-      }));
-      ls.push(new ScatterplotLayer({
-        id: 'target-ring-inner',
-        data: lockData,
-        getPosition: (d: any) => [d.lon, d.lat, d.alt ?? 400_000],
-        getFillColor: [0, 255, 255, 25],
-        getLineColor: [0, 255, 255, 100],
-        getRadius: 9_000,
-        radiusMinPixels: 8,
-        radiusMaxPixels: 13,
         stroked: true,
-        lineWidthMinPixels: 1,
+        getRadius: 7.5,
+        radiusMinPixels: 9,
         wrapLongitude: false,
-        updateTriggers: { getPosition: [selectedSat.lon, selectedSat.lat] },
       }));
     }
 
     // LOS arcs
     if (arcData.length > 0) {
-      ls.push(new ArcLayer({
-        id: 'los-arcs',
+      layerList.push(new ArcLayer({
+        id: 'los-arc',
         data: arcData,
         getSourcePosition: (d: ArcData) => d.source,
         getTargetPosition: (d: ArcData) => d.target,
         getSourceColor: [255, 0, 51, 220],
-        getTargetColor: [255, 0, 51, 55],
-        getWidth: 2,
-        opacity: 0.8,
-        pickable: false,
+        getTargetColor: [255, 0, 51, 80],
+        getWidth: 3,
+        opacity: 0.9,
+        pickable: true,
         wrapLongitude: false,
-        updateTriggers: { getSourcePosition: [arcData.length] },
       }));
     }
 
-    return ls;
+    return layerList;
   }, [
     instancedDebris,
     instancedSatellites,
     terminatorCopies,
     arcData,
-    historicalTrails,
-    predictedTrails,
+    historicalTrailCopies,
+    highlightedHistoricalTrails,
+    burnMarkers,
     selectedSat,
-    selectedSatId,
-    gsData,
-    handleSatClick,
-    handleSatHover,
+    selectedSatelliteId,
+    hoverSatellite,
+    selectSatellite,
   ]);
 
-  // ── 12. VIEWPORT ───────────────────────────────────────────────────────────
-  const handleViewStateChange = useCallback(
-    ({ viewState: vs, interactionState }: ViewStateChangeParameters) => {
-      setViewState(vs as unknown as MapViewState);
-      isDragging.current = Boolean(
-        interactionState?.isDragging || interactionState?.isPanning || interactionState?.isZooming
-      );
-    },
-    []
-  );
+  // ==========================================================================
+  // 9. VIEWPORT HANDLER
+  // ==========================================================================
+  const handleViewStateChange = useCallback(({ viewState: vs, interactionState }: ViewStateChangeParameters) => {
+    setViewState(vs as unknown as MapViewState);
+    const isMoving = Boolean(interactionState?.isDragging || interactionState?.isPanning || interactionState?.isZooming);
+    isNavigatingRef.current = isMoving;
+    if (isMoving) setIsTracking(false);
+  }, []);
 
-  const getCursor = useCallback(
-    ({ isHovering }: { isHovering: boolean }) =>
-      isDragging.current ? 'grabbing' : isHovering ? 'crosshair' : 'default',
-    []
-  );
+  const handleCursor = useCallback(({ isHovering }: { isHovering: boolean }) => {
+    if (isNavigatingRef.current) return 'grabbing';
+    return isHovering ? 'crosshair' : 'default';
+  }, []);
 
-  // ── 13. WEBGL CONTEXT LOSS ─────────────────────────────────────────────────
+  // ==========================================================================
+  // 10. WEBGL CONTEXT LOSS RECOVERY
+  // ==========================================================================
   useEffect(() => {
     const canvas = document.querySelector('canvas');
     if (!canvas) return;
-    const onLost = (e: Event) => { e.preventDefault(); console.error('[DeckGLMap] WebGL context lost'); };
-    const onRestored = () => console.log('[DeckGLMap] WebGL context restored');
-    canvas.addEventListener('webglcontextlost', onLost, false);
-    canvas.addEventListener('webglcontextrestored', onRestored, false);
+    const onContextLost = (e: Event) => { e.preventDefault(); console.error('[DeckGLMap] WebGL context lost'); };
+    const onContextRestored = () => { console.log('[DeckGLMap] WebGL context restored'); };
+    canvas.addEventListener('webglcontextlost', onContextLost, false);
+    canvas.addEventListener('webglcontextrestored', onContextRestored, false);
     return () => {
-      canvas.removeEventListener('webglcontextlost', onLost);
-      canvas.removeEventListener('webglcontextrestored', onRestored);
+      canvas.removeEventListener('webglcontextlost', onContextLost);
+      canvas.removeEventListener('webglcontextrestored', onContextRestored);
     };
   }, []);
 
-  // ── 14. STATUS STRIP helper ────────────────────────────────────────────────
-  const satStatusColor = (status: string) =>
-    status === 'CRITICAL' ? 'text-laser-red animate-pulse' :
-    status === 'WARNING'  ? 'text-amber' : 'text-nominal-green';
-
-  // ── 15. RENDER ─────────────────────────────────────────────────────────────
-  return (
-    <ErrorBoundary
-      fallback={
-        <div className="w-full h-full flex items-center justify-center bg-black font-mono text-laser-red">
-          <div className="text-center space-y-3">
-            <div className="text-4xl">⚠️</div>
-            <div className="text-sm">WebGL Rendering Failed</div>
-            <button onClick={() => window.location.reload()}
-              className="px-4 py-2 text-xs border border-laser-red rounded hover:bg-laser-red/20 transition-colors">
-              RELOAD
-            </button>
-          </div>
+  // ==========================================================================
+  // 11. RENDER
+  // ==========================================================================
+  const renderContent = () => {
+    if (!canRender) {
+      return (
+        <div className="w-full h-full flex items-center justify-center bg-void-black text-muted-gray">
+          <div className="text-center animate-pulse font-mono tracking-widest text-xs">🛰️ Initializing orbital display...</div>
         </div>
-      }
-    >
-      <div className="relative w-full h-full bg-black overflow-hidden">
+      );
+    }
+
+    return (
+      <div className="relative w-full h-full bg-void-black overflow-hidden">
         <DeckGL
           width="100%"
           height="100%"
           viewState={viewState}
           onViewStateChange={handleViewStateChange}
-          controller={{
-            scrollZoom: { smooth: true, speed: 0.01 },
-            dragPan: true,
-            dragRotate: false,
-            touchRotate: false,
-            doubleClickZoom: true,
-            keyboard: true,
-          }}
+          controller={true}
           layers={layers}
-          getCursor={getCursor}
-          // useDevicePixels=true gives the GPU full native resolution → higher FPS potential
-          useDevicePixels={true}
-          onWebGLInitialized={(gl: WebGLRenderingContext) => {
-            gl.clearColor(0, 0, 0, 1);
-          }}
+          getCursor={handleCursor}
+          useDevicePixels={false}
+          onWebGLInitialized={gl => gl.clearColor(0, 0, 0, 1)}
         >
           <MapGL
             mapStyle={MAP_STYLE}
             reuseMaps
+            interactive={false}
             renderWorldCopies={false}
-            dragRotate={false}
-            touchZoomRotate={false}
             attributionControl={false}
           />
         </DeckGL>
 
-        {/* ── Selected satellite HUD strip (top-centre) ── */}
+        {/* Selection Info Panel */}
         {selectedSat && (
-          <div className="absolute top-16 left-1/2 pointer-events-none z-10"
-            style={{ transform: 'translateX(-50%)' }}>
-            <div className="flex items-center gap-3 px-4 py-2 rounded-full font-mono text-xs"
-              style={{
-                background: 'rgba(0,0,0,0.78)',
-                border: '1px solid rgba(0,255,255,0.45)',
-                boxShadow: '0 0 20px rgba(0,255,255,0.18)',
-                backdropFilter: 'blur(10px)',
-              }}>
-              <div className="w-2 h-2 rounded-full bg-plasma-cyan animate-pulse"
-                style={{ boxShadow: '0 0 6px #00FFFF' }} />
-              <span className="text-plasma-cyan font-bold">{selectedSat.id}</span>
-              <span className="text-muted-gray">LOCKED</span>
-              <span className="text-white">{selectedSat.lat.toFixed(3)}° / {selectedSat.lon.toFixed(3)}°</span>
-              <span className={`font-mono ${selectedSat.fuel_kg < 5 ? 'text-laser-red font-bold animate-pulse' : selectedSat.fuel_kg < 15 ? 'text-amber' : 'text-plasma-cyan'}`}>
-                ⛽ {selectedSat.fuel_kg.toFixed(2)} kg
-              </span>
-              <span className={`font-mono font-bold ${satStatusColor(selectedSat.status)}`}>
-                {selectedSat.status}
-              </span>
-              <button
-                className="pointer-events-auto text-muted-gray hover:text-white transition-colors ml-1"
-                onClick={() => selectSatellite?.(null)}>
-                ✕
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ── Eclipse warning (bottom-centre) ── */}
-        {eclipse && selectedSat && (
-          <div className="absolute bottom-8 left-1/2 pointer-events-none z-10"
-            style={{ transform: 'translateX(-50%)' }}>
-            <div className="px-4 py-2 rounded font-mono text-xs font-bold animate-pulse"
-              style={{
-                background: 'rgba(210,153,34,0.14)',
-                border: '1px solid rgba(210,153,34,0.55)',
-                color: '#D29922',
-                boxShadow: '0 0 16px rgba(210,153,34,0.28)',
-              }}>
-              ⚡ ECLIPSE ZONE — BATTERY POWER
-            </div>
-          </div>
-        )}
-
-        {/* ── Map legend (bottom-right) ── */}
-        <div className="absolute bottom-4 right-4 pointer-events-none z-10 rounded-lg px-3 py-2.5"
-          style={{
-            background: 'rgba(0,0,0,0.72)',
-            border: '1px solid rgba(255,0,51,0.18)',
-            backdropFilter: 'blur(8px)',
-          }}>
-          <div className="space-y-1.5 text-[8px] font-mono">
-            {[
-              { col: '#00FFFF', label: 'NOMINAL' },
-              { col: '#FFbf00', label: 'WARNING' },
-              { col: '#FF0033', label: 'CRITICAL' },
-              { col: '#FF0033', label: 'GROUND STN', square: true },
-            ].map(({ col, label, square }) => (
-              <div key={label} className="flex items-center gap-2">
-                <div className={`${square ? 'w-2 h-2' : 'w-2 h-2 rounded-full'}`}
-                  style={{ background: col, boxShadow: `0 0 4px ${col}` }} />
-                <span className="text-muted-gray">{label}</span>
+          <div className="absolute top-4 right-4 glass-panel px-4 py-3 z-10 max-w-xs">
+            <div className="font-mono text-xs space-y-2">
+              <div className="text-plasma-cyan font-semibold border-b border-red-900/30 pb-2 flex justify-between items-center">
+                <span>{selectedSat.id}</span>
+                {!isTracking && (
+                  <button onClick={() => setIsTracking(true)} className="text-[9px] bg-red-900/30 hover:bg-red-900/50 px-2 py-1 rounded transition-colors">
+                    RE-LOCK
+                  </button>
+                )}
               </div>
-            ))}
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-[1px]" style={{ background: 'rgba(0,200,255,0.5)' }} />
-              <span className="text-muted-gray">PREDICTED</span>
+              <div className="text-muted-gray space-y-1">
+                <div className="flex justify-between"><span>LAT:</span><span className="text-white">{Number(selectedSat.lat || 0).toFixed(4)}°</span></div>
+                <div className="flex justify-between"><span>LON:</span><span className="text-white">{Number(selectedSat.lon || 0).toFixed(4)}°</span></div>
+                <div className="flex justify-between"><span>ALT:</span><span className="text-white">{((selectedSat.alt || 400000) / 1000).toFixed(1)} km</span></div>
+                <div className="flex justify-between"><span>FUEL:</span><span className={selectedSat.fuel_kg < 5 ? 'text-laser-red' : 'text-plasma-cyan'}>{Number(selectedSat.fuel_kg || 0).toFixed(2)} kg</span></div>
+                <div className="flex justify-between"><span>STATUS:</span><span className={selectedSat.status === 'CRITICAL' ? 'text-laser-red' : 'text-nominal-green'}>{selectedSat.status}</span></div>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-[2px]" style={{ background: '#00FFFF' }} />
-              <span className="text-muted-gray">TRAIL</span>
-            </div>
+          </div>
+        )}
+
+        {/* Eclipse Warning */}
+        {isEclipse && selectedSat && (
+          <div className="absolute bottom-4 left-4 glass-panel px-3 py-2 z-10 border border-amber/50 text-amber text-[10px] font-mono font-bold animate-pulse shadow-[0_0_15px_rgba(210,153,34,0.4)]">
+            ⚡ BATTERY POWER: ECLIPSE ZONE
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <ErrorBoundary
+      fallback={
+        <div className="w-full h-full flex items-center justify-center bg-void-black text-laser-red">
+          <div className="text-center">
+            <h2 className="text-xl font-bold">🛰️ Visualizer Error</h2>
+            <p className="text-sm text-muted-gray mt-2">WebGL context desynced.</p>
+            <button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 bg-plasma-cyan text-black rounded hover:opacity-90">
+              Restart Matrix
+            </button>
           </div>
         </div>
-      </div>
+      }
+    >
+      {renderContent()}
     </ErrorBoundary>
   );
 });

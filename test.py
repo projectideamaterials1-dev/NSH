@@ -1,27 +1,24 @@
 #!/usr/bin/env python3
 """
-NSH 2026: Live Demonstration Simulator (Action-Packed)
-==========================================================
-Scale: 50 Satellites | 10,000 Debris
-Feature: Keplerian Back-Propagation & High-Resolution Telemetry.
-Tracks real-time Thruster Ignitions, Fuel Expenditure, and 
-Absolute Maximum Drift per satellite.
+NSH 2026: Extended 30‑Day Live Demonstration with Real‑Time Speed Control
+==========================================================================
+50 Satellites | 10,000 Debris
+Continuous simulation with frontend sync. The simulation advances at a
+configurable pace so you can watch satellites move in real time.
 """
 
 import requests
 import time
 import math
 import numpy as np
-import csv
 import random
 import json
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
-# Import Autonomous Brain for local planning
+# Import Autonomous Brain
 sys.path.append('satellite_api')
 try:
     from acm.brain import AutonomousBrain, Conjunction, ManeuverType
@@ -30,43 +27,30 @@ except ImportError:
     sys.exit(1)
 
 # ============================================================================
-# TEE LOGGER
-# ============================================================================
-class TeeLogger(object):
-    def __init__(self, filename="mission_demo.log"):
-        self.terminal = sys.stdout
-        self.log = open(filename, "w", encoding="utf-8")
-
-    def write(self, message):
-        self.terminal.write(message)
-        self.log.write(message)
-
-    def flush(self):
-        self.terminal.flush()
-        self.log.flush()
-
-sys.stdout = TeeLogger()
-
-# ============================================================================
-# DEMO CONFIGURATION 
+# CONFIGURATION
 # ============================================================================
 BASE_URL = "http://127.0.0.1:8000"
-R_EARTH = 6378.137          
-MU_EARTH = 398600.4418      
+R_EARTH = 6378.137
+MU_EARTH = 398600.4418
 
-# 🚀 DEMO SCALE
 NUM_SATELLITES = 50
 NUM_DEBRIS = 10000
 
-SIMULATION_DAYS = 1         
-STEP_SECONDS = 60           # 1 step = 1 minute in simulation
-TOTAL_STEPS = (SIMULATION_DAYS * 24 * 3600) // STEP_SECONDS  
+SIMULATION_DAYS = 30
+STEP_SECONDS = 60                     # 1 minute per simulation step
+TOTAL_STEPS = (SIMULATION_DAYS * 24 * 3600) // STEP_SECONDS
 
+# 🚀 Speed control: seconds to sleep after each simulation step
+#    Set to 0 for maximum speed (no sleep). Values > 0 make the demo
+#    progress slower so you can watch the frontend move smoothly.
+SLEEP_PER_STEP = 0.2                  # 0.2 sec sleep → 5 steps/sec → 5 min simulation / real sec
+
+# Seed for reproducibility
 np.random.seed(42)
 random.seed(42)
 
 # ============================================================================
-# ORBITAL MECHANICS (THE "ASSASSIN DEBRIS" ENGINE)
+# ORBITAL MECHANICS (unchanged)
 # ============================================================================
 
 def print_header(title: str):
@@ -101,10 +85,6 @@ def generate_circular_orbit(altitude_km: float, inclination_deg: Optional[float]
     )
 
 def generate_assassin_debris(r_sat0: dict, v_sat0: dict, tca_sec: float, v_rel_mag: float = 12.0):
-    """
-    Mathematically guarantees a physical collision.
-    Fast-forwards satellite to TCA, spawns debris, and rewinds it to t=0.
-    """
     r0 = np.array([r_sat0['x'], r_sat0['y'], r_sat0['z']])
     v0 = np.array([v_sat0['x'], v_sat0['y'], v_sat0['z']])
 
@@ -145,10 +125,12 @@ def check_response(resp, stage_name):
 # ============================================================================
 
 def run_live_demo():
-    print_header(f"CRIMSON NEBULA LIVE DEMO\n{NUM_SATELLITES} SATS | {NUM_DEBRIS} DEBRIS | KEP_BACK-PROP ENGINE")
-    
+    print_header(f"CRIMSON NEBULA – 30‑DAY CONTINUOUS DEMO\n{NUM_SATELLITES} SATS | {NUM_DEBRIS} DEBRIS | KEPLER ENGINE")
+    print(f"Simulation step: {STEP_SECONDS} seconds | Sleep between steps: {SLEEP_PER_STEP} sec")
+    print("Frontend polls snapshot every 2 seconds – you will see smooth movement.\n")
+
     # ── 1. GENERATE DATA ──
-    print("\n[1/3] Calculating Orbital Vectors & Assassin Trajectories...")
+    print("\n[1/4] Generating orbital vectors and assassin trajectories...")
     objects = []
     sat_states = {}
     
@@ -163,7 +145,7 @@ def run_live_demo():
     WARNING_TIME_MINUTES = 60
     INCOMING_CDMS = defaultdict(list)
     
-    print(f"      -> Injecting 150 High-Risk Intersecting Vectors...")
+    print(f"      -> Injecting 150 high‑risk intersecting vectors...")
     assassin_count = 0
     for i in range(150):
         target_sat_idx = random.randint(0, NUM_SATELLITES - 1)
@@ -194,33 +176,39 @@ def run_live_demo():
         r, v = generate_circular_orbit(alt)
         objects.append({"id": f"DEB-BG-{i:05d}", "type": "DEBRIS", "r": r, "v": v})
 
-    # ── 2. UPLINK TO BACKEND ──
+    # ── 2. UPLINK TELEMETRY ──
     current_sim_time_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
-    print(f"\n[2/3] Uplinking Telemetry Payload to C++ Spatial Hash Engine...")
+    print(f"\n[2/4] Uplinking telemetry payload to backend...")
     
     t0_tel = time.perf_counter()
     telemetry_resp = requests.post(f"{BASE_URL}/api/telemetry", json={"timestamp": current_sim_time_iso, "objects": objects})
     t1_tel = time.perf_counter()
     
-    print(f"✅ Telemetry Initialized in {(t1_tel - t0_tel)*1000:.2f} ms")
+    print(f"✅ Telemetry initialized in {(t1_tel - t0_tel)*1000:.2f} ms")
     check_response(telemetry_resp, "Initial Telemetry Ingestion")
     
-    # ── 3. IGNITE SIMULATION ──
-    brain = AutonomousBrain()
-    print_header(f"IGNITING SIMULATION ({TOTAL_STEPS} Steps @ {STEP_SECONDS}s/step)")
+    # ── 3. START AUTO‑SYNC ON FRONTEND ──
+    print(f"\n[3/4] Frontend auto‑sync is assumed to be active (every 2s).")
     
-    # 🚀 LIVE TRACKING METRICS
+    # ── 4. IGNITE SIMULATION ──
+    brain = AutonomousBrain()
+    print_header(f"IGNITING 30‑DAY SIMULATION ({TOTAL_STEPS} steps @ {STEP_SECONDS}s/step)")
+    print("Frontend will show satellites moving, fuel decreasing, and evasion trails.\n")
+    
+    # Live tracking metrics
     total_evasions = 0
     total_fuel = 0.0
     sat_max_drift = {f"SAT-{i:03d}": 0.0 for i in range(NUM_SATELLITES)}
     sat_fuel_used = {f"SAT-{i:03d}": 0.0 for i in range(NUM_SATELLITES)}
     
+    start_real = time.time()
     for step in range(TOTAL_STEPS):
         # ── A. TRIGGER MANEUVERS VIA CDMS ──
         if step in INCOMING_CDMS:
             try:
                 debug_data = requests.get(f"{BASE_URL}/api/internal/debug_state", timeout=10).json()
-            except: debug_data = {}
+            except:
+                debug_data = {}
             
             sat_states_arr = np.zeros((NUM_SATELLITES, 6))
             nominal_states_arr = np.zeros((NUM_SATELLITES, 6))
@@ -244,7 +232,8 @@ def run_live_demo():
             
             if plans:
                 plans_by_sat = defaultdict(list)
-                for p in plans: plans_by_sat[f"SAT-{p.sat_idx:03d}"].append(p)
+                for p in plans: 
+                    plans_by_sat[f"SAT-{p.sat_idx:03d}"].append(p)
                     
                 for sid, sat_plans in plans_by_sat.items():
                     seq = []
@@ -263,7 +252,7 @@ def run_live_demo():
                         total_fuel += fuel_cost
                         sat_fuel_used[sid] += fuel_cost
                         
-        # ── B. STEP THE PHYSICS ENGINE ──
+        # ── B. STEP PHYSICS ENGINE ──
         try:
             t0_phys = time.perf_counter()
             sim_resp = requests.post(f"{BASE_URL}/api/simulate/step", json={"step_seconds": STEP_SECONDS}, timeout=10)
@@ -279,65 +268,67 @@ def run_live_demo():
         except Exception as e:
             print(f"⚠️ Physics Step Timeout/Error: {e}")
 
-        # ── C. HIGH-RESOLUTION DRIFT AUDIT & RADAR ──
-        try:
-            # We fetch state every step to ensure we capture the absolute mathematical peak of the drift
-            debug_resp = requests.get(f"{BASE_URL}/api/internal/debug_state", timeout=5)
-            if debug_resp.status_code == 200:
-                debug_data = debug_resp.json()
-                
-                active_evaders = []
-                for sid, s_data in debug_data.items():
-                    if not sid.startswith("SAT-"): continue
+        # ── C. DRIFT AUDIT & RADAR (every 5 simulated hours) ──
+        if step % 300 == 0 and step > 0:   # 300 steps = 5 hours
+            try:
+                debug_resp = requests.get(f"{BASE_URL}/api/internal/debug_state", timeout=5)
+                if debug_resp.status_code == 200:
+                    debug_data = debug_resp.json()
                     
-                    r_real = np.array(s_data["r_eci"])
-                    r_ghost = np.array(s_data["r_nominal_eci"])
-                    drift_km = np.linalg.norm(r_real - r_ghost)
-                    fuel = s_data.get("fuel_kg", 50.0)
-                    
-                    # Update the absolute maximum drift recorded for this satellite
-                    if drift_km > sat_max_drift[sid]:
-                        sat_max_drift[sid] = drift_km
-                    
-                    # For the radar printout (every 5 mins), only show actively drifting sats
-                    if step > 0 and step % 5 == 0 and drift_km > 0.1:
-                        active_evaders.append((sid, drift_km, fuel))
-                
-                # Print Radar Log
-                if step > 0 and step % 5 == 0 and active_evaders:
-                    print(f"\n📡 [RADAR] Active Evasion Drifts Detected at {current_sim_time_iso.split('T')[1][:8]}Z:")
-                    for sid, d, f in active_evaders:
-                        indicator = "🟢 Recovering" if d < 2.0 else "🟡 Evading" if d < 10.0 else "🔴 Max Drift"
-                        print(f"   ↳ {sid} | Current: {d:6.2f} km | Max Peak: {sat_max_drift[sid]:6.2f} km | Status: {indicator}")
+                    active_evaders = []
+                    for sid, s_data in debug_data.items():
+                        if not sid.startswith("SAT-"): continue
                         
-        except: pass
+                        r_real = np.array(s_data["r_eci"])
+                        r_ghost = np.array(s_data["r_nominal_eci"])
+                        drift_km = np.linalg.norm(r_real - r_ghost)
+                        fuel = s_data.get("fuel_kg", 50.0)
+                        
+                        if drift_km > sat_max_drift[sid]:
+                            sat_max_drift[sid] = drift_km
+                        
+                        if drift_km > 0.1:
+                            active_evaders.append((sid, drift_km, fuel))
+                    
+                    if active_evaders:
+                        print(f"\n📡 [RADAR] Active Evasion Drifts Detected at {current_sim_time_iso.split('T')[1][:8]}Z:")
+                        for sid, d, f in active_evaders[:10]:
+                            indicator = "🟢 Recovering" if d < 2.0 else "🟡 Evading" if d < 10.0 else "🔴 Max Drift"
+                            print(f"   ↳ {sid} | Current: {d:6.2f} km | Max Peak: {sat_max_drift[sid]:6.2f} km | Status: {indicator}")
+                        
+            except: pass
 
-        # Basic progress heartbeat
-        if step % 30 == 0:
-            print(f"⏱️ Step {step:04d}/{TOTAL_STEPS} | {current_sim_time_iso} | Engine Latency: {phys_ms:.1f}ms")
+        # Progress heartbeat (every 1 simulated hour)
+        if step % 60 == 0:
+            sim_time_obj = datetime.fromisoformat(current_sim_time_iso.replace('Z', '+00:00'))
+            elapsed_real = time.time() - start_real
+            print(f"⏱️ Step {step:05d}/{TOTAL_STEPS} | Sim Time: {sim_time_obj.strftime('%Y-%m-%d %H:%M')}Z | Real: {elapsed_real:.1f}s | Engine Latency: {phys_ms:.1f}ms")
+
+        # Sleep to control simulation speed (so frontend updates are visible)
+        if SLEEP_PER_STEP > 0:
+            time.sleep(SLEEP_PER_STEP)
 
     # ========================================================================
     # POST-DEMO REPORT
     # ========================================================================
-    print_header("MISSION CONCLUDED - FINAL AUDIT REPORT")
+    print_header("MISSION CONCLUDED – FINAL AUDIT REPORT")
     print(f"✅ Total Evasions Executed: {total_evasions}")
     print(f"✅ Total Fuel Expended: {total_fuel:.2f} kg")
     
     print("\n📊 MAXIMUM DRIFT PEAKS (Top 15 Evaders):")
-    # Sort satellites by the maximum distance they drifted from nominal
     drifting_sats = sorted(sat_max_drift.items(), key=lambda x: x[1], reverse=True)
-    printed_count = 0
+    printed = 0
     for sid, max_d in drifting_sats:
-        if max_d > 0.05: # Only show satellites that actually had to dodge
+        if max_d > 0.05:
             print(f"   🚀 {sid}: {max_d:7.4f} km max offset (Fuel used: {sat_fuel_used[sid]:.2f} kg)")
-            printed_count += 1
-        if printed_count >= 15:
-            break
+            printed += 1
+            if printed >= 15: break
             
-    if printed_count == 0:
+    if printed == 0:
         print("   ↳ No significant drifts recorded (Flawless nominal keeping).")
         
-    print("\n[NOTE FOR JUDGES]: If you observed the frontend during this sequence, you saw specific red debris vectors intersect with satellite tracks, triggering the physical orbital deviations mapped in the report above.")
+    print("\n[NOTE] During this run, the frontend updated every 2 seconds.")
+    print("You should have observed satellites moving, fuel decreasing, and evasion trails.")
 
 if __name__ == "__main__":
     run_live_demo()

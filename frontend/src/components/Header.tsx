@@ -1,8 +1,8 @@
 // src/components/Header.tsx
-// Resilient Command Center Header | Crash-Proof | Crimson Nebula Theme
+// Resilient Command Center Header | Enhanced Visibility | Crimson Nebula Theme
 
 import React, { useMemo, useEffect, useState, useRef, Component, ErrorInfo, ReactNode } from 'react';
-import { Terminal, ShieldAlert, Satellite, Wifi, WifiOff, Clock, Activity, Cpu } from 'lucide-react';
+import { Terminal, ShieldAlert, Satellite, Wifi, WifiOff, Clock, Cpu, AlertTriangle } from 'lucide-react';
 import useOrbitalStore, {
   selectDebrisCount,
   selectSatelliteCount,
@@ -85,11 +85,11 @@ const THEME = {
     NOMINAL_GREEN: '#238636',
   },
   DEFCON_LEVELS: {
-    1: { label: 'DEFCON 1', color: '#FF0033', pulse: true },
-    2: { label: 'DEFCON 2', color: '#FFBF00', pulse: true },
-    3: { label: 'DEFCON 3', color: '#D29922', pulse: false },
-    4: { label: 'DEFCON 4', color: '#238636', pulse: false },
-    5: { label: 'DEFCON 5', color: '#00FFFF', pulse: false },
+    1: { label: 'DEFCON 1', color: '#FF0033', pulse: true, description: 'Nuclear war imminent' },
+    2: { label: 'DEFCON 2', color: '#FFBF00', pulse: true, description: 'Armed forces ready to deploy' },
+    3: { label: 'DEFCON 3', color: '#D29922', pulse: false, description: 'Air force ready in 15 minutes' },
+    4: { label: 'DEFCON 4', color: '#238636', pulse: false, description: 'Increased intelligence watch' },
+    5: { label: 'DEFCON 5', color: '#00FFFF', pulse: false, description: 'Normal peacetime readiness' },
   },
 } as const;
 
@@ -293,6 +293,47 @@ const ConnectionIndicator: React.FC<ConnectionIndicatorProps> = React.memo(({ st
 });
 
 // ============================================================================
+// NEW: Telemetry Ticker (scrolling message)
+// ============================================================================
+
+const TelemetryTicker: React.FC = React.memo(() => {
+  const [messages, setMessages] = useState<string[]>([]);
+  const timestamp = useOrbitalStore(state => state.timestamp);
+  const maneuvers = useOrbitalStore(state => state.maneuvers);
+  const collisions = useOrbitalStore(state => state.simulation.collisionsDetected);
+
+  useEffect(() => {
+    // Build a ticker message from recent events
+    const newMessages: string[] = [];
+    if (timestamp) {
+      const time = new Date(timestamp).toISOString().substring(11, 19);
+      newMessages.push(`🛰️ SIM TIME: ${time}Z`);
+    }
+    if (maneuvers.length > 0) {
+      const lastBurn = maneuvers[maneuvers.length - 1];
+      const burnTime = new Date(lastBurn.burnTime).toISOString().substring(11, 19);
+      newMessages.push(`🔥 LAST BURN: ${lastBurn.satellite_id} @ ${burnTime}Z | Δv=${lastBurn.delta_v_magnitude.toFixed(3)} m/s`);
+    }
+    if (collisions > 0) {
+      newMessages.push(`⚠️ TOTAL COLLISIONS AVOIDED: ${collisions}`);
+    }
+    setMessages(newMessages.slice(-3));
+  }, [timestamp, maneuvers, collisions]);
+
+  if (messages.length === 0) return null;
+
+  return (
+    <div className="absolute bottom-0 left-0 right-0 overflow-hidden whitespace-nowrap bg-black/60 border-t border-red-900/30 text-[8px] font-mono text-plasma-cyan py-1">
+      <div className="animate-scroll inline-block px-4">
+        {messages.map((msg, i) => (
+          <span key={i} className="mr-6">{msg}</span>
+        ))}
+      </div>
+    </div>
+  );
+});
+
+// ============================================================================
 // UTILITIES (pure functions)
 // ============================================================================
 
@@ -334,7 +375,7 @@ const HeaderContent: React.FC = () => {
 
   return (
     <header
-      className="h-16 glass-panel grid grid-cols-3 items-center px-6 z-50 w-full"
+      className="fixed top-0 left-0 right-0 h-16 glass-panel grid grid-cols-3 items-center px-6 z-50 w-full"
       style={{
         background: 'rgba(0, 0, 0, 0.70)',
         backdropFilter: 'blur(16px)',
@@ -421,7 +462,7 @@ const HeaderContent: React.FC = () => {
         />
         {highRiskCount > 0 && (
           <StatItem
-            icon={Activity}
+            icon={AlertTriangle}
             label="HIGH RISK"
             value={formatCount(highRiskCount)}
             color="red"
@@ -439,7 +480,7 @@ const HeaderContent: React.FC = () => {
             boxShadow: `0 0 15px ${defconConfig.color}40`,
             animationDuration: defconConfig.pulse ? '2s' : '0s',
           }}
-          title={`Threat Level: ${defconConfig.label}`}
+          title={defconConfig.description}
         >
           {defconConfig.label}
         </div>
@@ -455,6 +496,13 @@ const HeaderContent: React.FC = () => {
           0% { background-position: -200% 0; }
           100% { background-position: 200% 0; }
         }
+        @keyframes scroll {
+          0% { transform: translateX(100%); }
+          100% { transform: translateX(-100%); }
+        }
+        .animate-scroll {
+          animation: scroll 20s linear infinite;
+        }
       `}</style>
     </header>
   );
@@ -463,6 +511,7 @@ const HeaderContent: React.FC = () => {
 export const Header: React.FC = () => (
   <HeaderErrorBoundary>
     <HeaderContent />
+    <TelemetryTicker />
   </HeaderErrorBoundary>
 );
 

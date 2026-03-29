@@ -1,24 +1,21 @@
 // src/App.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { Header } from './components/Header';
 import { DashboardLayout } from './components/DashboardLayout';
 import { DeckGLMap } from './components/DeckGLMap';
-import TelemetryClient from './api/telemetryClient';
-import useOrbitalStore, { selectConnectionState } from './store/useOrbitalStore';
+import useOrbitalStore from './store/useOrbitalStore';
 
 const App: React.FC = () => {
-  const [isPolling, setIsPolling] = useState(false);
-  const connectionState = useOrbitalStore(selectConnectionState);
-  const updateTelemetry = useOrbitalStore((state) => state.updateTelemetry);
+  const startAutoSync = useOrbitalStore(state => state.startAutoSync);
+  const stopAutoSync = useOrbitalStore(state => state.stopAutoSync);
 
   useEffect(() => {
-    if (isPolling) return;
-    const cleanup = TelemetryClient.startPolling((timestamp, satellitesBinary, debrisBinary, metrics) => {
-      updateTelemetry(debrisBinary, satellitesBinary, timestamp, metrics.parseTimeMs);
-    });
-    setIsPolling(true);
-    return cleanup;
-  }, [isPolling, updateTelemetry]);
+    // Start polling the snapshot endpoint every 2 seconds
+    startAutoSync(2000);
+    return () => stopAutoSync();
+  }, [startAutoSync, stopAutoSync]);
+
+  const connectionState = useOrbitalStore(state => state.connectionStatus.state);
 
   if (connectionState === 'error') {
     return (
@@ -40,8 +37,10 @@ const App: React.FC = () => {
   return (
     <div className="relative w-full h-screen bg-void-black overflow-hidden">
       <Header />
-      <DeckGLMap />
-      <DashboardLayout />
+      <div className="pt-20 h-full w-full relative">
+        <DeckGLMap />
+        <DashboardLayout />
+      </div>
     </div>
   );
 };
