@@ -1,9 +1,8 @@
 // src/components/DeckGLMap.tsx
 // National Space Hackathon 2026 – Orbital Insight Visualizer
-// ✅ All utility functions included (terminator, elevation, shadow, etc.)
-// ✅ Actual trails only (red base, selected bright red) – single world copy
-// ✅ Burn markers from store maneuvers – single world copy
-// ✅ Debris markers, ground stations, LOS arcs – triple world copies
+// ✅ Fixed trail distortion: downsample raw -> unwrap -> single copy
+// ✅ Burn markers single copy
+// ✅ Debris, ground stations, satellites, LOS arcs triple copies
 // ✅ Camera tracking for selected satellite
 
 import React, { useMemo, useState, useEffect, useRef, useCallback, Component, ErrorInfo, ReactNode } from 'react';
@@ -56,7 +55,7 @@ interface BurnMarker {
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 const INITIAL_VIEW_STATE: MapViewState = Object.freeze({ longitude: 0, latitude: 0, zoom: 1.5, pitch: 0, bearing: 0 });
 const WORLD_OFFSETS = [-360, 0, 360] as const;
-const TRAIL_DOWNSAMPLE_FACTOR = 3;
+const TRAIL_DOWNSAMPLE_FACTOR = 3; // keep 1 point per 3 seconds
 
 // ============================================================================
 // UTILITIES (all functions needed)
@@ -235,24 +234,26 @@ export const DeckGLMap: React.FC = React.memo(() => {
   }, [isTracking, selectedSat?.lon, selectedSat?.lat]);
 
   // ==========================================================================
-  // 4. DATA PREPARATION – ACTUAL TRAILS ONLY (single world copy)
+  // 4. DATA PREPARATION – ACTUAL TRAILS (single copy, unwrapped)
   // ==========================================================================
   const historicalTrailCopies = useMemo<TrailData[]>(() => {
     if (!trails || Object.keys(trails).length === 0) return [];
     const copies: TrailData[] = [];
     const validTrails = Object.values(trails).filter(t => t && t.positions && t.positions.length > 1);
     for (const trail of validTrails) {
+      // Downsample raw points FIRST
       const rawPoints = trail.positions.map(([lon, lat]) => [Number(lon), Number(lat)] as [number, number]);
-      const unwrapped = unwrapTrailCoordinates(rawPoints);
-      const downsampled = downsampleTrail(unwrapped, TRAIL_DOWNSAMPLE_FACTOR);
-      if (downsampled.length > 1) {
-        // Only the primary copy (offset 0) – map repeats automatically
-        copies.push({
-          id: `${trail.satelliteId}`,
-          parentId: trail.satelliteId,
-          path: downsampled,
-        });
-      }
+      const downsampled = downsampleTrail(rawPoints, TRAIL_DOWNSAMPLE_FACTOR);
+      if (downsampled.length < 2) continue;
+      // Then unwrap longitudes to continuous values (no antimeridian jumps)
+      const unwrapped = unwrapTrailCoordinates(downsampled);
+      if (unwrapped.length < 2) continue;
+      // Single copy (offset 0) – the map repeats the background, and the unwrapped line will be visible in the main view.
+      copies.push({
+        id: `${trail.satelliteId}`,
+        parentId: trail.satelliteId,
+        path: unwrapped,
+      });
     }
     return copies;
   }, [trails]);
@@ -369,7 +370,7 @@ export const DeckGLMap: React.FC = React.memo(() => {
   }, [satellites]);
 
   // ==========================================================================
-  // 8. WEBGL LAYERS (actual trails + burn markers – single copy)
+  // 8. WEBGL LAYERS
   // ==========================================================================
   const layers = useMemo(() => {
     const layerList: any[] = [];
@@ -387,7 +388,7 @@ export const DeckGLMap: React.FC = React.memo(() => {
       }));
     }
 
-    // ACTUAL TRAILS – unselected (faint red, single copy)
+    // ACTUAL TRAILS – unselected (faint red, single copy, unwrapped)
     if (historicalTrailCopies.length > 0) {
       layerList.push(new PathLayer({
         id: 'historical-trails-base',
@@ -398,7 +399,7 @@ export const DeckGLMap: React.FC = React.memo(() => {
         widthMaxPixels: 4,
         pickable: true,
         autoHighlight: false,
-        wrapLongitude: false,
+        wrapLongitude: false, // we already unwrapped, so no wrap
         onClick: (info: any) => {
           setTimeout(() => {
             try {
@@ -411,7 +412,7 @@ export const DeckGLMap: React.FC = React.memo(() => {
       }));
     }
 
-    // ACTUAL TRAILS – selected (bright red glow, single copy)
+    // ACTUAL TRAILS – selected (bright red glow, single copy, unwrapped)
     if (highlightedHistoricalTrails.length > 0) {
       layerList.push(
         new PathLayer({
