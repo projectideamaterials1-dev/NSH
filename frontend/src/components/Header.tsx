@@ -2,7 +2,7 @@
 // Resilient Command Center Header | Enhanced Visibility | Crimson Nebula Theme
 
 import React, { useMemo, useEffect, useState, useRef, Component, ErrorInfo, ReactNode } from 'react';
-import { Terminal, ShieldAlert, Satellite, Wifi, WifiOff, Clock, Cpu, AlertTriangle } from 'lucide-react';
+import { Terminal, ShieldAlert, Satellite, Wifi, WifiOff, Clock, Cpu, AlertTriangle, Settings, Save, X as XIcon, RefreshCw } from 'lucide-react';
 import useOrbitalStore, {
   selectDebrisCount,
   selectSatelliteCount,
@@ -306,8 +306,11 @@ const TelemetryTicker: React.FC = React.memo(() => {
     // Build a ticker message from recent events
     const newMessages: string[] = [];
     if (timestamp) {
-      const time = new Date(timestamp).toISOString().substring(11, 19);
-      newMessages.push(`🛰️ SIM TIME: ${time}Z`);
+      const date = new Date(timestamp);
+      if (!isNaN(date.getTime())) {
+        const time = date.toISOString().substring(11, 19);
+        newMessages.push(`🛰️ SIM TIME: ${time}Z`);
+      }
     }
     if (maneuvers.length > 0) {
       const lastBurn = maneuvers[maneuvers.length - 1];
@@ -355,6 +358,89 @@ function calculateDefconLevel(highRiskCount: number, connectionState: string): n
 }
 
 // ============================================================================
+// SETTINGS MODAL
+// ============================================================================
+
+const SettingsModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  const [config, setConfig] = useState({
+    dryMass: 500,
+    initialFuel: 50,
+    stationKeepingRadius: 10,
+    maxDeltaV: 15,
+    cooldownSeconds: 600
+  });
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const response = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-API-Key': 'CRIMSON_NEBULA_2026'
+        },
+        body: JSON.stringify(config)
+      });
+      if (response.ok) {
+        alert('Configuration saved successfully. Restart required for full effect.');
+        onClose();
+      }
+    } catch (err) {
+      console.error('Failed to save config:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md" onClick={onClose}>
+      <div className="w-96 glass-panel p-6 border-red-900/40 relative animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute top-4 right-4 text-muted-gray hover:text-white">
+          <XIcon className="w-4 h-4" />
+        </button>
+        <h2 className="text-sm font-bold font-mono text-plasma-cyan mb-6 tracking-widest uppercase">System Configuration</h2>
+        
+        <div className="space-y-4">
+          {[
+            { label: 'DRY MASS (kg)', key: 'dryMass', min: 100, max: 2000, step: 50 },
+            { label: 'INITIAL FUEL (kg)', key: 'initialFuel', min: 10, max: 500, step: 10 },
+            { label: 'STATION KEEPING (km)', key: 'stationKeepingRadius', min: 1, max: 50, step: 1 },
+            { label: 'MAX ΔV (m/s)', key: 'maxDeltaV', min: 5, max: 50, step: 5 },
+            { label: 'COOLDOWN (s)', key: 'cooldownSeconds', min: 60, max: 3600, step: 60 },
+          ].map(field => (
+            <div key={field.key} className="space-y-1.5">
+              <div className="flex justify-between text-[10px] font-mono">
+                <span className="text-muted-gray">{field.label}</span>
+                <span className="text-plasma-cyan">{config[field.key as keyof typeof config]}</span>
+              </div>
+              <input 
+                type="range" 
+                min={field.min} 
+                max={field.max} 
+                step={field.step}
+                value={config[field.key as keyof typeof config]}
+                onChange={e => setConfig({...config, [field.key]: parseFloat(e.target.value)})}
+                className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-plasma-cyan"
+              />
+            </div>
+          ))}
+        </div>
+
+        <button 
+          onClick={handleSave}
+          disabled={saving}
+          className="w-full mt-8 py-2 bg-plasma-cyan/10 border border-plasma-cyan/40 rounded flex items-center justify-center gap-2 text-[10px] font-mono text-plasma-cyan hover:bg-plasma-cyan/20 transition-all"
+        >
+          {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          SAVE CONFIGURATION
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
 // MAIN HEADER COMPONENT (uses atomic selectors, no store object)
 // ============================================================================
 
@@ -365,6 +451,7 @@ const HeaderContent: React.FC = () => {
   const highRiskCount = useOrbitalStore(selectHighRiskDebrisCount);
   const connectionState = useOrbitalStore(selectConnectionState);
   const latencyMs = useOrbitalStore(state => state.connectionStatus.latencyMs);
+  const [showSettings, setShowSettings] = useState(false);
 
   // Derive defcon level only when highRiskCount or connectionState changes
   const defconLevel = useMemo(
@@ -471,6 +558,14 @@ const HeaderContent: React.FC = () => {
           />
         )}
         <ConnectionIndicator state={connectionState as ConnectionIndicatorProps['state']} latencyMs={latencyMs} />
+        
+        <button 
+          onClick={() => setShowSettings(true)}
+          className="p-2 rounded border border-white/10 hover:bg-white/5 transition-all"
+          title="Open System Configuration"
+        >
+          <Settings className="w-4 h-4 text-muted-gray hover:text-plasma-cyan transition-colors" />
+        </button>
         <div
           className="px-4 py-2 rounded border font-mono text-xs font-bold tracking-wider animate-pulse"
           style={{
@@ -485,6 +580,8 @@ const HeaderContent: React.FC = () => {
           {defconConfig.label}
         </div>
       </div>
+
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
       {/* Add CSS animations */}
       <style>{`

@@ -18,10 +18,7 @@ from satellite_api.models import TelemetryIngestionResponse
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Pre-compute squared boundaries to bypass math.sqrt() during ingestion
 R_EARTH = 6378.137
-MIN_R2 = (R_EARTH + 350.0) ** 2  # Lower constellation shell bound
-MAX_R2 = (R_EARTH + 450.0) ** 2  # Upper constellation shell bound
 
 # 🚀 PATCH 3: Global monotonic clock to reject stale telemetry packets
 last_processed_timestamp = 0.0
@@ -83,16 +80,11 @@ async def ingest_telemetry(request: Request) -> TelemetryIngestionResponse:
 
         debris_data = []
 
-        # OPTIMIZATION B.2: NumPy Vectorized AABB Altitude Culling
         if debris_raw:
+            # Convert to numpy array for performance, but keep everything
             deb_arr = np.array(debris_raw, dtype=np.float64)
-            r2_mag = deb_arr[:, 0]**2 + deb_arr[:, 1]**2 + deb_arr[:, 2]**2
-            
-            mask = (r2_mag >= MIN_R2) & (r2_mag <= MAX_R2)
-            debris_data = deb_arr[mask].tolist()
-            
-            debris_ids_np = np.array(debris_ids)
-            debris_ids = debris_ids_np[mask].tolist()
+            debris_data = deb_arr.tolist()
+            # debris_ids already correctly aligned; no filtering needed
 
         # Write to state memory buffers
         await state.update_telemetry_raw(sat_data, debris_data, sat_ids, debris_ids, timestamp_str)

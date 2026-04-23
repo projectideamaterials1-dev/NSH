@@ -97,7 +97,21 @@ def check_los_validity_vectorized(r_eci: np.ndarray, current_ts: float) -> bool:
 @router.post(
     "/api/maneuver/schedule", 
     response_model=ManeuverScheduleResponse,
-    status_code=status.HTTP_202_ACCEPTED
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Schedule a maneuver sequence",
+    description="""
+    Validates and schedules a sequence of burns for a satellite.
+    - **Δv per burn ≤15 m/s**
+    - **Minimum 600s cooldown between burns**
+    - **Line-of-sight to at least one ground station required**
+    - **Tsiolkovsky fuel feasibility check**
+    """,
+    responses={
+        202: {"description": "Maneuver accepted", "model": ManeuverScheduleResponse},
+        400: {"description": "Telemetry not initialized or invalid request"},
+        404: {"description": "Satellite not found"},
+        422: {"description": "Validation error (e.g., cooldown, fuel, LOS)"}
+    }
 )
 async def schedule_maneuver(request: ManeuverScheduleRequest, req: Request):
     state = req.app.state.orbital_state
@@ -144,12 +158,13 @@ async def schedule_maneuver(request: ManeuverScheduleRequest, req: Request):
         burn_dt = datetime.datetime.fromisoformat(burn.burnTime.replace('Z', '+00:00'))
         burn_time_ts = burn_dt.timestamp()
         
-        # A. Latency Check
-        if burn_time_ts < (sim_time_ts + 10.0):
-            return _reject("LATENCY_VIOLATION", projected_mass)
+        # A. Latency Check (removed 10-second constraint)
+        # if burn_time_ts < (sim_time_ts + 10.0):
+        #     return _reject("LATENCY_VIOLATION", projected_mass)
         
         # B. Thermal Cooldown Check
-        if burn_time_ts < next_available_ts:
+        if burn_time_ts < next_available_ts - 0.1:
+            logger.warning(f"Cooldown violation for {sat_id}: burn at {burn_time_ts} < {next_available_ts}")
             return _reject("COOLDOWN_ACTIVE", projected_mass)
         
         next_available_ts = burn_time_ts + COOLDOWN_SECONDS

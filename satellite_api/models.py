@@ -59,14 +59,16 @@ class SimulateStepResponse(BaseModel):
 # ============================================================================
 class BurnCommand(BaseModel):
     """Individual burn command within a maneuver sequence."""
-    burn_id: str
-    burnTime: str  # Kept as string to exactly match API payload expectations
+    burn_id: str = Field(..., json_schema_extra={"examples": ["BURN-001"]})
+    burnTime: str = Field(..., json_schema_extra={"examples": ["2026-01-01T00:00:10.000Z"]}) # Kept as string to exactly match API payload expectations
     deltaV_vector: Vec3
 
 class ManeuverScheduleRequest(BaseModel):
     """Complete maneuver sequence for a satellite."""
-    satelliteId: str
-    maneuver_sequence: List[BurnCommand]
+    satelliteId: str = Field(..., json_schema_extra={"examples": ["SAT-042"]})
+    maneuver_sequence: List[BurnCommand] = Field(..., json_schema_extra={"examples": [[
+        {"burn_id": "BURN-001", "burnTime": "2026-01-01T00:00:10.000Z", "deltaV_vector": {"x":0,"y":0.0075,"z":0}}
+    ]]})
 
 class ValidationResult(BaseModel):
     """Validation results for maneuver scheduling."""
@@ -95,3 +97,15 @@ class VisualizationSnapshotResponse(BaseModel):
     satellites: List[SatelliteStatus]
     # The exact tuple definition to force the JSON array-of-arrays
     debris_cloud: List[Tuple[str, float, float, float]]
+# ============================================================================
+# DELTA TELEMETRY
+# ============================================================================
+class DeltaTelemetryRequest(BaseModel):
+    timestamp: datetime
+    updated_objects: List[SpaceObject]  # only changed objects
+    deleted_ids: List[str] = []         # IDs to remove
+
+class DeltaTelemetryResponse(BaseModel):
+    status: str = "ACK"
+    processed_updates: int
+    processed_deletes: int

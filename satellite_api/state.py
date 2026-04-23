@@ -12,6 +12,7 @@ import math
 from typing import List, Optional, Dict, Tuple
 from datetime import datetime, timezone
 import logging
+from satellite_api.coordinates import convert_states_to_lla
 
 # ============================================================================
 # ORBITAL & SPACECRAFT CONSTANTS (EXACT NSH 2026 VALUES)
@@ -19,7 +20,11 @@ import logging
 MU_EARTH = 398600.4418      
 R_EARTH = 6378.137          
 J2 = 1.08263e-3             
+J3 = -2.53266e-6            
+J4 = 1.61962e-6             
 J2_CONST = 1.5 * J2 * MU_EARTH * R_EARTH * R_EARTH
+J3_CONST = 0.5 * J3 * MU_EARTH * R_EARTH**3
+J4_CONST = 0.125 * J4 * MU_EARTH * R_EARTH**4
 I_SP = 300.0                #
 G0 = 9.80665                #
 INITIAL_FUEL = 50.0         # kg
@@ -34,6 +39,10 @@ class StateManager:
 
     def __new__(cls):
         if cls._instance is None:
+            import os
+            import sys
+            if os.environ.get("UVICORN_WORKERS") and int(os.environ.get("UVICORN_WORKERS", 1)) > 1:
+                print(f"⚠️ Warning: Running with multiple workers (UVICORN_WORKERS={os.environ['UVICORN_WORKERS']}) - state will be duplicated!", file=sys.stderr)
             cls._instance = super(StateManager, cls).__new__(cls)
             cls._instance._lock = None
             
@@ -52,6 +61,8 @@ class StateManager:
             # ── 3. Constraint Tracking Arrays (1D) ─────────────────────────────
             cls._instance.sat_fuel = np.full((100,), INITIAL_FUEL, dtype=np.float64)
             cls._instance.sat_cooldown_timers = np.zeros((100,), dtype=np.float64)
+            cls._instance.sat_drag_coeff = np.full((100,), 0.02, dtype=np.float64)
+            cls._instance.debris_drag_coeff = np.full((15000,), 0.05, dtype=np.float64)
             
             # ── 4. Bi-Directional ID Mapping ───────────────────────────────────
             cls._instance.sat_id_to_idx: Dict[str, int] = {}
@@ -60,7 +71,8 @@ class StateManager:
             cls._instance.idx_to_debris_id: Dict[int, str] = {}
             
             # ── 5. Temporal Maneuver Queue ─────────────────────────────────────
-            cls._instance.maneuver_queue: List[Tuple[float, str, float, float, float]] = []
+            cls._instance.maneuver_queue: List[Tuple[float, str, float, float, float, str]] = []
+            cls._instance.maneuver_history: List[dict] = []
             
             # ── 6. State Metrics ───────────────────────────────────────────────
             cls._instance.sat_count = 0
@@ -81,7 +93,7 @@ class StateManager:
     # INTERNAL VECTORIZED PHYSICS (FOR GHOST SLOTS)
     # ========================================================================
     def _compute_acceleration_in_place(self, r: np.ndarray, out_a: np.ndarray, n_sats: int):
-        """Zero-allocation J2 acceleration. Mutates the pre-allocated out_a buffer."""
+        """Zero-allocation J3/J4 acceleration. Mutates the pre-allocated out_a buffer."""
         x = r[:n_sats, 0]
         y = r[:n_sats, 1]
         z = r[:n_sats, 2]
@@ -91,14 +103,31 @@ class StateManager:
         r_inv = 1.0 / r_mag
         r2_inv = r_inv * r_inv
         r3_inv = r2_inv * r_inv
+        r4_inv = r2_inv * r2_inv
         r5_inv = r3_inv * r2_inv
+        r7_inv = r4_inv * r3_inv
 
         a_base = -MU_EARTH * r3_inv
+        
+        # J2
         j2_base = J2_CONST * r5_inv
         z2_r2 = z * z * r2_inv
+        
+        # J3
+        j3_base = J3_CONST * r7_inv
+        z_r = z * r_inv
+        
+        # J4
+        j4_base = J4_CONST * r7_inv * r2_inv
+        z4_r4 = (z_r**2)**2
 
-        t1 = a_base + j2_base * (5.0 * z2_r2 - 1.0)
-        t3 = a_base + j2_base * (5.0 * z2_r2 - 3.0)
+        t1 = a_base + j2_base * (5.0 * z2_r2 - 1.0) + \
+             x * j3_base * (5.0 * (7.0 * z_r**2 - 3.0) * z_r) + \
+             j4_base * (3.0 - 42.0 * z_r**2 + 63.0 * z4_r4)
+             
+        t3 = a_base + j2_base * (5.0 * z2_r2 - 3.0) + \
+             j3_base * (35.0 * z_r**3 - 30.0 * z_r) + \
+             j4_base * (15.0 - 70.0 * z_r**2 + 63.0 * z4_r4)
 
         out_a[:n_sats, 0] = x * t1
         out_a[:n_sats, 1] = y * t1
@@ -173,6 +202,10 @@ class StateManager:
                     new_cd[:self.sat_cooldown_timers.shape[0]] = self.sat_cooldown_timers
                     self.sat_cooldown_timers = new_cd
                     
+                    new_drag = np.full((new_size,), 0.02, dtype=np.float64)
+                    new_drag[:self.sat_drag_coeff.shape[0]] = self.sat_drag_coeff
+                    self.sat_drag_coeff = new_drag
+                    
                     # 🚀 CRITICAL FIX: Resize RK4 Ghost buffers to prevent crash on >100 sats
                     self._a1 = np.zeros((new_size, 3), dtype=np.float64)
                     self._a2 = np.zeros((new_size, 3), dtype=np.float64)
@@ -228,35 +261,63 @@ class StateManager:
             self.maneuver_queue.sort(key=lambda x: x[0])
             
             for maneuver in self.maneuver_queue:
-                burn_ts, sat_id, dvx, dvy, dvz = maneuver
+                # Pack as tuple: (ts, sat_id, dvx, dvy, dvz, burn_id)
+                if len(maneuver) == 6:
+                    burn_ts, sat_id, dvx, dvy, dvz, burn_id = maneuver
+                else:
+                    burn_ts, sat_id, dvx, dvy, dvz = maneuver
+                    burn_id = f"PENDING_{sat_id}_{int(burn_ts)}"
                 
-                if burn_ts <= (target_time_ts + 0.1): 
+                if burn_ts <= (target_time_ts + 0.1):
                     if sat_id in self.sat_id_to_idx:
                         idx = self.sat_id_to_idx[sat_id]
                         
-                        # Check Cooldown Constraint
+                        # Cooldown check
                         if self.sat_cooldown_timers[idx] > 0.1:
-                            logger.warning(f"BLOCKED: {sat_id} attempted burn during cooldown period.")
+                            logger.warning(f"BLOCKED: {sat_id} attempted burn during cooldown (remaining {self.sat_cooldown_timers[idx]:.1f}s)")
                             continue
-
-                        # Check Fuel Constraint
+                        
+                        # Fuel constraint
                         dv_mag_mps = math.sqrt(dvx**2 + dvy**2 + dvz**2) * 1000.0
                         current_mass = DRY_MASS + self.sat_fuel[idx]
                         required_fuel = current_mass * (1.0 - math.exp(-dv_mag_mps / (I_SP * G0)))
                         
                         if self.sat_fuel[idx] < required_fuel:
-                            logger.warning(f"FAILED: {sat_id} has insufficient fuel for maneuver.")
+                            logger.warning(f"FAILED: {sat_id} insufficient fuel.")
                             continue
-
-                        # Execute Physics
+                        
+                        # Get current position (ECI) for lat/lon
+                        r_eci = self.sat_buffer[idx, 0:3].copy()
+                        # Convert to LLA using current_time
+                        lla_list = convert_states_to_lla(r_eci.reshape(1, 3), self.current_time)
+                        lat, lon = lla_list[0][1], lla_list[0][2]  # [idx, lat, lon, alt]
+                        
+                        # Execute burn
                         self.sat_buffer[idx, 3] += dvx
                         self.sat_buffer[idx, 4] += dvy
                         self.sat_buffer[idx, 5] += dvz
                         
-                        # Apply Deductions & Cooldown
+                        # Deduct fuel and set cooldown
                         self.sat_fuel[idx] -= required_fuel
-                        self.sat_cooldown_timers[idx] = COOLDOWN_LIMIT 
-
+                        self.sat_cooldown_timers[idx] = COOLDOWN_LIMIT
+                        
+                        # Record in history
+                        burn_record = {
+                            "burn_id": burn_id if burn_id.startswith("EXEC") else f"EXEC_{burn_id}",
+                            "satellite_id": sat_id,
+                            "burnTime": datetime.fromtimestamp(burn_ts, tz=timezone.utc).isoformat() + "Z",
+                            "deltaV_vector": {"x": dvx, "y": dvy, "z": dvz},
+                            "maneuver_type": "UNKNOWN",  # We don't store type in queue; can be passed via extra field
+                            "duration_seconds": 1,
+                            "cooldown_start": datetime.fromtimestamp(burn_ts, tz=timezone.utc).isoformat() + "Z",
+                            "cooldown_end": datetime.fromtimestamp(burn_ts + COOLDOWN_LIMIT, tz=timezone.utc).isoformat() + "Z",
+                            "delta_v_magnitude": dv_mag_mps,
+                            "fuel_consumed_kg": required_fuel,
+                            "lat": lat,
+                            "lon": lon,
+                            "status": "EXECUTED"
+                        }
+                        self.maneuver_history.append(burn_record)
                         executed_count += 1
                         print(f"🔥 Burn Executed on {sat_id} | Cost: {required_fuel:.4f}kg | Fuel Rem: {self.sat_fuel[idx]:.2f}kg")
                 else:
@@ -264,6 +325,54 @@ class StateManager:
             
             self.maneuver_queue = remaining_queue
         return executed_count
+
+    async def add_maneuver(self, maneuver: tuple):
+        """Adds a maneuver to the queue. maneuver: (ts, sat_id, dvx, dvy, dvz, burn_id)"""
+        async with self.lock:
+            self.maneuver_queue.append(maneuver)
+
+    async def cancel_maneuver(self, burn_id: str) -> bool:
+        """Cancels a maneuver by burn_id."""
+        async with self.lock:
+            new_queue = []
+            found = False
+            for maneuver in self.maneuver_queue:
+                if len(maneuver) >= 6 and maneuver[5] == burn_id:
+                    found = True
+                    continue
+                new_queue.append(maneuver)
+            self.maneuver_queue = new_queue
+            return found
+
+    async def get_all_maneuvers(self) -> List[dict]:
+        async with self.lock:
+            # Build pending maneuvers from queue
+            pending = []
+            for maneuver in self.maneuver_queue:
+                if len(maneuver) == 6:
+                    burn_ts, sat_id, dvx, dvy, dvz, burn_id = maneuver
+                else:
+                    burn_ts, sat_id, dvx, dvy, dvz = maneuver
+                    burn_id = f"PENDING_{sat_id}_{int(burn_ts)}"
+                pending.append({
+                    "burn_id": burn_id,
+                    "satellite_id": sat_id,
+                    "burnTime": datetime.fromtimestamp(burn_ts, tz=timezone.utc).isoformat() + "Z",
+                    "deltaV_vector": {"x": dvx, "y": dvy, "z": dvz},
+                    "maneuver_type": "UNKNOWN",
+                    "duration_seconds": 1,
+                    "cooldown_start": datetime.fromtimestamp(burn_ts, tz=timezone.utc).isoformat() + "Z",
+                    "cooldown_end": datetime.fromtimestamp(burn_ts + COOLDOWN_LIMIT, tz=timezone.utc).isoformat() + "Z",
+                    "delta_v_magnitude": math.sqrt(dvx**2 + dvy**2 + dvz**2) * 1000.0,
+                    "fuel_consumed_kg": None,  # not known until execution
+                    "lat": None,
+                    "lon": None,
+                    "status": "pending"
+                })
+            # Combine with history (most recent first)
+            all_maneuvers = pending + self.maneuver_history
+            return all_maneuvers
+
     
     async def calculate_station_keeping_compliance(self) -> dict:
         async with self.lock:

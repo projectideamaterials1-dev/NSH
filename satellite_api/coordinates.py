@@ -62,6 +62,9 @@ def convert_states_to_lla(states: np.ndarray, current_time: datetime) -> list:
     # If cos(lat) is close to 0 (poles), use the polar formula. Otherwise, use standard.
     h = np.where(np.abs(cos_lat) > 1e-4, alt_equatorial, alt_polar)
     
+    # 🚀 FIX: Clamp negative altitudes to 0.0 km
+    h = np.maximum(h, 0.0)
+    
     # 3. Stack results and convert to list
     ids = np.arange(len(states))
     lat_deg = np.degrees(lat)

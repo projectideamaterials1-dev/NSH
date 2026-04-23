@@ -52,7 +52,7 @@ interface BurnMarker {
 // ============================================================================
 // CONSTANTS
 // ============================================================================
-const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+const MAP_STYLE = 'https://demotiles.maplibre.org/style.json';
 const INITIAL_VIEW_STATE: MapViewState = Object.freeze({ longitude: 0, latitude: 0, zoom: 1.5, pitch: 0, bearing: 0 });
 const WORLD_OFFSETS = [-360, 0, 360] as const;
 const TRAIL_DOWNSAMPLE_FACTOR = 3; // keep 1 point per 3 seconds
@@ -101,7 +101,15 @@ function calculateTerminatorPolygon(timestamp: string): [number, number][] {
   points.push([-180, declination > 0 ? -90 : 90]);
 
   terminatorCache.set(cacheKey, points);
-  if (terminatorCache.size > 20) terminatorCache.delete(terminatorCache.keys().next().value!);
+  // Keep last 120 entries (enough for 2 hours at 1 minute resolution)
+  const MAX_CACHE_SIZE = 120;
+  if (terminatorCache.size > MAX_CACHE_SIZE) {
+    const oldestKey = terminatorCache.keys().next().value;
+    terminatorCache.delete(oldestKey!);
+    if (process.env.NODE_ENV === 'development') {
+        console.debug(`[TerminatorCache] Evicted ${oldestKey}, size=${terminatorCache.size}`);
+    }
+  }
   return points;
 }
 
@@ -190,6 +198,13 @@ export const DeckGLMap: React.FC = React.memo(() => {
   const [terminatorPoints, setTerminatorPoints] = useState<[number, number][]>([]);
   const [isTracking, setIsTracking] = useState<boolean>(false);
   const [isEclipse, setIsEclipse] = useState<boolean>(false);
+  const [webGLReady, setWebGLReady] = useState(false);
+
+  useEffect(() => {
+    // Small delay to ensure the DOM is fully painted
+    const timeout = setTimeout(() => setWebGLReady(true), 100);
+    return () => clearTimeout(timeout);
+  }, []);
 
   // ===== REFS =====
   const isNavigatingRef = useRef<boolean>(false);
@@ -638,25 +653,32 @@ export const DeckGLMap: React.FC = React.memo(() => {
 
     return (
       <div className="relative w-full h-full bg-void-black overflow-hidden">
-        <DeckGL
-          width="100%"
-          height="100%"
-          viewState={viewState}
-          onViewStateChange={handleViewStateChange}
-          controller={true}
-          layers={layers}
-          getCursor={handleCursor}
-          useDevicePixels={false}
-          onWebGLInitialized={gl => gl.clearColor(0, 0, 0, 1)}
-        >
-          <MapGL
-            mapStyle={MAP_STYLE}
-            reuseMaps
-            interactive={false}
-            renderWorldCopies={false}
-            attributionControl={false}
-          />
-        </DeckGL>
+        {webGLReady && (
+          <DeckGL
+            width="100%"
+            height="100%"
+            viewState={viewState}
+            onViewStateChange={handleViewStateChange}
+            controller={true}
+            layers={layers}
+            getCursor={handleCursor}
+            useDevicePixels={false}
+            powerPreference="high-performance"
+            onWebGLInitialized={gl => {
+              if (gl) gl.clearColor(0, 0, 0, 1);
+              else console.warn('[DeckGLMap] WebGL not initialised');
+            }}
+            onError={err => console.error('[DeckGLMap] DeckGL error:', err)}
+          >
+            <MapGL
+              mapStyle={MAP_STYLE}
+              reuseMaps
+              interactive={false}
+              renderWorldCopies={false}
+              attributionControl={false}
+            />
+          </DeckGL>
+        )}
 
         {/* Selection Info Panel */}
         {selectedSat && (

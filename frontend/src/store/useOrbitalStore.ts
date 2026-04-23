@@ -108,9 +108,14 @@ interface OrbitalState {
     error: string | null;
   };
 
+  simulationSpeed: number;
+  isSimulationRunning: boolean;
+  simulationProgress: number;
+
   selectedSatelliteId: string | null;
   hoveredSatelliteId: string | null;
   _autoSyncInterval: NodeJS.Timeout | null;
+  _maneuverInterval: NodeJS.Timeout | null;
 
   // Actions
   updateTelemetry: (debris: DebrisBinaryData, satellites: SatelliteBinaryData, timestamp: string, parseTimeMs: number) => void;
@@ -131,6 +136,13 @@ interface OrbitalState {
   syncVisualizationSnapshot: () => Promise<boolean>;
   startAutoSync: (intervalMs?: number) => void;
   stopAutoSync: () => void;
+  fetchManeuvers: () => Promise<void>;
+
+  setSimulationSpeed: (speed: number) => void;
+  pauseSimulation: () => void;
+  resumeSimulation: () => void;
+  stepSimulationAction: () => Promise<void>;
+  jumpToTime: (step: number) => Promise<void>;
 
   addManeuverManually: (maneuver: ManeuverEvent) => void;
 }
@@ -163,120 +175,46 @@ function computeHighRiskCount(riskScores: Float32Array): number {
 
 function appendTrails(stateTrails: Record<string, SatelliteTrail>, satellites: SatelliteBinaryData, timestamp: string) {
   const newTrails: Record<string, SatelliteTrail> = {};
+  const MAX_POINTS = 5400;
+
   for (let i = 0; i < satellites.length; i++) {
     const id = satellites.ids[i];
-    const pos: [number, number, number] = [
+    const newPos: [number, number, number] = [
       satellites.positions[i * 3],
       satellites.positions[i * 3 + 1],
       satellites.positions[i * 3 + 2],
     ];
-    const existing = stateTrails[id];
-    // Optional log to confirm trail creation
-    // if (!existing) console.log(`[Store] Created trail for ${id}`);
-    const updatedPositions = existing ? [...existing.positions, pos] : [pos];
-    const updatedTimestamps = existing ? [...existing.timestamps, timestamp] : [timestamp];
-    if (updatedPositions.length > CONSTANTS.MAX_TRAIL_POINTS) {
-      updatedPositions.shift();
-      updatedTimestamps.shift();
+
+    let trail = stateTrails[id];
+    if (!trail) {
+      // New satellite – create fresh trail
+      trail = { satelliteId: id, positions: [], timestamps: [] };
     }
-    newTrails[id] = {
-      satelliteId: id,
-      positions: updatedPositions,
-      timestamps: updatedTimestamps,
-    };
+
+    // Only append if the new position is different from the last one (avoid duplicates)
+    const lastPos = trail.positions[trail.positions.length - 1];
+    const isDifferent =
+      !lastPos ||
+      lastPos[0] !== newPos[0] ||
+      lastPos[1] !== newPos[1] ||
+      lastPos[2] !== newPos[2];
+
+    if (isDifferent) {
+      trail.positions.push(newPos);
+      trail.timestamps.push(timestamp);
+      // Keep max size
+      if (trail.positions.length > MAX_POINTS) {
+        trail.positions.shift();
+        trail.timestamps.shift();
+      }
+    }
+
+    newTrails[id] = trail;
   }
   return newTrails;
 }
 
-function computeDeltaVFromFuelConsumption(initialWetMass: number, finalWetMass: number): number {
-  if (initialWetMass <= 0 || finalWetMass <= 0) return 0;
-  return CONSTANTS.I_SP * CONSTANTS.G0 * Math.log(initialWetMass / finalWetMass);
-}
 
-function inferManeuverFromFuelDrop(
-  satelliteId: string,
-  oldFuel: number,
-  newFuel: number,
-  timestamp: string,
-  lat: number,
-  lon: number
-): ManeuverEvent | null {
-  const fuelUsed = oldFuel - newFuel;
-  if (fuelUsed <= 0.001) return null;
-
-  const dryMass = CONSTANTS.DRY_MASS_KG;
-  const deltaV = computeDeltaVFromFuelConsumption(dryMass + oldFuel, dryMass + newFuel);
-  const burnTimeMs = new Date(timestamp).getTime();
-
-  return {
-    burn_id: `INFERRED_${satelliteId}_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-    satellite_id: satelliteId,
-    burnTime: timestamp,
-    deltaV_vector: { x: 0, y: deltaV, z: 0 },
-    maneuver_type: 'RECOVERY',
-    duration_seconds: 1,
-    cooldown_start: new Date(burnTimeMs).toISOString(),
-    cooldown_end: new Date(burnTimeMs + 600 * 1000).toISOString(),
-    delta_v_magnitude: deltaV,
-    fuel_consumed_kg: fuelUsed,
-    lat,
-    lon,
-  };
-}
-
-// src/store/useOrbitalStore.ts
-// (full file as above, but with logging added – I'll show only the modified sections)
-
-// ============================================================================
-// DETECT MANEUVERS (with logging)
-// ============================================================================
-
-function detectManeuvers(
-  oldSatellites: SatelliteBinaryData | null,
-  newSatellites: SatelliteBinaryData,
-  timestamp: string,
-  existingManeuvers: ManeuverEvent[]
-): ManeuverEvent[] {
-  if (!oldSatellites || oldSatellites.length !== newSatellites.length) {
-    console.log('[Store] detectManeuvers: old or new satellites missing/length mismatch', {
-      oldLength: oldSatellites?.length,
-      newLength: newSatellites.length,
-    });
-    return [];
-  }
-
-  const newManeuvers: ManeuverEvent[] = [];
-  for (let i = 0; i < newSatellites.length; i++) {
-    const id = newSatellites.ids[i];
-    const oldFuel = oldSatellites.fuels[i];
-    const newFuel = newSatellites.fuels[i];
-    const diff = oldFuel - newFuel;
-    if (diff > 0.001) {
-      console.log(`[Store] Fuel drop for ${id}: ${oldFuel.toFixed(4)} -> ${newFuel.toFixed(4)} kg (Δ = ${diff.toFixed(4)} kg)`);
-      const lon = newSatellites.positions[i * 3];
-      const lat = newSatellites.positions[i * 3 + 1];
-      const inferred = inferManeuverFromFuelDrop(id, oldFuel, newFuel, timestamp, lat, lon);
-      if (inferred) {
-        // check duplicate
-        const exists = existingManeuvers.some(
-          m =>
-            m.satellite_id === id &&
-            Math.abs(m.delta_v_magnitude - inferred.delta_v_magnitude) < 0.001 &&
-            Math.abs(new Date(m.burnTime).getTime() - new Date(timestamp).getTime()) < 5000
-        );
-        if (!exists) {
-          console.log(`[Store] ✅ Inferred new maneuver for ${id}`, inferred);
-          newManeuvers.push(inferred);
-        } else {
-          console.log(`[Store] ⚠️ Duplicate maneuver for ${id} ignored`);
-        }
-      } else {
-        console.log(`[Store] inferManeuverFromFuelDrop returned null for ${id} (diff=${diff})`);
-      }
-    }
-  }
-  return newManeuvers;
-}
 
 function snapshotToBinaryBuffers(data: any): {
   debris: DebrisBinaryData;
@@ -379,6 +317,7 @@ const stubResetSimulation = () => {};
 const stubSyncVisualizationSnapshot = async () => false;
 const stubStartAutoSync = () => {};
 const stubStopAutoSync = () => {};
+const stubFetchManeuvers = async () => {};
 const stubAddManeuverManually = () => {};
 
 const INITIAL_STATE: OrbitalState = {
@@ -393,9 +332,13 @@ const INITIAL_STATE: OrbitalState = {
   fuelHistory: [],
   maneuvers: [],
   simulation: INITIAL_SIMULATION,
+  simulationSpeed: 1,
+  isSimulationRunning: true,
+  simulationProgress: 0,
   selectedSatelliteId: null,
   hoveredSatelliteId: null,
   _autoSyncInterval: null,
+  _maneuverInterval: null,
 
   updateTelemetry: stubUpdateTelemetry,
   setConnectionStatus: stubSetConnectionStatus,
@@ -413,7 +356,13 @@ const INITIAL_STATE: OrbitalState = {
   syncVisualizationSnapshot: stubSyncVisualizationSnapshot,
   startAutoSync: stubStartAutoSync,
   stopAutoSync: stubStopAutoSync,
+  fetchManeuvers: stubFetchManeuvers,
   addManeuverManually: stubAddManeuverManually,
+  setSimulationSpeed: () => {},
+  pauseSimulation: () => {},
+  resumeSimulation: () => {},
+  stepSimulationAction: async () => {},
+  jumpToTime: async () => {},
 };
 
 // ============================================================================
@@ -432,10 +381,6 @@ export const useOrbitalStore = create<OrbitalState>()(
       const state = get();
       const now = Date.now();
       const highRiskCount = computeHighRiskCount(debris.riskScores);
-
-      // 1. Detect maneuvers from fuel changes
-      const newManeuvers = detectManeuvers(state.satellites, satellites, timestamp, state.maneuvers);
-      if (newManeuvers.length > 0) get().addManeuvers(newManeuvers);
 
       // 2. Update trails
       const newTrails = appendTrails(state.trails, satellites, timestamp);
@@ -510,15 +455,6 @@ export const useOrbitalStore = create<OrbitalState>()(
         }
         console.log('[Store] New fuel samples:', Array.from(satellites.fuels).slice(0, 5).map(f => f.toFixed(4)));
 
-        // 1. Detect maneuvers (fuel drops)
-        const newManeuvers = detectManeuvers(state.satellites, satellites, timestamp, state.maneuvers);
-        if (newManeuvers.length > 0) {
-          console.log(`[Store] 🔥 Adding ${newManeuvers.length} new maneuvers`);
-          get().addManeuvers(newManeuvers);
-        } else {
-          console.log('[Store] No new maneuvers detected');
-        }
-
         // 2. Update trails
         const newTrails = appendTrails(state.trails, satellites, timestamp);
 
@@ -527,7 +463,7 @@ export const useOrbitalStore = create<OrbitalState>()(
           debris,
           satellites,
           trails: newTrails,
-          timestamp,
+          timestamp: timestamp || new Date().toISOString(),
           lastUpdate: now,
           connectionStatus: {
             ...state.connectionStatus,
@@ -622,25 +558,79 @@ export const useOrbitalStore = create<OrbitalState>()(
     // AUTO-SYNC
     // ==========================================================================
 
+    fetchManeuvers: async () => {
+      try {
+        const response = await fetch('/api/maneuvers');
+        if (!response.ok) throw new Error('Failed to fetch maneuvers');
+        const data = await response.json();
+        const maneuvers = data.maneuvers.map((m: any) => ({
+          burn_id: m.burn_id,
+          satellite_id: m.satellite_id,
+          burnTime: m.burnTime,
+          deltaV_vector: m.deltaV_vector,
+          maneuver_type: m.maneuver_type === 'UNKNOWN' ? 'RECOVERY' : m.maneuver_type,
+          duration_seconds: m.duration_seconds,
+          cooldown_start: m.cooldown_start,
+          cooldown_end: m.cooldown_end,
+          delta_v_magnitude: m.delta_v_magnitude,
+          fuel_consumed_kg: m.fuel_consumed_kg,
+          lat: m.lat,
+          lon: m.lon,
+        }));
+        // Merge with existing, avoid duplicates by burn_id
+        set((state) => {
+          const existingIds = new Set(state.maneuvers.map(m => m.burn_id));
+          const newManeuvers = maneuvers.filter((m: any) => !existingIds.has(m.burn_id));
+          return { maneuvers: [...state.maneuvers, ...newManeuvers].slice(-CONSTANTS.MAX_MANEUVERS) };
+        });
+      } catch (error) {
+        console.error('[Store] Failed to fetch maneuvers:', error);
+      }
+    },
+
     startAutoSync: (intervalMs = 2000) => {
-      const { _autoSyncInterval, syncVisualizationSnapshot, stopAutoSync } = get();
+      const { _autoSyncInterval, syncVisualizationSnapshot, stopAutoSync, fetchManeuvers } = get();
       if (_autoSyncInterval) stopAutoSync();
       const interval = setInterval(() => {
         syncVisualizationSnapshot();
       }, intervalMs);
-      set({ _autoSyncInterval: interval });
+      // Also fetch maneuvers every 5 seconds
+      const maneuverInterval = setInterval(() => {
+        fetchManeuvers();
+      }, 5000);
+      set({ _autoSyncInterval: interval, _maneuverInterval: maneuverInterval });
     },
 
     stopAutoSync: () => {
-      const { _autoSyncInterval } = get();
+      const { _autoSyncInterval, _maneuverInterval } = get();
       if (_autoSyncInterval) {
         clearInterval(_autoSyncInterval);
-        set({ _autoSyncInterval: null });
       }
+      if (_maneuverInterval) {
+        clearInterval(_maneuverInterval);
+      }
+      set({ _autoSyncInterval: null, _maneuverInterval: null });
     },
 
     addManeuverManually: (maneuver) => {
       get().addManeuvers([maneuver]);
+    },
+
+    setSimulationSpeed: (speed) => set({ simulationSpeed: speed }),
+    pauseSimulation: () => set({ isSimulationRunning: false }),
+    resumeSimulation: () => set({ isSimulationRunning: true }),
+    stepSimulationAction: async () => {
+      const { stepSimulation, isSimulationRunning } = get();
+      if (!isSimulationRunning) {
+        await stepSimulation(60.0); // 1 minute step
+      }
+    },
+    jumpToTime: async (step) => {
+      // Mock jump: just set progress for now
+      set({ simulationProgress: step });
+      console.log(`[Store] Jumped to step: ${step}`);
+      // In a real app: fetch state for this step
+      // await get().fetchStateAtStep(step);
     },
   }))
 );

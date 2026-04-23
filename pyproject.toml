@@ -7,7 +7,9 @@ name = "acm_engine"
 version = "1.0.0"
 description = "Autonomous Constellation Manager - NSH 2026"
 requires-python = ">=3.8"
-dynamic = ["dependencies", "authors"]  # ← CRITICAL: Allows setup.py to define these
+dynamic = ["dependencies"]  # ← CRITICAL: Allows setup.py to define these
 
 [tool.setuptools.packages.find]
 include = ["satellite_api*"]  # ← Only include satellite_api, NOT acm_engine or data
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
