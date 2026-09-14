@@ -14,7 +14,7 @@ interface SatelliteData {
   lon: number;
   alt?: number;           // backend may omit, default 400km
   fuel_kg: number;        // backend sends fuel_kg, not fuel
-  status: 'NOMINAL' | 'WARNING' | 'CRITICAL' | 'EOL';
+  status: 'NOMINAL' | 'WARNING' | 'CRITICAL' | 'CRITICAL_FUEL' | 'EOL';
 }
 
 interface TelemetrySnapshot {
@@ -25,8 +25,9 @@ interface TelemetrySnapshot {
 
 interface WorkerRequest {
   requestId: string;
-  type: 'PARSE_SNAPSHOT' | 'PING';
+  type: 'PARSE_SNAPSHOT' | 'PARSE_TEXT' | 'PING';
   payload?: TelemetrySnapshot;
+  raw?: string;            // PARSE_TEXT: JSON text parsed here, off the main thread
   timestamp?: string;
 }
 
@@ -77,8 +78,8 @@ const COLOR = {
   // Thresholds
   RISK_CRITICAL: 0.8,
   RISK_WARNING: 0.5,
-  FUEL_CRITICAL: 5.0,    // kg
-  FUEL_WARNING: 15.0,    // kg
+  FUEL_CRITICAL: 2.5,    // kg (end-of-life threshold)
+  FUEL_WARNING: 10.0,    // kg (low-fuel alert)
 } as const;
 
 // ============================================================================
@@ -140,11 +141,11 @@ function parseSatellites(satellites: SatelliteData[]) {
     ids[i] = sat.id;
     statuses[i] = sat.status;
 
-    if (sat.status === 'EOL' || fuel <= fCrit) {
+    if (sat.status === 'EOL' || fuel <= 0) {
       colors.set(cEol, i * 4);
-    } else if (sat.status === 'CRITICAL' || fuel <= fWarn) {
+    } else if (sat.status === 'CRITICAL' || sat.status === 'CRITICAL_FUEL' || fuel <= fCrit) {
       colors.set(cCritical, i * 4);
-    } else if (sat.status === 'WARNING') {
+    } else if (sat.status === 'WARNING' || fuel <= fWarn) {
       colors.set(cWarning, i * 4);
     } else {
       colors.set(cNominal, i * 4);
@@ -159,7 +160,8 @@ function parseSatellites(satellites: SatelliteData[]) {
 // ============================================================================
 
 self.onmessage = (e: MessageEvent<WorkerRequest>) => {
-  const { requestId, type, payload, timestamp } = e.data;
+  const { requestId, type, timestamp, raw } = e.data;
+  let payload = e.data.payload;
 
   try {
     // Health check
@@ -173,12 +175,16 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
       return;
     }
 
-    // Validate snapshot request
-    if (type !== 'PARSE_SNAPSHOT' || !payload) {
-      throw new Error('Invalid message type or missing payload');
+    const start = performance.now();
+    if (type === 'PARSE_TEXT' && typeof raw === 'string') {
+      payload = JSON.parse(raw) as TelemetrySnapshot;
     }
 
-    const start = performance.now();
+    // Validate snapshot request
+    if ((type !== 'PARSE_SNAPSHOT' && type !== 'PARSE_TEXT') || !payload
+      || !Array.isArray(payload.satellites) || !Array.isArray(payload.debris_cloud)) {
+      throw new Error('Invalid message type or missing payload');
+    }
 
     const debris = parseDebrisCloud(payload.debris_cloud);
     const satellites = parseSatellites(payload.satellites);

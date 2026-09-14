@@ -7,6 +7,7 @@ Continuous simulation with frontend sync. The simulation advances at a
 configurable pace so you can watch satellites move in real time.
 """
 
+import os
 import requests
 import time
 import math
@@ -18,18 +19,23 @@ from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Optional, Tuple
 
-# Import Autonomous Brain
-sys.path.append('satellite_api')
+# Import Autonomous Brain (works from any working directory)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from acm.brain import AutonomousBrain, Conjunction, ManeuverType
-except ImportError:
-    print("⚠️ WARNING: acm.brain module not found. Ensure 'satellite_api' is in the python path.")
+    from satellite_api.acm.brain import AutonomousBrain, Conjunction, ManeuverType
+except ImportError as exc:
+    print(f"⚠️ WARNING: satellite_api.acm.brain could not be imported ({exc}).")
     sys.exit(1)
 
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = os.environ.get("ACM_BASE_URL", "http://127.0.0.1:8000")
+
+# Shared HTTP session; sends X-API-Key when the backend was started with API_KEY set.
+http = requests.Session()
+if os.environ.get("API_KEY"):
+    http.headers["X-API-Key"] = os.environ["API_KEY"]
 R_EARTH = 6378.137
 MU_EARTH = 398600.4418
 
@@ -181,11 +187,15 @@ def run_live_demo():
     print(f"\n[2/4] Uplinking telemetry payload to backend...")
     
     t0_tel = time.perf_counter()
-    telemetry_resp = requests.post(f"{BASE_URL}/api/telemetry", json={"timestamp": current_sim_time_iso, "objects": objects})
+    try:
+        telemetry_resp = http.post(f"{BASE_URL}/api/telemetry", json={"timestamp": current_sim_time_iso, "objects": objects}, timeout=60)
+    except requests.ConnectionError:
+        print(f"❌ Cannot reach the backend at {BASE_URL}. Start it with: uvicorn satellite_api.main:app --port 8000")
+        sys.exit(1)
     t1_tel = time.perf_counter()
     
-    print(f"✅ Telemetry initialized in {(t1_tel - t0_tel)*1000:.2f} ms")
     check_response(telemetry_resp, "Initial Telemetry Ingestion")
+    print(f"✅ Telemetry initialized in {(t1_tel - t0_tel)*1000:.2f} ms")
     
     # ── 3. START AUTO‑SYNC ON FRONTEND ──
     print(f"\n[3/4] Frontend auto‑sync is assumed to be active (every 2s).")
@@ -202,11 +212,12 @@ def run_live_demo():
     sat_fuel_used = {f"SAT-{i:03d}": 0.0 for i in range(NUM_SATELLITES)}
     
     start_real = time.time()
+    phys_ms = 0.0
     for step in range(TOTAL_STEPS):
         # ── A. TRIGGER MANEUVERS VIA CDMS ──
         if step in INCOMING_CDMS:
             try:
-                debug_data = requests.get(f"{BASE_URL}/api/internal/debug_state", timeout=10).json()
+                debug_data = http.get(f"{BASE_URL}/api/internal/debug_state", timeout=10).json()
             except:
                 debug_data = {}
             
@@ -244,8 +255,11 @@ def run_live_demo():
                         seq.append({"burn_id": f"EVADE-{sid}-{step}-{i}", "burnTime": iso_time, "deltaV_vector": p.delta_v_eci_dict})
                         fuel_cost += p.estimated_fuel_kg
                     
-                    schedule_resp = requests.post(f"{BASE_URL}/api/maneuver/schedule", json={"satelliteId": sid, "maneuver_sequence": seq})
-                    if schedule_resp.status_code == 202:
+                    schedule_resp = http.post(f"{BASE_URL}/api/maneuver/schedule", json={"satelliteId": sid, "maneuver_sequence": seq}, timeout=10)
+                    schedule_status = schedule_resp.json().get("status", "") if schedule_resp.status_code == 202 else f"HTTP {schedule_resp.status_code}"
+                    if schedule_status != "SCHEDULED":
+                        print(f"\n⛔ {sid} evasion not accepted: {schedule_status}")
+                    else:
                         print(f"\n🚨 [DEFCON 1] T-{WARNING_TIME_MINUTES}m | {sid} Locked on Assassin Debris!")
                         print(f"   ↳ Firing Thrusters: {sat_plans[0].maneuver_type.name} | Est. Fuel: {fuel_cost:.3f} kg")
                         total_evasions += 1
@@ -255,7 +269,7 @@ def run_live_demo():
         # ── B. STEP PHYSICS ENGINE ──
         try:
             t0_phys = time.perf_counter()
-            sim_resp = requests.post(f"{BASE_URL}/api/simulate/step", json={"step_seconds": STEP_SECONDS}, timeout=10)
+            sim_resp = http.post(f"{BASE_URL}/api/simulate/step", json={"step_seconds": STEP_SECONDS}, timeout=10)
             phys_ms = (time.perf_counter() - t0_phys) * 1000.0
             
             sim_data = check_response(sim_resp, f"Simulation Step {step}")
@@ -271,7 +285,7 @@ def run_live_demo():
         # ── C. DRIFT AUDIT & RADAR (every 5 simulated hours) ──
         if step % 300 == 0 and step > 0:   # 300 steps = 5 hours
             try:
-                debug_resp = requests.get(f"{BASE_URL}/api/internal/debug_state", timeout=5)
+                debug_resp = http.get(f"{BASE_URL}/api/internal/debug_state", timeout=5)
                 if debug_resp.status_code == 200:
                     debug_data = debug_resp.json()
                     

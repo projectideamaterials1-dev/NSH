@@ -158,7 +158,8 @@ class AutonomousBrain:
             v_curr += dv_eci
             t_curr = p.burn_time_offset_s
 
-    def calculate_perfect_evasion_sequence(self, sat_idx: int, threats: List[Conjunction], current_fuel_kg: float, sat_state: np.ndarray, nominal_state: np.ndarray) -> List[ManeuverPlan]:
+    def calculate_perfect_evasion_sequence(self, sat_idx: int, threats: List[Conjunction], current_fuel_kg: float, sat_state: np.ndarray, nominal_state: np.ndarray, mode: str = "auto") -> List[ManeuverPlan]:
+        """mode: "auto" (transverse unless it would leave the box), "transverse" or "radial"."""
         earliest_tca = min(t.tca_seconds for t in threats)
         
         # 🚀 24-HOUR LEVERAGE: Execute burn ASAP to maximize drift time
@@ -200,7 +201,8 @@ class AutonomousBrain:
         absolute_future_apogee = current_drift_km + max_excursion_km
 
         plans = []
-        if absolute_future_apogee <= 9.0:
+        use_transverse = mode == "transverse" or (mode == "auto" and absolute_future_apogee <= 9.0)
+        if use_transverse and max_req_dv_trans > 0.0:
             # OPTION A: Transverse Tri-Shunt (Fuel efficient, safe inside the box)
             req_dv = math.copysign(min(max_req_dv_trans, MAX_DELTA_V_KMS / 2.0), max_req_dv_trans)
             
@@ -256,12 +258,29 @@ class AutonomousBrain:
             self._generate_sequential_eci(plans, sat_state[:3], sat_state[3:6])
         return plans
         
+    def plan_eol(self, sat_idx: int, sat_state: np.ndarray, current_fuel_kg: float,
+                 reserve_kg: float = 0.1, max_dv_kms: float = MAX_DELTA_V_KMS) -> Optional[ManeuverPlan]:
+        """Prograde graveyard burn using the remaining propellant (keeping a small reserve)."""
+        burnable_fuel = current_fuel_kg - reserve_kg
+        if burnable_fuel <= 0 or sat_idx in self.eol_scheduled:
+            return None
+        current_mass = DRY_MASS + current_fuel_kg
+        dv_kms = min(-I_SP * G0 * math.log(1.0 - (burnable_fuel / current_mass)) / 1000.0, max_dv_kms)
+        p = ManeuverPlan(
+            sat_idx=sat_idx, maneuver_type=ManeuverType.EOL_GRAVEYARD,
+            delta_v_rtn=np.array([0.0, dv_kms, 0.0]), burn_time_offset_s=15.0,
+            estimated_fuel_kg=self.calculate_fuel_cost(dv_kms, current_mass), recovery_required=False, confidence=1.0
+        )
+        self._generate_sequential_eci([p], sat_state[:3], sat_state[3:6])
+        self.eol_scheduled.add(sat_idx)
+        return p
+
     # ========================================================================
     # 4. ORCHESTRATOR
     # ========================================================================
     def plan_evasion(self, sat_states: np.ndarray, nominal_states: np.ndarray, 
                      sat_fuels: List[float], conjunctions: List[Conjunction], 
-                     current_time: datetime, ground_stations: list) -> List[ManeuverPlan]:
+                     current_time: datetime, ground_stations: list, evasion_mode: str = "auto") -> List[ManeuverPlan]:
         plans = []
         curr_ts = current_time.timestamp()
         
@@ -381,7 +400,7 @@ class AutonomousBrain:
                     self.eol_scheduled.add(sat_idx)
                 continue
             
-            sequence = self.calculate_perfect_evasion_sequence(sat_idx, threats, sat_fuel, sat_state, nominal_states[sat_idx])
+            sequence = self.calculate_perfect_evasion_sequence(sat_idx, threats, sat_fuel, sat_state, nominal_states[sat_idx], mode=evasion_mode)
             if sequence:
                 self.locked_satellites[sat_idx] = curr_ts + sequence[-1].burn_time_offset_s + 1.0
                 plans.extend(sequence)

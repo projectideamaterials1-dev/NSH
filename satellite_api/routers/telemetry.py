@@ -2,100 +2,74 @@
 routers/telemetry.py
 --------------------
 POST /api/telemetry
-Ingests high-frequency state vectors.
-Upgraded with Python local-binding, NumPy Vectorization, and Monotonic Time-Locking.
+Ingests high-frequency state vectors (upsert by object ID).
 """
 
-from fastapi import APIRouter, Request, HTTPException
-import orjson
+from fastapi import APIRouter, HTTPException, Request
 import logging
-import numpy as np
-from datetime import datetime
+import orjson
 
-# 🚀 CRITICAL FIX: Import strict schemas directly from models.py
 from satellite_api.models import TelemetryIngestionResponse
+from satellite_api.timeutils import parse_iso_utc
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-R_EARTH = 6378.137
-
-# 🚀 PATCH 3: Global monotonic clock to reject stale telemetry packets
-last_processed_timestamp = 0.0
 
 @router.post(
-    "/api/telemetry", 
+    "/api/telemetry",
     response_model=TelemetryIngestionResponse,
     status_code=200
 )
 async def ingest_telemetry(request: Request) -> TelemetryIngestionResponse:
-    global last_processed_timestamp
     state = request.app.state.orbital_state
-    
+
     try:
-        body = await request.body()
-        data = orjson.loads(body)
+        data = orjson.loads(await request.body())
+        if not isinstance(data, dict):
+            raise ValueError("payload must be a JSON object")
         objects = data.get("objects", [])
+        if not isinstance(objects, list):
+            raise ValueError("'objects' must be a list")
         timestamp_str = data.get("timestamp", "2026-01-01T00:00:00.000Z")
+        current_ts = parse_iso_utc(timestamp_str).timestamp()
 
-        # 🚀 PATCH 3: Validate packet causality to prevent physics tearing
-        try:
-            # Normalize ISO string for Python standard library
-            clean_ts = timestamp_str.replace('Z', '+00:00')
-            current_ts = datetime.fromisoformat(clean_ts).timestamp()
-            
-            if current_ts < last_processed_timestamp:
-                # Packet arrived out of order. Drop processing, but return valid ACK to grader.
-                return TelemetryIngestionResponse(
-                    status="ACK", 
-                    processed_count=0,
-                    active_cdm_warnings=state.active_cdm_warnings,
-                    warning_pairs=None 
-                )
-            last_processed_timestamp = current_ts
-        except ValueError:
-            pass # Fallback in case grader submits a malformed timestamp
-            
         sat_data, sat_ids = [], []
-        debris_raw, debris_ids = [], []
-
-        # OPTIMIZATION B.1: Local Variable Binding 
+        debris_data, debris_ids = [], []
         append_sat_data = sat_data.append
         append_sat_ids = sat_ids.append
-        append_deb_data = debris_raw.append
+        append_deb_data = debris_data.append
         append_deb_ids = debris_ids.append
 
-        # Single-pass fast extraction (NO MATH in the Python loop)
         for obj in objects:
-            typ = obj.get("type", "DEBRIS").upper()
             r, v = obj["r"], obj["v"]
-            vec = [r["x"], r["y"], r["z"], v["x"], v["y"], v["z"]]
-            
-            if typ == "SATELLITE":
+            vec = [float(r["x"]), float(r["y"]), float(r["z"]),
+                   float(v["x"]), float(v["y"]), float(v["z"])]
+            if str(obj.get("type", "DEBRIS")).upper() == "SATELLITE":
                 append_sat_data(vec)
-                append_sat_ids(obj["id"])
+                append_sat_ids(str(obj["id"]))
             else:
                 append_deb_data(vec)
-                append_deb_ids(obj["id"])
+                append_deb_ids(str(obj["id"]))
+    except (ValueError, KeyError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
 
-        debris_data = []
-
-        if debris_raw:
-            # Convert to numpy array for performance, but keep everything
-            deb_arr = np.array(debris_raw, dtype=np.float64)
-            debris_data = deb_arr.tolist()
-            # debris_ids already correctly aligned; no filtering needed
-
-        # Write to state memory buffers
-        await state.update_telemetry_raw(sat_data, debris_data, sat_ids, debris_ids, timestamp_str)
-
+    # Reject stale packets (older than the last accepted telemetry) to prevent
+    # physics tearing, but still ACK so upstream feeds don't retry.
+    if current_ts < state.last_telemetry_ts:
         return TelemetryIngestionResponse(
             status="ACK",
-            processed_count=len(objects),
+            processed_count=0,
             active_cdm_warnings=state.active_cdm_warnings,
-            warning_pairs=None 
         )
-        
-    except Exception as e:
-        logger.error(f"Telemetry ingestion failed: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=400, detail=f"Invalid payload: {str(e)}")
+    state.last_telemetry_ts = current_ts
+
+    await state.update_telemetry_raw(sat_data, debris_data, sat_ids, debris_ids, timestamp_str)
+
+    pairs = state.warning_pairs()
+    return TelemetryIngestionResponse(
+        status="ACK",
+        processed_count=len(objects),
+        active_cdm_warnings=len(pairs),
+        warning_pairs=pairs or None,
+    )

@@ -1,8 +1,10 @@
 // src/api/telemetryClient.ts
-// Production-Ready Telemetry Client with Worker Correlation & Anti-Choke Lock
-// Uses Vite proxy, aligns with worker response 'DEBRIS_UPDATE', and passes binary buffers directly.
+// Live snapshot pipeline: Server-Sent Events (/api/stream/snapshot) with automatic fallback to
+// polling (/api/visualization/snapshot). Raw JSON text is handed to a Web Worker, which parses it
+// and builds binary buffers off the main thread; request correlation guards against stale replies.
 
 import type { ConnectionStatus, DebrisBinaryData, SatelliteBinaryData } from '../store/useOrbitalStore';
+import { apiFetch, hasApiKey } from './http';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -16,8 +18,9 @@ export interface TelemetrySnapshot {
 
 export interface WorkerRequest {
   requestId: string;
-  type: 'PARSE_SNAPSHOT' | 'PING';
+  type: 'PARSE_SNAPSHOT' | 'PARSE_TEXT' | 'PING';
   payload?: TelemetrySnapshot;
+  raw?: string;
   timestamp?: string;
 }
 
@@ -43,13 +46,14 @@ export interface TelemetryMetrics {
   avgLatencyMs: number;
   lastLatencyMs: number | null;
   workerParseTimeMs: number | null;
+  transport: 'sse' | 'poll' | 'idle';
 }
 
 export type TelemetryCallback = (
   timestamp: string,
   satellites: SatelliteBinaryData,
   debris: DebrisBinaryData,
-  metrics: { parseTimeMs: number }
+  metrics: { parseTimeMs: number; latencyMs: number }
 ) => void;
 
 export type StatusCallback = (status: Partial<ConnectionStatus>) => void;
@@ -59,12 +63,14 @@ export type StatusCallback = (status: Partial<ConnectionStatus>) => void;
 // ============================================================================
 
 const CONFIG = {
-  SNAPSHOT_ENDPOINT: '/api/visualization/snapshot', // uses Vite proxy
-  POLLING_INTERVAL_MS: 1000,
+  SNAPSHOT_ENDPOINT: '/api/visualization/snapshot',
+  STREAM_ENDPOINT: '/api/stream/snapshot',
+  POLLING_INTERVAL_MS: 2000,
   MAX_RETRY_ATTEMPTS: 3,
   RETRY_DELAY_MS: 500,
   RETRY_BACKOFF_MULTIPLIER: 2,
-  WORKER_TIMEOUT_MS: 3000,
+  WORKER_TIMEOUT_MS: 5000,
+  SSE_MAX_FAILURES: 2,
 } as const;
 
 // ============================================================================
@@ -114,9 +120,14 @@ class RequestCorrelator {
 
 class TelemetryClientManager {
   private worker: Worker | null = null;
+  private workerBroken = false;
   private correlator = new RequestCorrelator();
   private isProcessing = false;
   private pollingInterval: ReturnType<typeof setInterval> | null = null;
+  private eventSource: EventSource | null = null;
+  private sseFailures = 0;
+  private pendingFrame: string | null = null;
+  private lastTimestampMs = -Infinity;
 
   private onTelemetryCb: TelemetryCallback | null = null;
   private onStatusCb: StatusCallback | null = null;
@@ -136,35 +147,29 @@ class TelemetryClientManager {
     avgLatencyMs: 0,
     lastLatencyMs: null,
     workerParseTimeMs: null,
+    transport: 'idle',
   };
 
-  constructor() {
-    this.initWorker();
-  }
-
   private initWorker() {
-    if (typeof window !== 'undefined' && !this.worker) {
-      this.worker = new Worker(new URL('../workers/telemetryWorker.ts', import.meta.url), {
-        type: 'module',
-      });
-
-      this.worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
-        this.correlator.resolveResponse(e.data);
-      };
-
+    if (typeof window === 'undefined' || typeof Worker === 'undefined' || this.worker || this.workerBroken) return;
+    try {
+      this.worker = new Worker(new URL('../workers/telemetryWorker.ts', import.meta.url), { type: 'module' });
+      this.worker.onmessage = (e: MessageEvent<WorkerResponse>) => this.correlator.resolveResponse(e.data);
       this.worker.onerror = (error) => {
         console.error('[TelemetryClient] Worker fatal error:', error);
-        this.updateStatus({ state: 'error', error: `Worker fatal: ${error.message}` });
         this.correlator.rejectAll(new Error('Worker crashed'));
+        this.worker?.terminate();
+        this.worker = null;
+        this.workerBroken = true; // fall back to main-thread parsing
       };
+    } catch (err) {
+      this.workerBroken = true;
     }
   }
 
   private updateStatus(status: Partial<ConnectionStatus>) {
     this.connectionState = { ...this.connectionState, ...status };
-    if (this.onStatusCb) {
-      this.onStatusCb(this.connectionState);
-    }
+    this.onStatusCb?.(this.connectionState);
   }
 
   public onStatusChange(callback: StatusCallback) {
@@ -172,129 +177,181 @@ class TelemetryClientManager {
   }
 
   // ============================================================================
-  // FETCH & PARSE PIPELINE
+  // PARSING
+  // ============================================================================
+
+  private async parse(raw: string): Promise<WorkerResponse> {
+    this.initWorker();
+    if (this.worker) {
+      const { requestId, promise } = this.correlator.createRequest();
+      this.worker.postMessage({ requestId, type: 'PARSE_TEXT', raw } as WorkerRequest);
+      return promise;
+    }
+    // Main-thread fallback (no Worker support)
+    const { snapshotToBinaryBuffers } = await import('../store/snapshotBuffers');
+    const start = performance.now();
+    const parsed = snapshotToBinaryBuffers(JSON.parse(raw));
+    return {
+      requestId: 'main', type: 'DEBRIS_UPDATE', timestamp: parsed.timestamp,
+      debris: parsed.debris, satellites: parsed.satellites,
+      metrics: { parseTimeMs: performance.now() - start, debrisCount: parsed.debris.length, satelliteCount: parsed.satellites.length, highRiskCount: 0 },
+    };
+  }
+
+  private async deliver(raw: string, started: number) {
+    const response = await this.parse(raw);
+    if (response.type === 'ERROR') throw new Error(response.error ?? 'Worker parsing failed');
+    if (response.type !== 'DEBRIS_UPDATE' || !response.debris || !response.satellites || !response.timestamp) {
+      throw new Error('Worker returned incomplete or unexpected response');
+    }
+    // Never move the dashboard backwards in time (frames from the stream and from polling can
+    // finish out of order). A jump back of more than 6 h means the backend was reset: accept it.
+    const tsMs = Date.parse(response.timestamp);
+    if (tsMs < this.lastTimestampMs && this.lastTimestampMs - tsMs < 6 * 3600 * 1000) return;
+    this.lastTimestampMs = tsMs;
+    const latency = performance.now() - started;
+    this.metrics.successfulFetches++;
+    this.metrics.lastLatencyMs = latency;
+    this.metrics.avgLatencyMs =
+      (this.metrics.avgLatencyMs * (this.metrics.successfulFetches - 1) + latency) / this.metrics.successfulFetches;
+    this.metrics.workerParseTimeMs = response.metrics?.parseTimeMs ?? null;
+    this.updateStatus({ state: 'connected', lastSuccessfulFetch: Date.now(), consecutiveFailures: 0, latencyMs: latency, error: null });
+    this.onTelemetryCb?.(response.timestamp, response.satellites, response.debris, {
+      parseTimeMs: response.metrics?.parseTimeMs ?? 0,
+      latencyMs: latency,
+    });
+  }
+
+  // ============================================================================
+  // SSE TRANSPORT
+  // ============================================================================
+
+  private startStream(): boolean {
+    if (typeof EventSource === 'undefined' || hasApiKey()) return false; // EventSource cannot send X-API-Key
+    this.eventSource = new EventSource(CONFIG.STREAM_ENDPOINT);
+    this.metrics.transport = 'sse';
+    this.eventSource.onopen = () => {
+      this.sseFailures = 0;
+      if (this.connectionState.state !== 'connected') this.updateStatus({ state: 'connecting', error: null });
+    };
+    this.eventSource.onmessage = (e: MessageEvent<string>) => {
+      this.metrics.totalFetches++;
+      // Latest-frame-wins: if the pipeline is busy, keep only the newest frame.
+      if (this.isProcessing) {
+        this.pendingFrame = e.data;
+        return;
+      }
+      this.pendingFrame = null; // anything parked is older than this frame
+      this.processStreamFrame(e.data);
+    };
+    this.eventSource.onerror = () => {
+      this.sseFailures++;
+      if (this.sseFailures >= CONFIG.SSE_MAX_FAILURES) {
+        console.warn('[TelemetryClient] Stream unavailable, switching to polling.');
+        this.stopStream();
+        this.startPollingLoop();
+      }
+    };
+    return true;
+  }
+
+  private async processStreamFrame(raw: string) {
+    this.isProcessing = true;
+    try {
+      await this.deliver(raw, performance.now());
+    } catch (error) {
+      this.metrics.failedFetches++;
+      console.warn('[TelemetryClient] Stream frame failed:', (error as Error).message);
+    } finally {
+      this.isProcessing = false;
+      this.drainPending();
+    }
+  }
+
+  private stopStream() {
+    this.eventSource?.close();
+    this.eventSource = null;
+  }
+
+  // ============================================================================
+  // POLLING TRANSPORT
   // ============================================================================
 
   private async fetchAndParse(): Promise<void> {
-    // Anti-choke lock: skip if previous fetch is still processing
-    if (this.isProcessing) {
-      console.warn('[TelemetryClient] Dropping frame: pipeline blocked.');
-      return;
-    }
-
+    if (this.isProcessing) return; // anti-choke lock: previous frame still in flight
     this.isProcessing = true;
     const fetchStart = performance.now();
     this.metrics.totalFetches++;
-
-    let attempt = 1;
     let retryDelay = CONFIG.RETRY_DELAY_MS;
 
-    while (attempt <= CONFIG.MAX_RETRY_ATTEMPTS) {
-      try {
-        if (this.connectionState.state !== 'connected') {
-          this.updateStatus({ state: 'connecting' });
-        }
-
-        const response = await fetch(CONFIG.SNAPSHOT_ENDPOINT, {
-          method: 'GET',
-          headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
-        });
-
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-        const data: TelemetrySnapshot = await response.json();
-
-        // Ensure worker is alive
-        this.initWorker();
-        if (!this.worker) throw new Error('Worker not initialized');
-
-        // Create correlation lock
-        const { requestId, promise } = this.correlator.createRequest();
-
-        // Offload parsing to the worker
-        this.worker.postMessage({
-          requestId,
-          type: 'PARSE_SNAPSHOT',
-          payload: data,
-          timestamp: data.timestamp,
-        } as WorkerRequest);
-
-        // Wait for binary buffers
-        const workerResponse = await promise;
-
-        if (workerResponse.type === 'ERROR') {
-          throw new Error(workerResponse.error ?? 'Worker parsing failed');
-        }
-
-        if (workerResponse.type !== 'DEBRIS_UPDATE' || !workerResponse.debris || !workerResponse.satellites) {
-          throw new Error('Worker returned incomplete or unexpected response');
-        }
-
-        const latency = performance.now() - fetchStart;
-
-        // Update metrics
-        this.metrics.successfulFetches++;
-        this.metrics.lastLatencyMs = latency;
-        this.metrics.avgLatencyMs =
-          (this.metrics.avgLatencyMs * (this.metrics.successfulFetches - 1) + latency) /
-          this.metrics.successfulFetches;
-        this.metrics.workerParseTimeMs = workerResponse.metrics?.parseTimeMs ?? null;
-
-        this.updateStatus({
-          state: 'connected',
-          lastSuccessfulFetch: Date.now(),
-          consecutiveFailures: 0,
-          latencyMs: latency,
-          error: null,
-        });
-
-        // Fire callback with binary data
-        if (this.onTelemetryCb && workerResponse.timestamp) {
-          this.onTelemetryCb(
-            workerResponse.timestamp,
-            workerResponse.satellites,
-            workerResponse.debris,
-            { parseTimeMs: workerResponse.metrics?.parseTimeMs ?? 0 }
-          );
-        }
-
-        this.isProcessing = false;
-        return; // success, exit retry loop
-
-      } catch (error) {
-        console.warn(`[TelemetryClient] Attempt ${attempt} failed:`, (error as Error).message);
-
-        if (attempt === CONFIG.MAX_RETRY_ATTEMPTS) {
-          this.metrics.failedFetches++;
-          this.updateStatus({
-            state: 'error',
-            error: (error as Error).message,
-            consecutiveFailures: attempt,
-          });
-          this.isProcessing = false;
+    try {
+      for (let attempt = 1; attempt <= CONFIG.MAX_RETRY_ATTEMPTS; attempt++) {
+        try {
+          const response = await apiFetch(CONFIG.SNAPSHOT_ENDPOINT, { headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } });
+          if (response.status === 400) {
+            this.updateStatus({ state: 'connecting', error: 'Awaiting telemetry (POST /api/telemetry)' });
+            return;
+          }
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          await this.deliver(await response.text(), fetchStart);
           return;
+        } catch (error) {
+          if (attempt === CONFIG.MAX_RETRY_ATTEMPTS) {
+            this.metrics.failedFetches++;
+            this.updateStatus({
+              state: 'error',
+              error: (error as Error).message,
+              consecutiveFailures: this.connectionState.consecutiveFailures + 1,
+            });
+            return;
+          }
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+          retryDelay *= CONFIG.RETRY_BACKOFF_MULTIPLIER;
         }
-
-        await new Promise(resolve => setTimeout(resolve, retryDelay));
-        retryDelay *= CONFIG.RETRY_BACKOFF_MULTIPLIER;
-        attempt++;
       }
+    } finally {
+      this.isProcessing = false;
+      this.drainPending();
     }
-    this.isProcessing = false;
+  }
+
+  /** Processes a stream frame that arrived while another frame was in flight. */
+  private drainPending() {
+    const next = this.pendingFrame;
+    this.pendingFrame = null;
+    if (next) this.processStreamFrame(next);
+  }
+
+  private startPollingLoop(intervalMs: number = CONFIG.POLLING_INTERVAL_MS) {
+    if (this.pollingInterval) return;
+    this.metrics.transport = 'poll';
+    this.fetchAndParse();
+    this.pollingInterval = setInterval(() => this.fetchAndParse(), intervalMs);
   }
 
   // ============================================================================
   // PUBLIC CONTROLS
   // ============================================================================
 
-  public startPolling(callback: TelemetryCallback): () => void {
+  /** Starts live updates (SSE when possible, polling otherwise). Returns a stop function. */
+  public start(callback: TelemetryCallback, options: { intervalMs?: number; preferStream?: boolean } = {}): () => void {
     this.onTelemetryCb = callback;
-    if (!this.pollingInterval) {
-      this.initWorker();
-      this.fetchAndParse(); // immediate first fetch
-      this.pollingInterval = setInterval(() => this.fetchAndParse(), CONFIG.POLLING_INTERVAL_MS);
-    }
-    return () => this.stopPolling();
+    this.stop();
+    const streaming = options.preferStream !== false && this.startStream();
+    if (!streaming) this.startPollingLoop(options.intervalMs);
+    // Fetch one snapshot immediately so the dashboard is populated before the first stream event.
+    if (streaming) this.fetchAndParse();
+    return () => this.stop();
+  }
+
+  /** Polling-only mode (kept for callers that do not want a stream). */
+  public startPolling(callback: TelemetryCallback, intervalMs?: number): () => void {
+    return this.start(callback, { intervalMs, preferStream: false });
+  }
+
+  /** One-off refresh through the same parse pipeline. */
+  public refresh(): Promise<void> {
+    return this.fetchAndParse();
   }
 
   public stopPolling(): void {
@@ -304,8 +361,14 @@ class TelemetryClientManager {
     }
   }
 
-  public cleanup(): void {
+  public stop(): void {
     this.stopPolling();
+    this.stopStream();
+    this.metrics.transport = 'idle';
+  }
+
+  public cleanup(): void {
+    this.stop();
     this.correlator.rejectAll(new Error('Client cleanup'));
     if (this.worker) {
       this.worker.terminate();

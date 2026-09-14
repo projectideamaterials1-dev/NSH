@@ -75,3 +75,13 @@ Thumbs.db
 *.so
 *.db
 project_documentation.md
+
+# Local runtime output
+coverage.xml
+data/config.json
+data/catalog/
+.venv/
+
+# Frontend test artifacts
+frontend/test-results/
+frontend/playwright-report/
