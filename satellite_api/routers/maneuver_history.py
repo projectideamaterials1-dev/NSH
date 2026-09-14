@@ -14,9 +14,9 @@ router = APIRouter()
 async def get_maneuvers(
     request: Request, 
     satellite_id: Optional[str] = None,
-    status: Optional[str] = Query(None, pattern="^(pending|executed|all)$")
+    status: Optional[str] = Query(None, pattern="^(pending|executed|rejected|cancelled|all)$")
 ):
-    """Get all maneuvers (pending + executed), optionally filtered by satellite_id and status."""
+    """Get all maneuvers (pending + executed + rejected + cancelled), optionally filtered by satellite_id and status."""
     state = request.app.state.orbital_state
     if not state.is_ready():
         raise HTTPException(status_code=400, detail="State not initialized.")
@@ -30,3 +30,12 @@ async def get_maneuvers(
         all_maneuvers = [m for m in all_maneuvers if m.get("status", "pending").lower() == status.lower()]
     
     return {"maneuvers": all_maneuvers}
+
+
+@router.delete("/api/maneuver/{burn_id}")
+async def cancel_maneuver(request: Request, burn_id: str):
+    """Cancels a pending (not yet executed) burn."""
+    state = request.app.state.orbital_state
+    if not await state.cancel_maneuver(burn_id):
+        raise HTTPException(status_code=404, detail=f"No pending burn with id {burn_id}.")
+    return {"status": "CANCELLED", "burn_id": burn_id}

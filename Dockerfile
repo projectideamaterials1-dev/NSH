@@ -6,21 +6,20 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-# Stage 2: Backend + serve static frontend
+# Stage 2: Backend (serves the API and the built dashboard on port 8000)
 FROM ubuntu:22.04
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    DATA_DIR=/app/data \
+    FRONTEND_DIST=/app/frontend_dist
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    cmake \
     curl \
     python3 \
     python3-pip \
     python3-dev \
-    libomp-dev \
-    nginx \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -30,27 +29,15 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN pip3 install .
+# Compiles the acm_engine C++ extension (OpenMP via GCC) and installs satellite_api
+RUN pip3 install --no-cache-dir . \
+    && python3 -c "import acm_engine; assert hasattr(acm_engine, 'process_conjunctions')"
 
-# Copy built frontend from stage 1
-COPY --from=frontend-builder /app/frontend/dist /var/www/html
+COPY --from=frontend-builder /app/frontend/dist /app/frontend_dist
 
-# Configure nginx to serve frontend and proxy API
-RUN echo 'server { \
-    listen 80; \
-    location / { \
-        root /var/www/html; \
-        try_files $uri /index.html; \
-    } \
-    location /api/ { \
-        proxy_pass http://localhost:8000; \
-        proxy_set_header Host $host; \
-    } \
-}' > /etc/nginx/sites-enabled/default
+EXPOSE 8000
 
-EXPOSE 80
-
-HEALTHCHECK --interval=5s --timeout=3s \
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s \
   CMD curl -f http://localhost:8000/health || exit 1
 
-CMD ["sh", "-c", "nginx && uvicorn satellite_api.main:app --host 0.0.0.0 --port 8000 --workers 1"]
+CMD ["uvicorn", "satellite_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

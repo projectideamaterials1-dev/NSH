@@ -2,8 +2,9 @@ import numpy as np
 from datetime import datetime
 
 def datetime_to_julian(dt: datetime) -> float:
-    return dt.toordinal() + 1721425.5 + (
-        dt.hour + dt.minute / 60.0 + dt.second / 3600.0
+    # proleptic ordinal 1 (0001-01-01 00:00) is JD 1721424.5
+    return dt.toordinal() + 1721424.5 + (
+        dt.hour + dt.minute / 60.0 + (dt.second + dt.microsecond / 1e6) / 3600.0
     ) / 24.0
 
 def compute_gmst(julian_date: float) -> float:
@@ -11,10 +12,13 @@ def compute_gmst(julian_date: float) -> float:
     gmst_degrees = 280.46061837 + 360.98564736629 * (julian_date - 2451545.0) + 0.000387933 * T**2
     return np.radians(gmst_degrees % 360)
 
-def convert_states_to_lla(states: np.ndarray, current_time: datetime) -> list:
-    """Vectorized conversion from ECI to LLA for thousands of objects."""
+def convert_states_to_lla(states: np.ndarray, current_time: datetime, as_array: bool = False):
+    """Vectorized conversion from ECI to LLA for thousands of objects.
+
+    Returns rows of [index, lat_deg, lon_deg, alt_km] as a list (default) or an (N, 4) array.
+    """
     if len(states) == 0:
-        return []
+        return np.empty((0, 4)) if as_array else []
     
     jd = datetime_to_julian(current_time)
     gmst = compute_gmst(jd)
@@ -54,10 +58,11 @@ def convert_states_to_lla(states: np.ndarray, current_time: datetime) -> list:
     cos_lat = np.cos(lat)
     sin_lat = np.sin(lat)
     
-    # Compute both pathways
-    alt_equatorial = (p / cos_lat) - N
-    # Avoid dividing by 0 at the poles by using the Z axis instead
-    alt_polar = (z / sin_lat) - N * (1 - e2)
+    # Compute both pathways (np.where evaluates both, so silence the unused branch's 0-division)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        alt_equatorial = (p / cos_lat) - N
+        # Avoid dividing by 0 at the poles by using the Z axis instead
+        alt_polar = (z / sin_lat) - N * (1 - e2)
     
     # If cos(lat) is close to 0 (poles), use the polar formula. Otherwise, use standard.
     h = np.where(np.abs(cos_lat) > 1e-4, alt_equatorial, alt_polar)
@@ -70,5 +75,5 @@ def convert_states_to_lla(states: np.ndarray, current_time: datetime) -> list:
     lat_deg = np.degrees(lat)
     lon_deg = np.degrees(lon)
     
-    # Creates an (N, 4) array and converts to Python list for ORJSON
-    return np.column_stack((ids, lat_deg, lon_deg, h)).tolist()
+    result = np.column_stack((ids, lat_deg, lon_deg, h))
+    return result if as_array else result.tolist()

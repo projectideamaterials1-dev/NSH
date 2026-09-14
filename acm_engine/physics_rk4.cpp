@@ -6,7 +6,11 @@
 #include <unordered_set>
 #include <vector>
 #include <array>
+#ifdef _OPENMP
 #include <omp.h>
+#endif
+#include <algorithm>
+#include <tuple>
 
 namespace py = pybind11;
 
@@ -151,23 +155,37 @@ process_conjunctions(
     const double threshold,
     const double dt_seconds
 ) {
+    // Buffers are acquired while holding the GIL; it is released only around the
+    // pure C++ numeric work below.
     py::buffer_info sat_buf = sat_states.request(true);
     py::buffer_info debris_buf = debris_states.request(true);
-    
+
+    auto validate = [](const py::buffer_info& buf, const py::array_t<double>& arr, const char* name) {
+        if (buf.ndim != 2 || buf.shape[1] != 6) {
+            throw std::runtime_error(std::string(name) + " must have shape (N, 6)");
+        }
+        if (!(arr.flags() & py::array::c_style)) {
+            throw std::runtime_error(std::string(name) + " must be C-contiguous");
+        }
+    };
+    validate(sat_buf, sat_states, "sat_states");
+    validate(debris_buf, debris_states, "debris_states");
+
     double* sat_ptr = static_cast<double*>(sat_buf.ptr);
     double* debris_ptr = static_cast<double*>(debris_buf.ptr);
-    
+
     const size_t n_sats = sat_buf.shape[0];
     const size_t n_debris = debris_buf.shape[0];
     const size_t n_total = n_sats + n_debris;
-    
-    if (n_total == 0) {
-        py::gil_scoped_acquire acquire;
+
+    if (n_total == 0 || dt_seconds <= 0.0) {
         std::vector<py::ssize_t> empty_shape = {0, 5};
         return std::make_tuple(sat_states, debris_states, py::array_t<double>(empty_shape));
     }
-    
+
     std::vector<std::array<double, 5>> collisions;
+    {
+    py::gil_scoped_release release;
     std::unordered_set<unsigned long long> reported_pairs;
     std::vector<double> prev_pos(n_total * 3);
     
@@ -230,7 +248,7 @@ process_conjunctions(
                             
                             // Safe read (set only modified in critical section)
                             bool already_reported = false;
-                            #pragma omp critical(read_set)
+                            #pragma omp critical(pair_registry)
                             { already_reported = reported_pairs.count(pair_id); }
                             
                             if (already_reported) {
@@ -255,7 +273,7 @@ process_conjunctions(
 
                             if (collision) {
                                 // Thread-safe write to collisions array
-                                #pragma omp critical(write_col)
+                                #pragma omp critical(pair_registry)
                                 {
                                     reported_pairs.insert(pair_id);
                                     double is_deb = (n_idx >= (int)n_sats) ? 1.0 : 0.0;
@@ -271,8 +289,8 @@ process_conjunctions(
         }
         t_elapsed += current_dt;
     }
-    
-    py::gil_scoped_acquire acquire;
+    } // GIL re-acquired here
+
     std::vector<py::ssize_t> result_shape = { static_cast<py::ssize_t>(collisions.size()), 5 };
     py::array_t<double> result(result_shape);
     auto result_buf = result.request(true);
@@ -292,7 +310,6 @@ process_conjunctions(
 PYBIND11_MODULE(acm_engine, m) {
     m.doc() = "Autonomous Constellation Manager - True CCD SDA Engine";
     m.def("process_conjunctions", &process_conjunctions,
-          py::call_guard<py::gil_scoped_release>(),
           "Detects collisions with chunked RK4 + J2 propagation and Continuous Collision Detection (CCD)",
           py::arg("sat_states").noconvert(),
           py::arg("debris_states").noconvert(),
