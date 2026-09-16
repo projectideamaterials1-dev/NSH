@@ -1,7 +1,5 @@
 # 🛰️ Crimson Nebula: Autonomous Constellation Manager & Orbital Visualizer
 
-**National Space Hackathon 2026** | Indian Institute of Technology, Delhi
-
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com)
 [![React 19](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev)
@@ -12,11 +10,11 @@
 
 ## 📌 Overview
 
-**Crimson Nebula** is a full‑stack Autonomous Constellation Manager (ACM) that combines a high‑performance Python physics engine with a real‑time React/WebGL frontend. It autonomously tracks 50+ satellites and 100,000+ debris objects, predicts conjunctions, schedules fuel‑optimal evasion burns, and visualises the entire constellation on a 60+ FPS interactive map – fully compliant with NSH 2026 specifications.
+**Crimson Nebula** is a full‑stack Autonomous Constellation Manager (ACM) that combines a high‑performance Python physics engine with a real‑time React/WebGL frontend. It autonomously tracks 50+ satellites and 100,000+ debris objects, predicts conjunctions, schedules fuel‑optimal evasion burns, and visualises the entire constellation on a 60+ FPS interactive map.
 
 ---
 
-## ✅ Problem Statement Compliance
+## ✅ Feature Checklist
 
 | Requirement | Implementation |
 |-------------|----------------|
@@ -58,7 +56,7 @@ crimson-nebula/
 │   ├── acm_engine/
 │   │   └── physics_rk4.cpp        # RK4 + J2 propagation, spatial hash + CCD (OpenMP)
 │   ├── data/
-│   │   └── ground_stations.csv    # 6 ground stations (PS Section 5.5.1)
+│   │   └── ground_stations.csv    # 6 ground stations
 │   ├── tests/                     # pytest unit / integration / regression suites
 │   └── satellite_api/
 │       ├── main.py                # app, lifespan (screening service, persistence), routers, static UI
@@ -243,7 +241,7 @@ This runs a 30‑day simulation with 50 satellites and 10,000 debris objects, lo
 
 ---
 
-## 🐳 Docker Deployment (Required by PS)
+## 🐳 Docker Deployment
 
 ```bash
 # Build image
@@ -338,9 +336,9 @@ Detailed schemas are available at `/docs` when the server is running.
 
 ---
 
-## 📄 License & Submission
+## 📄 License
 
-This project is submitted for the **National Space Hackathon 2026** at IIT Delhi. All code is original and adheres to the competition’s rules and constraints.
+This project is an independent, original build. All code is my own.
 
 ---
 
