@@ -24,10 +24,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY backend/ .
 
 # Compiles the acm_engine C++ extension (OpenMP via GCC) and installs satellite_api
 RUN pip3 install --no-cache-dir . \

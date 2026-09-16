@@ -48,46 +48,47 @@
 crimson-nebula/
 ├── Dockerfile                     # ubuntu:22.04, serves API + dashboard on port 8000
 ├── docker-compose.prod.yml        # backend + Redis persistence + optional nginx edge proxy
-├── pyproject.toml · setup.py      # package + acm_engine C++ extension build
-├── requirements.txt / requirements-dev.txt
 ├── run.sh                         # local launcher (--demo seeds and runs the demo mission)
-├── test.py                        # 30‑day stress test script
-├── scripts/
-│   └── demo.py                    # demo mission: constellation, debris and planted threats
-├── acm_engine/
-│   └── physics_rk4.cpp            # RK4 + J2 propagation, spatial hash + CCD (OpenMP)
-├── data/
-│   └── ground_stations.csv        # 6 ground stations (PS Section 5.5.1)
-├── tests/                         # pytest unit / integration / regression suites
-├── satellite_api/                 # Backend (FastAPI)
-│   ├── main.py                    # app, lifespan (screening service, persistence), routers, static UI
-│   ├── models.py                  # Pydantic schemas (PS endpoints)
-│   ├── state.py                   # zero‑copy state, stepping, CDM registry, events, metrics
-│   ├── state_redis.py             # Redis-backed state manager (snapshot save/restore)
-│   ├── db.py                      # SQLite mission archive (maneuvers + events)
-│   ├── config.py                  # live simulation settings (/api/config)
-│   ├── physics_engine.py          # C++ engine loader with NumPy fallback
-│   ├── gravity.py                 # zonal harmonics J2…J6 / EGM coefficient files
-│   ├── ground_stations.py         # station catalogue + vectorised visibility
-│   ├── coordinates.py · timeutils.py
-│   ├── middleware/auth.py         # optional API key + rate limiting
-│   ├── acm/
-│   │   ├── brain.py               # evasion, recovery, station-keeping, EOL planning
-│   │   ├── plugins.py             # avoidance strategies: Auto, TriShunt, RadialOverride
-│   │   ├── conjunctions.py        # predictive screening + CDM lifecycle
-│   │   ├── autopilot.py           # screen → decide → schedule service
-│   │   ├── scheduler.py           # shared burn validation (LOS, Δv, cooldown, fuel)
-│   │   └── scenario.py            # encounter builders for tests and the demo
-│   ├── realworld/
-│   │   ├── catalog.py             # CelesTrak element sets (cached) + SGP4 propagation
-│   │   ├── live.py                # catalog loading, live UTC clock, SGP4 re-anchoring & conjunction refinement
-│   │   └── space_weather.py       # NOAA SWPC Kp, F10.7, G/S/R scales
-│   └── routers/
-│       ├── telemetry.py · simulation.py · maneuvers.py · visualization.py   # PS endpoints
-│       ├── maneuver_history.py    # GET /api/maneuvers, DELETE /api/maneuver/{id}
-│       ├── operations.py          # conjunctions, events, metrics, autopilot, satellites, planner, archive
-│       ├── realworld.py           # /api/catalog/*, /api/live, /api/space-weather
-│       └── export.py              # GET /api/export/czml
+├── backend/                       # Backend (FastAPI) — deps isolated in backend/.venv
+│   ├── pyproject.toml · setup.py  # package + acm_engine C++ extension build
+│   ├── requirements.txt / requirements-dev.txt
+│   ├── test.py                    # 30‑day stress test script
+│   ├── scripts/
+│   │   └── demo.py                # demo mission: constellation, debris and planted threats
+│   ├── acm_engine/
+│   │   └── physics_rk4.cpp        # RK4 + J2 propagation, spatial hash + CCD (OpenMP)
+│   ├── data/
+│   │   └── ground_stations.csv    # 6 ground stations (PS Section 5.5.1)
+│   ├── tests/                     # pytest unit / integration / regression suites
+│   └── satellite_api/
+│       ├── main.py                # app, lifespan (screening service, persistence), routers, static UI
+│       ├── models.py              # Pydantic schemas (PS endpoints)
+│       ├── state.py               # zero‑copy state, stepping, CDM registry, events, metrics
+│       ├── state_redis.py         # Redis-backed state manager (snapshot save/restore)
+│       ├── db.py                  # SQLite mission archive (maneuvers + events)
+│       ├── config.py              # live simulation settings (/api/config)
+│       ├── physics_engine.py      # C++ engine loader with NumPy fallback
+│       ├── gravity.py             # zonal harmonics J2…J6 / EGM coefficient files
+│       ├── ground_stations.py     # station catalogue + vectorised visibility
+│       ├── coordinates.py · timeutils.py
+│       ├── middleware/auth.py     # optional API key + rate limiting
+│       ├── acm/
+│       │   ├── brain.py           # evasion, recovery, station-keeping, EOL planning
+│       │   ├── plugins.py         # avoidance strategies: Auto, TriShunt, RadialOverride
+│       │   ├── conjunctions.py    # predictive screening + CDM lifecycle
+│       │   ├── autopilot.py       # screen → decide → schedule service
+│       │   ├── scheduler.py       # shared burn validation (LOS, Δv, cooldown, fuel)
+│       │   └── scenario.py        # encounter builders for tests and the demo
+│       ├── realworld/
+│       │   ├── catalog.py         # CelesTrak element sets (cached) + SGP4 propagation
+│       │   ├── live.py            # catalog loading, live UTC clock, SGP4 re-anchoring & conjunction refinement
+│       │   └── space_weather.py   # NOAA SWPC Kp, F10.7, G/S/R scales
+│       └── routers/
+│           ├── telemetry.py · simulation.py · maneuvers.py · visualization.py   # PS endpoints
+│           ├── maneuver_history.py    # GET /api/maneuvers, DELETE /api/maneuver/{id}
+│           ├── operations.py          # conjunctions, events, metrics, autopilot, satellites, planner, archive
+│           ├── realworld.py           # /api/catalog/*, /api/live, /api/space-weather
+│           └── export.py              # GET /api/export/czml
 └── frontend/                      # React + Vite
     ├── e2e/dashboard.spec.ts      # Playwright end-to-end tests
     ├── playwright.config.ts · vitest.config.ts
@@ -182,13 +183,14 @@ Demo result (`scripts/demo.py`, 50 satellites, 10,000 debris, 6 planted 46–70 
 
 ### 1. Backend (Python / FastAPI)
 
-Run everything from the repository root (or use `./run.sh` to start backend and frontend together):
+Backend dependencies are isolated in `backend/.venv` and never touch the system Python (use `./run.sh` from the repo root to set this up and start backend + frontend together automatically):
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
-pip install .                     # optional: builds the C++ engine (needs a C++20 compiler)
+pip install .                      # optional: builds the C++ engine (needs a C++20 compiler)
 uvicorn satellite_api.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -209,9 +211,9 @@ Dashboard: http://localhost:3000 (the Vite dev server proxies `/api` to port 800
 ### 3. Demo mission (recommended)
 
 ```bash
-./run.sh --demo            # starts backend + dashboard, seeds the demo and runs it at 60×
+./run.sh --demo                        # starts backend + dashboard, seeds the demo and runs it at 60×
 # or, with services already running:
-python3 scripts/demo.py    # --no-step to seed only, --speed 120, --threats 8, --url http://host:8000
+backend/.venv/bin/python backend/scripts/demo.py    # --no-step to seed only, --speed 120, --threats 8, --url http://host:8000
 ```
 
 ### 4. Real satellites in real time
@@ -234,7 +236,7 @@ autopilot or operator are simulated; the real spacecraft are not commanded.
 While the backend is running:
 
 ```bash
-python test.py
+backend/.venv/bin/python backend/test.py
 ```
 
 This runs a 30‑day simulation with 50 satellites and 10,000 debris objects, logging evasions, fuel consumption, and drift peaks. Set `ACM_BASE_URL` to target another host.

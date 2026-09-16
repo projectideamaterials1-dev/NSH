@@ -23,7 +23,7 @@ services:
       - REALWORLD_OBJECTS=${REALWORLD_OBJECTS:-fengyun-1c-debris,cosmos-2251-debris,iridium-33-debris}
       - REALWORLD_LIVE=${REALWORLD_LIVE:-1}
     volumes:
-      - ./data:/app/data
+      - ./backend/data:/app/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s

@@ -21,17 +21,20 @@ the space stations, screened against real debris fields (needs internet; see *Re
 ```bash
 docker build -t crimson-nebula .
 docker run -d -p 8000:8000 --name nebula crimson-nebula
-python3 scripts/demo.py --url http://localhost:8000
+backend/.venv/bin/python backend/scripts/demo.py --url http://localhost:8000
 ```
 Open http://localhost:8000. For persistence across restarts use `docker compose -f docker-compose.prod.yml up`
-(adds Redis snapshots and keeps the SQLite archive in `./data`).
+(adds Redis snapshots and keeps the SQLite archive in `./backend/data`).
 
 ### Option C: Manual development setup
+Backend dependencies are isolated in `backend/.venv` (never installed globally):
 ```bash
+cd backend
+python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt && pip install .
 uvicorn satellite_api.main:app --port 8000
-cd frontend && npm install && npm run dev      # second terminal
-python3 scripts/demo.py                         # third terminal (or python3 test.py)
+cd ../frontend && npm install && npm run dev          # second terminal
+cd ../backend && python scripts/demo.py               # third terminal (or python test.py)
 ```
 
 ## 3. Using the Dashboard
@@ -151,7 +154,7 @@ curl -X DELETE http://localhost:8000/api/maneuver/burn1
 ## 5. Troubleshooting
 | Issue | Solution |
 |-------|----------|
-| "Waiting for telemetry" / "No telemetry" | Click **Load real satellites (live)**, or run `./run.sh --live`, `./run.sh --demo`, `python3 scripts/demo.py` or `python3 test.py`. |
+| "Waiting for telemetry" / "No telemetry" | Click **Load real satellites (live)**, or run `./run.sh --live`, `./run.sh --demo`, `backend/.venv/bin/python backend/scripts/demo.py` or `backend/.venv/bin/python backend/test.py`. |
 | Real data fails to load (502) | CelesTrak is unreachable and nothing is cached yet; check internet access or set `CELESTRAK_URL`. Cached data is used automatically when available. |
 | `409` from `/api/simulate/step` | Live mode is on; turn off **Live UTC** (or `PUT /api/live {"enabled": false}`) to step manually. |
 | `REJECTED: NO_LINE_OF_SIGHT` | The satellite is not visible from any ground station; check its next pass in the Satellite panel. |

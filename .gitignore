@@ -78,8 +78,8 @@ project_documentation.md
 
 # Local runtime output
 coverage.xml
-data/config.json
-data/catalog/
+backend/data/config.json
+backend/data/catalog/
 .venv/
 
 # Frontend test artifacts

@@ -179,7 +179,7 @@ async def update_config(config: dict):
 # ============================================================================
 # FRONTEND (optional): serve the built dashboard from the same port
 # ============================================================================
-_frontend_dist = Path(os.environ.get("FRONTEND_DIST", Path(__file__).resolve().parent.parent / "frontend" / "dist"))
+_frontend_dist = Path(os.environ.get("FRONTEND_DIST", Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"))
 if (_frontend_dist / "index.html").is_file():
     app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="frontend")
 else:
