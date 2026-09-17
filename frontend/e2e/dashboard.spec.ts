@@ -88,10 +88,10 @@ test.describe.serial('mission control dashboard', () => {
     await page.getByRole('tab', { name: /Score/ }).click();
     await expect(page.getByText('Collisions avoided')).toBeVisible();
 
-    await page.getByRole('radio', { name: /3D globe/ }).click();
+    await page.getByRole('radio', { name: /3D Earth/ }).click();
     await expect(page.getByRole('button', { name: 'Reset' })).toBeVisible();
     await page.getByRole('radio', { name: /2D map/ }).click();
-    await expect(page.getByRole('button', { name: 'World' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'World', exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Settings' }).click();
     const dialog = page.getByRole('dialog');
