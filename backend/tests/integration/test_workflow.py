@@ -133,16 +133,28 @@ async def test_api_key_middleware():
     from httpx import ASGITransport, AsyncClient
     from satellite_api.middleware.auth import APIKeyMiddleware
 
-    async def call(api_key, path, headers=None, method="GET"):
+    async def call(operator_key, path, headers=None, method="GET", readonly_key=""):
         mini = FastAPI()
-        mini.add_middleware(APIKeyMiddleware, api_key=api_key)
+        mini.add_middleware(
+            APIKeyMiddleware,
+            operator_keys=frozenset({operator_key}) if operator_key else frozenset(),
+            readonly_keys=frozenset({readonly_key}) if readonly_key else frozenset(),
+        )
 
         @mini.get("/api/ping")
         async def ping():
             return {"ok": True}
 
+        @mini.post("/api/ping")
+        async def ping_post():
+            return {"ok": True}
+
         @mini.get("/health")
         async def health():
+            return {"ok": True}
+
+        @mini.get("/docs")
+        async def docs():
             return {"ok": True}
 
         async with AsyncClient(transport=ASGITransport(app=mini), base_url="http://t") as c:
@@ -154,3 +166,9 @@ async def test_api_key_middleware():
     assert await call("s3cret", "/api/ping", {"X-API-Key": "s3cret"}) == 200
     assert await call("s3cret", "/health") == 200                   # health stays public
     assert await call("s3cret", "/api/ping", method="OPTIONS") != 401  # CORS preflight not blocked
+    assert await call("s3cret", "/docs") == 401                     # docs protected once keys are configured
+
+    # role-scoped keys: a readonly key can GET but not mutate; an operator key can do both
+    assert await call("op-key", "/api/ping", {"X-API-Key": "ro-key"}, readonly_key="ro-key") == 200
+    assert await call("op-key", "/api/ping", {"X-API-Key": "ro-key"}, method="POST", readonly_key="ro-key") == 403
+    assert await call("op-key", "/api/ping", {"X-API-Key": "op-key"}, method="POST", readonly_key="ro-key") == 200

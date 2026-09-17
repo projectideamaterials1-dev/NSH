@@ -21,6 +21,12 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import requests
 
+# Windows consoles default stdout to the system codepage (e.g. cp1252), which cannot
+# encode the arrow character used below and crashes the run right after seeding.
+# reconfigure() (Python 3.7+) is a no-op failure-mode-safe way to force UTF-8 everywhere.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 

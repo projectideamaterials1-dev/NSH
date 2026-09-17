@@ -18,6 +18,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 
+from satellite_api.acm.brain import COLLISION_THRESHOLD_KM
 from satellite_api.physics_engine import process_conjunctions, propagate_states
 from satellite_api.timeutils import iso_z
 
@@ -28,6 +29,9 @@ REFINE_WINDOW_S = 600.0
 REFINE_STEP_S = 2.0
 MATCH_TCA_S = 300.0
 MAX_CDMS = 2000
+# Matches AutonomousBrain's own evasion-trigger radius (brain.py): only conjunctions
+# this close are ever actually considered by the burn that link_mitigation credits.
+EVASION_TRIGGER_KM = COLLISION_THRESHOLD_KM * 1.5
 
 
 def risk_level(miss_km: float) -> str:
@@ -53,8 +57,18 @@ def _approach_angle_deg(r_sat: np.ndarray, v_sat: np.ndarray, v_rel: np.ndarray)
 
 def screen(sat_states: np.ndarray, debris_states: np.ndarray, sat_ids: Sequence[str], debris_ids: Sequence[str],
            start_ts: float, horizon_s: float, warning_km: float = 5.0,
-           engine: Callable = process_conjunctions) -> List[dict]:
-    """Predicts close approaches within `horizon_s` of `start_ts`. Inputs are not modified."""
+           engine: Callable = process_conjunctions, priority_pairs: Optional[frozenset] = None,
+           max_refine: Optional[int] = None) -> List[dict]:
+    """Predicts close approaches within `horizon_s` of `start_ts`. Inputs are not modified.
+
+    `max_refine` bounds how many broad-phase candidates get the (more expensive) refinement
+    pass, for use when the caller has detected it's falling behind its screening cadence
+    (see ConjunctionService.run_cycle): `priority_pairs` (satellite_id, object_id) already
+    known to be active risks are always kept; remaining slots go to the closest broad-phase
+    misses. Anything dropped this cycle is simply re-detected next cycle - broad phase always
+    re-scans everything - so this trades this cycle's completeness for staying within budget,
+    never permanently loses a threat.
+    """
     n_sat = len(sat_states)
     if n_sat == 0 or horizon_s <= 0:
         return []
@@ -70,6 +84,17 @@ def screen(sat_states: np.ndarray, debris_states: np.ndarray, sat_ids: Sequence[
     s_idx = cands[:, 0].astype(np.int64)
     t_idx = cands[:, 1].astype(np.int64)
     is_deb = cands[:, 2] > 0.5
+
+    if max_refine is not None and k > max_refine:
+        object_ids = [debris_ids[t_idx[i]] if is_deb[i] else sat_ids[t_idx[i]] for i in range(k)]
+        if priority_pairs:
+            is_priority = np.array([(sat_ids[s_idx[i]], object_ids[i]) in priority_pairs for i in range(k)])
+        else:
+            is_priority = np.zeros(k, dtype=bool)
+        # Primary key last: priority candidates first, then nearest broad-phase miss distance.
+        order = np.lexsort((cands[:, 3], ~is_priority))[:max_refine]
+        cands, s_idx, t_idx, is_deb = cands[order], s_idx[order], t_idx[order], is_deb[order]
+        k = max_refine
     A = sat0[s_idx].copy()
     B = np.empty((k, 6))
     if is_deb.any():
@@ -193,6 +218,11 @@ class CDMRegistry:
                 match["peak_risk"] = risk
             if match["status"] == "CLEARED":
                 match["status"] = "MITIGATED" if match["mitigation_burn_ids"] else "ACTIVE"
+            elif match["status"] == "MITIGATED" and risk == "CRITICAL":
+                # The scheduled avoidance burn hasn't (yet) reduced the risk below
+                # CRITICAL by the next screen - reopen so the autopilot reconsiders
+                # a follow-up burn instead of treating this encounter as handled.
+                match["status"] = "ACTIVE"
             if RISK_RANK[risk] > RISK_RANK[previous_risk] and risk != "WATCH":
                 emit("crit" if risk == "CRITICAL" else "warn", "conjunction",
                      f"Conjunction with {p['object_id']} escalated to {risk.lower()} "
@@ -235,7 +265,12 @@ class CDMRegistry:
     def link_mitigation(self, sat_id: str, burn_ids: List[str], now_ts: float) -> List[str]:
         linked = []
         for cdm in self.open():
-            if cdm["satellite_id"] == sat_id and cdm["tca_ts"] > now_ts and cdm["risk"] != "WATCH":
+            # Only credit/mitigate the conjunctions actually close enough to have been
+            # part of the threat set the evasion burn was sized against (brain.py uses
+            # the same EVASION_TRIGGER_KM radius) - not every other open threat for
+            # this satellite, which the burn was never computed to address.
+            if (cdm["satellite_id"] == sat_id and cdm["tca_ts"] > now_ts
+                    and cdm["miss_distance_km"] <= EVASION_TRIGGER_KM):
                 cdm["mitigation_burn_ids"] = list(dict.fromkeys(cdm["mitigation_burn_ids"] + burn_ids))
                 cdm["status"] = "MITIGATED"
                 linked.append(cdm["cdm_id"])

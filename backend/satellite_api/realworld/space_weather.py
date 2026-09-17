@@ -34,9 +34,11 @@ def _float(value) -> Optional[float]:
 
 
 def _kp_level(kp: Optional[float]) -> str:
+    # NOAA's G-scale: G1 Minor=Kp5, G2 Moderate=Kp6, G3 Strong=Kp7,
+    # G4 Severe=Kp8, G5 Extreme=Kp9. "Severe" is Kp>=8, not Kp>=7.
     if kp is None:
         return "unknown"
-    if kp >= 7:
+    if kp >= 8:
         return "severe storm"
     if kp >= 5:
         return "storm"
@@ -80,6 +82,14 @@ def fetch_space_weather(force: bool = False) -> dict:
         if _cache["data"] is not None:
             return {**_cache["data"], "stale": True}
         raise RuntimeError("; ".join(errors))
+    if errors and _cache["data"] is not None:
+        # Partial failure: keep whichever previous fields this round couldn't refresh,
+        # instead of overwriting known-good cached values with None/"unknown".
+        prev = _cache["data"]
+        for key in ("kp", "kp_time", "kp_level", "f107_sfu", "f107_time", "scales"):
+            if data.get(key) is None and prev.get(key) is not None:
+                data[key] = prev[key]
+        data["stale"] = True
     data["errors"] = errors or None
     data["fetched_at"] = now
     _cache.update(at=now, data=data)

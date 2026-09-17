@@ -19,6 +19,9 @@ out/
 .env.production
 .env.test
 
+# TLS certs/keys (nginx.conf, docker-compose.prod.yml - see scripts/generate-dev-cert.sh)
+/certs/
+
 # IDE / Editor
 .vscode/
 .idea/
@@ -73,6 +76,7 @@ Thumbs.db
 # Testing & Artifacts
 .coverage
 *.so
+*.pyd
 *.db
 project_documentation.md
 

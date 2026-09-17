@@ -20,3 +20,9 @@ frontend/dist/
 .env.*
 frontend/test-results/
 frontend/playwright-report/
+
+# Local runtime data (SQLite archive, CelesTrak cache) - not part of the image; created fresh
+# in the mounted /app/data volume at runtime.
+backend/data/*.db
+backend/data/config.json
+backend/data/catalog/

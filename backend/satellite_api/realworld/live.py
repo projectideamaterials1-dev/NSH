@@ -311,15 +311,28 @@ class RealWorldService:
             anchored = 0
             if sats:
                 vecs, ok = catalog.propagate([o for _, o in sats], when)
-                idx = np.array([state.sat_id_to_idx[sid] for sid, _ in sats])[ok]
-                state.sat_buffer[idx] = vecs[ok]
-                state.nominal_buffer[idx] = vecs[ok]
+                idx = np.array([state.sat_id_to_idx[sid] for sid, _ in sats])
+                state.sat_buffer[idx[ok]] = vecs[ok]
+                state.nominal_buffer[idx[ok]] = vecs[ok]
                 anchored += int(ok.sum())
+                if dt > 1e-6 and (~ok).any():
+                    # SGP4 failed for these rows (decayed/invalid elements, etc.) -
+                    # fall back to the engine's own J2 propagation across the gap
+                    # instead of leaving them frozen while the clock moves on.
+                    failed = idx[~ok]
+                    work = state.sat_buffer[failed].copy()
+                    propagate_states(work, dt)
+                    state.sat_buffer[failed] = work
             if debs:
                 vecs, ok = catalog.propagate([o for _, o in debs], when)
-                idx = np.array([state.debris_id_to_idx[did] for did, _ in debs])[ok]
-                state.debris_buffer[idx] = vecs[ok]
+                idx = np.array([state.debris_id_to_idx[did] for did, _ in debs])
+                state.debris_buffer[idx[ok]] = vecs[ok]
                 anchored += int(ok.sum())
+                if dt > 1e-6 and (~ok).any():
+                    failed = idx[~ok]
+                    work = state.debris_buffer[failed].copy()
+                    propagate_states(work, dt)
+                    state.debris_buffer[failed] = work
             state.last_telemetry_ts = when.timestamp()
             state.telemetry_version += 1
             self._update_attached()

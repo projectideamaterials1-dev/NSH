@@ -30,12 +30,34 @@ jobs:
           pip install -r requirements-dev.txt
           pip install .
       - name: Run tests
-        run: pytest tests/ -v --cov=satellite_api --cov-report=xml
+        # Benchmark tests run in their own non-blocking job (see below) so a slow CI runner
+        # can't flake the fast unit/integration suite that gates every PR.
+        run: pytest tests/ --ignore=tests/benchmark -v --cov=satellite_api --cov-report=xml --cov-fail-under=80
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
           files: ./backend/coverage.xml
         continue-on-error: true
+
+  benchmark:
+    runs-on: ubuntu-latest
+    continue-on-error: true  # informational: a slow runner shouldn't block merges
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Python deps and build C++ engine
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install .
+      - name: Screening-loop latency benchmark
+        run: pytest tests/benchmark -v -s
 
   frontend:
     runs-on: ubuntu-latest

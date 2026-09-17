@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from enum import Enum
 
+from satellite_api.config import CONFIG
+
 # ============================================================================
 # EXACT ORBITAL CONSTANTS & CONSTRAINTS (NSH 2026 Strict Compliance)
 # ============================================================================
@@ -29,6 +31,12 @@ class ManeuverType(Enum):
     RECOVERY = "RECOVERY"
     EOL_GRAVEYARD = "EOL_GRAVEYARD"
 
+# Fleet-coordination category, set explicitly at every ManeuverPlan construction site
+# (acm/fleet_coordinator.py only ever staggers STATION_KEEPING plans - never EVASION/EOL).
+STATION_KEEPING = "STATION_KEEPING"
+EVASION = "EVASION"
+EOL = "EOL"
+
 @dataclass
 class Conjunction:
     sat_idx: int
@@ -46,8 +54,10 @@ class ManeuverPlan:
     burn_time_offset_s: float   
     estimated_fuel_kg: float
     recovery_required: bool
-    confidence: float           
+    confidence: float
     delta_v_eci_dict: dict = None  # Pre-calculated sequential ECI vector
+    category: str = EVASION        # STATION_KEEPING | EVASION | EOL - default is the most
+                                    # conservative (fleet_coordinator never re-times it)
 
 class AutonomousBrain:
     def __init__(self):
@@ -204,7 +214,7 @@ class AutonomousBrain:
         use_transverse = mode == "transverse" or (mode == "auto" and absolute_future_apogee <= 9.0)
         if use_transverse and max_req_dv_trans > 0.0:
             # OPTION A: Transverse Tri-Shunt (Fuel efficient, safe inside the box)
-            req_dv = math.copysign(min(max_req_dv_trans, MAX_DELTA_V_KMS / 2.0), max_req_dv_trans)
+            req_dv = math.copysign(min(max_req_dv_trans, (CONFIG.maxDeltaV / 1000.0) / 2.0), max_req_dv_trans)
             
             v_post_1 = v_mag + req_dv
             a_post_1 = 1.0 / (2.0/r_mag - (v_post_1**2)/MU_EARTH)
@@ -220,23 +230,23 @@ class AutonomousBrain:
             t_orb_2 = (2 * math.pi) / (n_post_2 * j2_corr_2)
             t3 = t2 + t_orb_2
             
-            f1 = self.calculate_fuel_cost(req_dv, DRY_MASS + current_fuel_kg)
-            f2 = self.calculate_fuel_cost(-2.0 * req_dv, DRY_MASS + current_fuel_kg - f1)
-            f3 = self.calculate_fuel_cost(req_dv, DRY_MASS + current_fuel_kg - f1 - f2)
+            f1 = self.calculate_fuel_cost(req_dv, CONFIG.dryMass + current_fuel_kg)
+            f2 = self.calculate_fuel_cost(-2.0 * req_dv, CONFIG.dryMass + current_fuel_kg - f1)
+            f3 = self.calculate_fuel_cost(req_dv, CONFIG.dryMass + current_fuel_kg - f1 - f2)
             if current_fuel_kg < (f1 + f2 + f3): return []
 
             m_type1 = ManeuverType.PHASING_PROGRADE if req_dv > 0 else ManeuverType.PHASING_RETROGRADE
             m_type2 = ManeuverType.PHASING_RETROGRADE if req_dv > 0 else ManeuverType.PHASING_PROGRADE
             
             plans = [
-                ManeuverPlan(sat_idx, m_type1, np.array([0.0, req_dv, 0.0]), t1, f1, False, 0.99),
-                ManeuverPlan(sat_idx, m_type2, np.array([0.0, -2.0 * req_dv, 0.0]), t2, f2, False, 0.99),
-                ManeuverPlan(sat_idx, ManeuverType.RECOVERY, np.array([0.0, req_dv, 0.0]), t3, f3, False, 0.99)
+                ManeuverPlan(sat_idx, m_type1, np.array([0.0, req_dv, 0.0]), t1, f1, False, 0.99, category=EVASION),
+                ManeuverPlan(sat_idx, m_type2, np.array([0.0, -2.0 * req_dv, 0.0]), t2, f2, False, 0.99, category=EVASION),
+                ManeuverPlan(sat_idx, ManeuverType.RECOVERY, np.array([0.0, req_dv, 0.0]), t3, f3, False, 0.99, category=EVASION)
             ]
         else:
             # 🚀 OPTION B: RADIAL OVERRIDE (Survival at all costs)
             # If drifting backward pushes us past 9.0km, force an Up/Down dodge.
-            req_dv = math.copysign(min(max_req_dv_rad, MAX_DELTA_V_KMS), max_req_dv_rad)
+            req_dv = math.copysign(min(max_req_dv_rad, CONFIG.maxDeltaV / 1000.0), max_req_dv_rad)
             
             v_mag_post_radial = math.sqrt(v_mag**2 + req_dv**2)
             a_post = 1.0 / (2.0/r_mag - (v_mag_post_radial**2)/MU_EARTH)
@@ -244,14 +254,14 @@ class AutonomousBrain:
             j2_corr_post = 1.0 + (1.5 * J2 * (R_EARTH / a_post)**2 * (1.0 - 1.5 * math.sin(inc_rad)**2))
             t_orb_perturbed = (2 * math.pi) / (n_post * j2_corr_post)
             
-            t2 = t1 + t_orb_perturbed 
-            f1 = self.calculate_fuel_cost(req_dv, DRY_MASS + current_fuel_kg)
-            f2 = self.calculate_fuel_cost(-req_dv, DRY_MASS + current_fuel_kg - f1)
+            t2 = t1 + t_orb_perturbed
+            f1 = self.calculate_fuel_cost(req_dv, CONFIG.dryMass + current_fuel_kg)
+            f2 = self.calculate_fuel_cost(-req_dv, CONFIG.dryMass + current_fuel_kg - f1)
             if current_fuel_kg < (f1 + f2): return []
 
             plans = [
-                ManeuverPlan(sat_idx, ManeuverType.RADIAL_SHUNT, np.array([req_dv, 0.0, 0.0]), t1, f1, False, 0.99),
-                ManeuverPlan(sat_idx, ManeuverType.RECOVERY, np.array([-req_dv, 0.0, 0.0]), t2, f2, False, 0.99)
+                ManeuverPlan(sat_idx, ManeuverType.RADIAL_SHUNT, np.array([req_dv, 0.0, 0.0]), t1, f1, False, 0.99, category=EVASION),
+                ManeuverPlan(sat_idx, ManeuverType.RECOVERY, np.array([-req_dv, 0.0, 0.0]), t2, f2, False, 0.99, category=EVASION)
             ]
             
         if plans:
@@ -259,17 +269,22 @@ class AutonomousBrain:
         return plans
         
     def plan_eol(self, sat_idx: int, sat_state: np.ndarray, current_fuel_kg: float,
-                 reserve_kg: float = 0.1, max_dv_kms: float = MAX_DELTA_V_KMS) -> Optional[ManeuverPlan]:
+                 reserve_kg: float = 0.1, max_dv_kms: Optional[float] = None) -> Optional[ManeuverPlan]:
         """Prograde graveyard burn using the remaining propellant (keeping a small reserve)."""
+        if max_dv_kms is None:
+            # Resolved at call time (not as a default arg) so a live CONFIG.maxDeltaV
+            # change takes effect immediately instead of being frozen at import time.
+            max_dv_kms = CONFIG.maxDeltaV / 1000.0
         burnable_fuel = current_fuel_kg - reserve_kg
         if burnable_fuel <= 0 or sat_idx in self.eol_scheduled:
             return None
-        current_mass = DRY_MASS + current_fuel_kg
+        current_mass = CONFIG.dryMass + current_fuel_kg
         dv_kms = min(-I_SP * G0 * math.log(1.0 - (burnable_fuel / current_mass)) / 1000.0, max_dv_kms)
         p = ManeuverPlan(
             sat_idx=sat_idx, maneuver_type=ManeuverType.EOL_GRAVEYARD,
             delta_v_rtn=np.array([0.0, dv_kms, 0.0]), burn_time_offset_s=15.0,
-            estimated_fuel_kg=self.calculate_fuel_cost(dv_kms, current_mass), recovery_required=False, confidence=1.0
+            estimated_fuel_kg=self.calculate_fuel_cost(dv_kms, current_mass), recovery_required=False, confidence=1.0,
+            category=EOL,
         )
         self._generate_sequential_eci([p], sat_state[:3], sat_state[3:6])
         self.eol_scheduled.add(sat_idx)
@@ -288,8 +303,8 @@ class AutonomousBrain:
         for sat_idx in range(len(sat_states)):
             if sat_idx in self.eol_scheduled: continue
             
-            # Skip if currently executing a maneuver sequence
-            if sat_idx in self.locked_satellites and curr_ts < self.locked_satellites[sat_idx]:
+            # Skip if currently executing a maneuver sequence (of either kind)
+            if sat_idx in self.locked_satellites and curr_ts < self.locked_satellites[sat_idx][0]:
                 continue
                 
             # 🚀 THE BLACKOUT PATCH: Do not evaluate or lock if the satellite has no signal!
@@ -305,8 +320,9 @@ class AutonomousBrain:
             drift_vec = sat_state[:3] - nominal_states[sat_idx][:3]
             drift_km = np.linalg.norm(drift_vec)
 
-            # If the Radial Shunt leaked energy and drifted past 6km, heal it!
-            if drift_km > 6.0 and sat_fuels[sat_idx] > 5.0:
+            # If the Radial Shunt leaked energy and drifted past 60% of the configured
+            # station-keeping radius, heal it (proactively, before it exits the box).
+            if drift_km > 0.6 * CONFIG.stationKeepingRadius and sat_fuels[sat_idx] > 5.0:
                 v_hat = sat_state[3:6] / np.linalg.norm(sat_state[3:6])
                 along_track_offset = np.dot(drift_vec, v_hat)
                 
@@ -347,19 +363,19 @@ class AutonomousBrain:
                     
                     t2 = t1 + t_phasing 
                     
-                    f1 = self.calculate_fuel_cost(req_dv_kms, DRY_MASS + sat_fuels[sat_idx])
-                    f2 = self.calculate_fuel_cost(-req_dv_kms, DRY_MASS + sat_fuels[sat_idx] - f1)
+                    f1 = self.calculate_fuel_cost(req_dv_kms, CONFIG.dryMass + sat_fuels[sat_idx])
+                    f2 = self.calculate_fuel_cost(-req_dv_kms, CONFIG.dryMass + sat_fuels[sat_idx] - f1)
                     
                     m_type1 = ManeuverType.PHASING_PROGRADE if req_dv_kms > 0 else ManeuverType.PHASING_RETROGRADE
                     m_type2 = ManeuverType.PHASING_RETROGRADE if req_dv_kms > 0 else ManeuverType.PHASING_PROGRADE
                     
                     # A perfect 2-Burn Hohmann Phasing sequence
                     sk_plans = [
-                        ManeuverPlan(sat_idx, m_type1, np.array([0.0, req_dv_kms, 0.0]), t1, f1, False, 0.99),
-                        ManeuverPlan(sat_idx, m_type2, np.array([0.0, -req_dv_kms, 0.0]), t2, f2, False, 0.99)
+                        ManeuverPlan(sat_idx, m_type1, np.array([0.0, req_dv_kms, 0.0]), t1, f1, False, 0.99, category=STATION_KEEPING),
+                        ManeuverPlan(sat_idx, m_type2, np.array([0.0, -req_dv_kms, 0.0]), t2, f2, False, 0.99, category=STATION_KEEPING)
                     ]
                     self._generate_sequential_eci(sk_plans, sat_state[:3], sat_state[3:6])
-                    self.locked_satellites[sat_idx] = curr_ts + t2 + 1.0
+                    self.locked_satellites[sat_idx] = (curr_ts + t2 + 1.0, "SK")
                     plans.extend(sk_plans)
 
         # ── 2. MULTI-THREAT EVASION RESOLUTION ──
@@ -368,7 +384,12 @@ class AutonomousBrain:
             if conj.sat_idx in self.eol_scheduled: continue
             
             if conj.sat_idx in self.locked_satellites:
-                if curr_ts < self.locked_satellites[conj.sat_idx]:
+                lock_until, lock_reason = self.locked_satellites[conj.sat_idx]
+                # A routine station-keeping burn must never block an emergency evasion
+                # for up to its ~full lock duration; only another evasion in flight can.
+                # (evaluate_sequence's cooldown check is still the final safety net if
+                # the SK burn is still physically pending.)
+                if curr_ts < lock_until and lock_reason == "EVASION":
                     continue
                     
             if conj.miss_distance_km > COLLISION_THRESHOLD_KM * 1.5: continue
@@ -383,26 +404,18 @@ class AutonomousBrain:
             
             if not self.check_line_of_sight(sat_state[:3], current_time, ground_stations): continue 
             
-            # EOL Graveyard Handling
-            if sat_fuel <= 2.5:
-                burnable_fuel = sat_fuel - 0.1
-                if burnable_fuel > 0:
-                    current_mass = DRY_MASS + sat_fuel
-                    max_dv_mps = -I_SP * G0 * math.log(1.0 - (burnable_fuel / current_mass))
-                    
-                    p = ManeuverPlan(
-                        sat_idx=sat_idx, maneuver_type=ManeuverType.EOL_GRAVEYARD,
-                        delta_v_rtn=np.array([0.0, max_dv_mps / 1000.0, 0.0]), burn_time_offset_s=15.0, 
-                        estimated_fuel_kg=burnable_fuel, recovery_required=False, confidence=1.0
-                    )
-                    self._generate_sequential_eci([p], sat_state[:3], sat_state[3:6])
+            # EOL Graveyard Handling: reuses plan_eol (below) so the threshold and the
+            # per-burn Delta-v cap both track live CONFIG instead of duplicating stale
+            # hardcoded copies of that logic here.
+            if sat_fuel <= CONFIG.eolFuelThreshold:
+                p = self.plan_eol(sat_idx, sat_state, sat_fuel)
+                if p:
                     plans.append(p)
-                    self.eol_scheduled.add(sat_idx)
                 continue
             
             sequence = self.calculate_perfect_evasion_sequence(sat_idx, threats, sat_fuel, sat_state, nominal_states[sat_idx], mode=evasion_mode)
             if sequence:
-                self.locked_satellites[sat_idx] = curr_ts + sequence[-1].burn_time_offset_s + 1.0
+                self.locked_satellites[sat_idx] = (curr_ts + sequence[-1].burn_time_offset_s + 1.0, "EVASION")
                 plans.extend(sequence)
                         
         return plans

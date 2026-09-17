@@ -300,6 +300,7 @@ async def manual_maneuver(plan: ManualPlanRequest, request: Request):
             burns.append(BurnRequest(
                 burn_id=b.burn_id or f"MAN-{plan.satelliteId}-{int(ts)}-{k}",
                 ts=ts, dv_kms=tuple(float(c) for c in dv_eci), maneuver_type=plan.maneuver_type,
+                actor=getattr(request.state, "actor", "unknown"),
             ))
 
         evaluation = evaluate_sequence(state, plan.satelliteId, burns)

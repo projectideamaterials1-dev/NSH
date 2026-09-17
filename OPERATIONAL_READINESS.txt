@@ -1,0 +1,108 @@
+CRIMSON NEBULA — OPERATIONAL READINESS TRACKER
+================================================
+Scope: this is a simulation / decision-support platform. It does NOT command real
+spacecraft (see README) - burns are simulated only. This file tracks two separate
+tracks: (A) hardening it as a trustworthy ops/decision-support tool, and (B) what
+would additionally be required to ever command a real spacecraft.
+
+DONE
+----
+[Security]
+- Role-scoped API-key auth (API_KEYS_OPERATOR / API_KEYS_READONLY), constant-time
+  compare, per-request actor attribution (middleware/auth.py)
+- Per-IP sliding-window rate limiting on /api/* (RATE_LIMIT_PER_MINUTE)
+- Trusted-proxy-aware client IP resolution (X-Forwarded-For only trusted from
+  configured proxy IPs)
+- TLS termination via nginx on :443 by default, :80 redirects to :443
+  (nginx.conf); scripts/generate-dev-cert.sh for local/staging self-signed certs
+- Docker image rebuilt as non-root: 3-stage build, compiler/dev headers never
+  reach the runtime image, runs as uid 1000 (acm) (Dockerfile)
+- Redis now requires a password (REDIS_PASSWORD, compose fails fast if unset),
+  wired into both the redis service and the backend's REDIS_URL
+  (docker-compose.prod.yml)
+- .env.example added documenting every compose variable; certs/ and .env gitignored
+
+[Reliability]
+- Redis-backed durable state manager with leader election across replicas
+  (state_redis.py) + LeaderGateMiddleware rejects mutations on non-leader replicas
+- Async SQLite mission archive (db.py): maneuvers + events survive restarts,
+  crash-orphaned pending maneuvers detected and flagged on startup for review
+- REQUIRE_DURABLE_STATE=1 option to refuse startup rather than silently run
+  in-memory-only if Redis is unreachable
+
+[Testing / CI]
+- pytest suite with 80% coverage gate blocking merges
+- Dedicated fault-injection, property-based, and screening-latency benchmark
+  test suites (tests/integration/test_fault_injection.py,
+  tests/unit/test_properties.py, tests/benchmark/)
+- Frontend unit tests (Vitest) + Playwright e2e in CI
+- CI builds and pushes a versioned Docker image to GHCR on tagged releases
+
+DONE (cont.)
+------------
+[Docker bring-up — verified 2026-09-17]
+- Docker Desktop now starts; wsl --install fix from the prior blocker worked.
+- docker compose -f docker-compose.prod.yml build succeeds (3-stage build, backend
+  image built as nsh-backend:latest).
+- Stack brought up (redis, backend, nginx) via docker compose ... up -d; all three
+  containers Started, backend reports "healthy" on its container healthcheck.
+- Verified: GET https://localhost/health -> 200 through nginx TLS on :443
+  (self-signed dev cert from scripts/generate-dev-cert.sh).
+- Verified: GET http://localhost/health -> 301 redirect to https (nginx.conf).
+- Verified: `docker exec nsh-backend-1 id` -> uid=1000(acm) gid=1000(acm), i.e.
+  the backend process runs non-root as designed.
+- Local-only .env created (gitignored) with a generated REDIS_PASSWORD; matches
+  .env.example defaults otherwise (REALWORLD_FLEET left empty, so no live
+  satellite fleet is autoloaded on startup - engine_ready/live report false until
+  a fleet source key is set, which is expected default behavior, not a bug).
+- Noted in backend logs: mission archive had 20 pending maneuvers with no recorded
+  outcome from a prior ungraceful shutdown of local demo data, correctly flagged
+  on startup per the orphan-detection feature - needs operator review before
+  reuse, or wipe backend/data for a clean slate.
+
+TO DO — TRACK A: production decision-support tool
+---------------------------------------------------
+[Security]
+- API key rotation process/tooling (currently manual env var rotation only)
+- Real per-user identity/audit trail (today: shared operator/readonly secrets,
+  audit trail is just "key:<8-char prefix>")
+- Container/dependency vulnerability scanning (Trivy/Grype) in CI
+- Dependabot or equivalent for dependency updates
+- Secrets-scanning in CI (catch committed keys/tokens)
+
+[Reliability]
+- Redis is a single container / single point of failure - needs Sentinel or
+  cluster (or managed Redis with failover) for real HA
+- No tested backup/restore procedure for the SQLite archive or Redis snapshots -
+  "the volume exists" is not a backup strategy until restored from once
+- CI/CD `deploy` job is a placeholder (echo only) - no real deployment automation
+- No CPU/memory resource limits on containers in docker-compose.prod.yml
+
+[Observability]
+- No metrics export (Prometheus/OpenTelemetry), dashboards, or alerting
+- No on-call runbooks for: Redis unreachable, non-leader replica stuck, orphaned
+  pending maneuvers found on startup, screening-loop latency regressions
+
+[Data trust — important for a decision-support tool specifically]
+- This engine's own CDM screening (RK4+J2, SGP4 refinement) is demo/simulation
+  fidelity, not certified SSA - cross-validate against an authoritative source
+  (Space-Track / 18th SDS, or a commercial SSA provider) before anyone makes a
+  real decision off this tool's output; say so explicitly in the UI/docs
+- CelesTrak/NOAA feeds have no SLA - no fallback/alerting yet if they go stale or
+  return corrupted data that silently degrades screening accuracy
+
+TO DO — TRACK B: actually commanding a real spacecraft
+---------------------------------------------------------
+(Not a software checklist - a different, much larger undertaking)
+- Real TT&C ground-link integration (CCSDS command/telemetry, per-spacecraft
+  command authentication/encryption) - nothing here has a concept of a real uplink
+- Regulatory/licensing: spectrum authorization, national space-agency sign-off,
+  export-control review, liability insurance
+- Safety certification / V&V to mission-critical software standards, redundant
+  or independently-verified command paths
+- Mandatory human-in-the-loop confirmation for any irreversible action
+- Robust telemetry validation against corruption/spoofing; documented fail-safe
+  behavior if the ground segment or link degrades
+- 24/7 trained operations staff and runbooks
+- Realistic path if this is ever pursued: partner with an existing licensed
+  ground-station/TT&C provider rather than building the link in-house

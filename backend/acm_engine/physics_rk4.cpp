@@ -23,10 +23,16 @@ constexpr double J2 = 1.08263e-3;
 constexpr double MAX_INTEGRATION_STEP = 1.0; 
 constexpr double COLLISION_THRESHOLD = 0.100;
 
-// 🚀 SCALED GRID TUNING: Reduces 30 outer loops down to 12. 
-// At 5.0s, max travel is 75km. A 3x3 check of 80km cells covers 240km. Mathematically flawless.
-constexpr double CHUNK_DT = 5.0;       
-constexpr double HASH_CELL_SIZE = 80.0; 
+// Spatial-hash broad phase: for a uniform grid, checking the 3x3x3 block of
+// cells around an object's own cell only catches all pairs whose start-of-chunk
+// separation is <= HASH_CELL_SIZE. Two LEO objects on opposing near-polar orbits
+// can close at up to ~2x orbital velocity (~15.8 km/s for a ~7.9 km/s circular
+// LEO speed), so over CHUNK_DT=5.0s the worst-case approach distance is
+// ~79 km. HASH_CELL_SIZE must stay comfortably above that bound or
+// fast-closing conjunctions can be silently missed; 100 km keeps ~25% margin
+// (a previous 80 km value left <2% margin against that same 79 km bound).
+constexpr double CHUNK_DT = 5.0;
+constexpr double HASH_CELL_SIZE = 100.0;
 constexpr int HASH_TABLE_SIZE = 524287; // Large prime for flat hashing
 constexpr double J2_CONST = 1.5 * J2 * MU_EARTH * R_EARTH * R_EARTH;
 
@@ -88,12 +94,15 @@ inline void rk4_step(double* state, const double dt) {
 
 void propagate_in_place(double* states, const size_t n_objects, const double dt_total) {
     if (dt_total <= 0.0 || n_objects == 0) return;
-    const int num_steps = std::ceil(dt_total / MAX_INTEGRATION_STEP);
+    const int num_steps = static_cast<int>(std::ceil(dt_total / MAX_INTEGRATION_STEP));
     if (num_steps == 0) return;
     const double dt_internal = dt_total / num_steps;
-    
+    const long long n = static_cast<long long>(n_objects);
+
+    // MSVC's OpenMP (2.0) requires the loop control variable to be a signed
+    // integral type; size_t (unsigned) fails to compile there even though GCC/Clang accept it.
     #pragma omp parallel for schedule(static)
-    for (size_t i = 0; i < n_objects; ++i) {
+    for (long long i = 0; i < n; ++i) {
         double* obj_state = states + (i * 6);
         for (int step = 0; step < num_steps; ++step) {
             rk4_step(obj_state, dt_internal);
@@ -198,14 +207,17 @@ process_conjunctions(
     while (t_elapsed < dt_seconds) {
         double current_dt = std::min(CHUNK_DT, dt_seconds - t_elapsed);
         
+        const long long n_sats_signed = static_cast<long long>(n_sats);
+        const long long n_debris_signed = static_cast<long long>(n_debris);
+
         #pragma omp parallel for schedule(static)
-        for(size_t i = 0; i < n_sats; i++) {
+        for(long long i = 0; i < n_sats_signed; i++) {
             prev_pos[i*3]   = sat_ptr[i*6];
             prev_pos[i*3+1] = sat_ptr[i*6+1];
             prev_pos[i*3+2] = sat_ptr[i*6+2];
         }
         #pragma omp parallel for schedule(static)
-        for(size_t i = 0; i < n_debris; i++) {
+        for(long long i = 0; i < n_debris_signed; i++) {
             prev_pos[(n_sats+i)*3]   = debris_ptr[i*6];
             prev_pos[(n_sats+i)*3+1] = debris_ptr[i*6+1];
             prev_pos[(n_sats+i)*3+2] = debris_ptr[i*6+2];
@@ -221,7 +233,7 @@ process_conjunctions(
         for(size_t i = 0; i < n_total; i++) {
             unsigned int h = get_hash_idx(prev_pos[i*3], prev_pos[i*3+1], prev_pos[i*3+2]);
             next_node[i] = head[h];
-            head[h] = i;
+            head[h] = static_cast<int>(i);
         }
 
         // 🚀 THE FIX: Multithread the Collision Checking! 

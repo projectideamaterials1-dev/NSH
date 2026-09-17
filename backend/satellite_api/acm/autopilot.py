@@ -18,11 +18,14 @@ uplinked as soon as a threatened satellite enters ground-station contact.
 import asyncio
 import logging
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Dict, Optional
+
+import numpy as np
 
 from satellite_api.acm.brain import AutonomousBrain, Conjunction
 from satellite_api.acm.conjunctions import screen
+from satellite_api.acm.fleet_coordinator import coordinate_fleet
 from satellite_api.acm.plugins import get_plugin
 from satellite_api.acm.scheduler import BurnRequest, evaluate_sequence, queue_burns
 from satellite_api.config import CONFIG
@@ -35,6 +38,12 @@ logger = logging.getLogger(__name__)
 EVASION_TYPES = ("PHASING_PROGRADE", "PHASING_RETROGRADE", "RADIAL_SHUNT")
 PLAN_INTERVAL_S = 20.0          # sim seconds between planner-only passes
 REJECT_EVENT_THROTTLE_S = 600.0  # repeat an identical rejection event at most this often (sim seconds)
+DURATION_HISTORY_LEN = 20       # rolling window of recent screen durations, for /api/metrics
+# Once a screen has taken as long as the cadence it's meant to run at, the loop is provably
+# falling behind (the next screen is already "due" before this one finished). From then on,
+# bound the (expensive) refinement pass to priority + closest candidates - see conjunctions.screen -
+# until a screen completes quickly enough to prove it has recovered.
+MAX_REFINE_WHEN_OVERLOADED = 1000
 
 
 class Autopilot:
@@ -46,6 +55,21 @@ class Autopilot:
 
     def reset(self):
         self.brain = AutonomousBrain()
+
+    def snapshot_brain(self) -> dict:
+        """JSON-serializable capture of in-memory planner state not held by StateManager,
+        for RedisStateManager.register_snapshot_hook() - without it, a restart forgets which
+        satellites are mid-maneuver-lock or already EOL-scheduled and could double-plan them."""
+        return {
+            "locked_satellites": {str(idx): list(value) for idx, value in self.brain.locked_satellites.items()},
+            "eol_scheduled": sorted(self.brain.eol_scheduled),
+        }
+
+    def restore_brain(self, payload: dict):
+        self.brain.locked_satellites = {
+            int(idx): tuple(value) for idx, value in payload.get("locked_satellites", {}).items()
+        }
+        self.brain.eol_scheduled = set(payload.get("eol_scheduled", []))
 
     def plan_and_schedule(self, state) -> Dict[str, int]:
         """Runs the planner on the current state and queues validated burns. Caller holds the lock."""
@@ -86,6 +110,21 @@ class Autopilot:
                 if p:
                     plans.append(p)
 
+        # ── Fleet-wide coordination: prioritize + stagger clustered station-keeping burns. ──
+        # Never re-times EVASION/EOL plans - see acm/fleet_coordinator.py's module docstring
+        # for why staggering (delay-only) can't break evaluate_sequence's validation.
+        summary["sk_burns_staggered"] = 0
+        if CONFIG.fleetStaggerEnabled and plans:
+            drift = np.linalg.norm(sat_states[:, :3] - nominal[:, :3], axis=1)
+            coordination = coordinate_fleet(
+                plans, drift_km=drift, fuels=fuels, conjunctions=conjunctions,
+                now_ts=now_ts, locked_satellites=self.brain.locked_satellites,
+            )
+            summary["sk_burns_staggered"] = coordination.staggered_count
+            for note in coordination.notes:
+                state.emit("info", "fleet_coordinator", note.message,
+                           satellite_id=state.idx_to_sat_id.get(note.sat_idx), **note.data)
+
         by_sat = defaultdict(list)
         for p in plans:
             by_sat[p.sat_idx].append(p)
@@ -99,7 +138,7 @@ class Autopilot:
                 burns.append(BurnRequest(
                     burn_id=f"AUTO-{sid}-{p.maneuver_type.value}-{int(now_ts + p.burn_time_offset_s)}-{k}",
                     ts=now_ts + p.burn_time_offset_s, dv_kms=(dv["x"], dv["y"], dv["z"]),
-                    maneuver_type=p.maneuver_type.value,
+                    maneuver_type=p.maneuver_type.value, actor="autopilot",
                 ))
             evaluation = evaluate_sequence(state, sid, burns)
             is_evasion = any(b.maneuver_type in EVASION_TYPES for b in burns)
@@ -146,6 +185,8 @@ class ConjunctionService:
         self._last_plan_ts = None
         self._last_versions = (-1, -1)
         self.refiner = None   # realworld.live.Sgp4Refiner once a real catalog is loaded
+        self._duration_history: deque = deque(maxlen=DURATION_HISTORY_LEN)
+        self._falling_behind = False
 
     @property
     def _cycle_lock(self) -> asyncio.Lock:
@@ -173,14 +214,26 @@ class ConjunctionService:
                 versions = (state.telemetry_version, state.burn_version)
                 refiner = self.refiner
                 refine_snapshot = refiner.snapshot() if refiner else None
+                # Falling-behind decision is made from the *previous* cycle's measured duration,
+                # applied to this cycle - see MAX_REFINE_WHEN_OVERLOADED.
+                if self._falling_behind:
+                    priority_pairs = frozenset(
+                        (c["satellite_id"], c["object_id"]) for c in state.cdms.open() if c["risk"] != "WATCH"
+                    )
+                    max_refine = MAX_REFINE_WHEN_OVERLOADED
+                else:
+                    priority_pairs = None
+                    max_refine = None
 
             t0 = time.perf_counter()
             coarse_km = CONFIG.cdmWarningKm + (refiner.margin_km(horizon) if refiner else 0.0)
             predictions = await asyncio.to_thread(
-                screen, sats, debris, sat_ids, deb_ids, start_ts, horizon, coarse_km, self.engine)
+                screen, sats, debris, sat_ids, deb_ids, start_ts, horizon, coarse_km, self.engine,
+                priority_pairs, max_refine)
             if refiner:
                 predictions = await asyncio.to_thread(refiner.refine, predictions, refine_snapshot, CONFIG.cdmWarningKm)
             elapsed = time.perf_counter() - t0
+            self._duration_history.append(elapsed)
             if state.attached_pairs:
                 predictions = [p for p in predictions if not state.is_attached(p["satellite_id"], p["object_id"])]
 
@@ -191,11 +244,29 @@ class ConjunctionService:
                 plan_summary = self.autopilot.plan_and_schedule(state) if do_plan else {}
                 if do_plan:
                     self._last_plan_ts = state.now_ts
+
+                interval = CONFIG.cdmScreenIntervalSeconds
+                overrun_ratio = (elapsed / interval) if interval > 0 else 0.0
+                now_falling_behind = overrun_ratio >= 1.0
+                if now_falling_behind and not self._falling_behind:
+                    state.emit("crit", "system",
+                               f"Conjunction screening is falling behind: the last screen took {elapsed:.1f}s "
+                               f"against a {interval:.0f}s cadence. Refinement is now bounded to the highest-"
+                               f"risk candidates per cycle until it recovers.")
+                elif self._falling_behind and not now_falling_behind:
+                    state.emit("ok", "system",
+                               f"Conjunction screening back within budget ({elapsed:.1f}s of a {interval:.0f}s cadence).")
+                self._falling_behind = now_falling_behind
+
                 state.last_screen = {
                     "screened_at": iso_z(start_ts), "horizon_s": horizon, "warning_km": CONFIG.cdmWarningKm,
                     "duration_s": round(elapsed, 3), "predictions": len(predictions), **stats,
                     "engine": ENGINE_NAME, "autopilot": do_plan, **plan_summary,
                     "propagator": "SGP4 refinement" if refiner else "RK4 + J2",
+                    "avg_duration_s": round(sum(self._duration_history) / len(self._duration_history), 3),
+                    "max_duration_s": round(max(self._duration_history), 3),
+                    "overrun_ratio": round(overrun_ratio, 3),
+                    "falling_behind": now_falling_behind,
                 }
                 self._last_sim_ts = start_ts
                 # Versions as of the copy: changes made meanwhile (including burns queued just now)
@@ -229,7 +300,7 @@ class ConjunctionService:
         low_fuel = state.sat_fuel[:n] <= CONFIG.eolFuelThreshold
         if low_fuel.any() and any(state.idx_to_sat_id[int(i)] not in state.eol_satellites for i in low_fuel.nonzero()[0]):
             return True
-        return bool((state.drift_km() > 6.0).any())
+        return bool((state.drift_km() > 0.6 * CONFIG.stationKeepingRadius).any())
 
     async def plan_cycle(self) -> dict:
         state = self.state

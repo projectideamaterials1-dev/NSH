@@ -251,7 +251,17 @@ docker build -t crimson-nebula:latest .
 docker run -d --name crimson-nebula -p 8000:8000 crimson-nebula:latest
 ```
 
-The Dockerfile builds the frontend in a `node:22-alpine` stage, then uses `ubuntu:22.04` to compile the C++ engine and run Uvicorn on `0.0.0.0:8000`, which serves both the API and the dashboard (http://localhost:8000).
+The Dockerfile builds the frontend in a `node:22-alpine` stage, compiles the C++ engine in an `ubuntu:22.04` builder stage, then copies the result into a slim `ubuntu:22.04` runtime stage (no compiler/dev headers) that runs Uvicorn as a non-root user (`acm`, uid 1000) on `0.0.0.0:8000`, serving both the API and the dashboard (http://localhost:8000). A bind-mounted `/app/data` must be writable by uid 1000 (`chown -R 1000:1000 backend/data`).
+
+### Production stack (`docker-compose.prod.yml`)
+
+```bash
+cp .env.example .env      # set REDIS_PASSWORD (openssl rand -hex 32) and any API keys
+./scripts/generate-dev-cert.sh   # local/staging only - use a real cert for production
+docker compose -f docker-compose.prod.yml up -d
+```
+
+This brings up the backend, a password-protected Redis (`REDIS_PASSWORD`, required), and an nginx edge proxy that terminates TLS on `:443` and redirects `:80` (`nginx.conf`, certs mounted from `./certs`). See `.env.example` for every variable the stack reads.
 
 ### Configuration
 

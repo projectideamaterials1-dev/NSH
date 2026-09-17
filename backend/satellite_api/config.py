@@ -30,11 +30,25 @@ class SimConfig:
     cdmHorizonSeconds: float = 10800.0   # look-ahead (3 h)
     cdmScreenIntervalSeconds: float = 600.0  # sim seconds between automatic screens
 
+    # Fleet-wide coordination (acm/fleet_coordinator.py): staggers station-keeping burns
+    # that would otherwise all fire at the same hardcoded offset, ordered by priority score.
+    fleetStaggerEnabled: bool = True
+    fleetStaggerWindowS: float = 5.0        # SK burns within this of each other's t1 form one cluster
+    fleetStaggerGapS: float = 20.0          # spacing between staggered SK burns within a cluster
+    fleetStaggerMaxDelayS: float = 300.0    # cap on how far a clustered SK burn may be pushed back
+    fleetPriorityRiskWeight: float = 0.5
+    fleetPriorityFuelWeight: float = 0.25
+    fleetPriorityDriftWeight: float = 0.15
+    fleetPriorityTcaWeight: float = 0.10
+
     LIMITS = {
         "dryMass": (100.0, 5000.0), "initialFuel": (1.0, 1000.0), "stationKeepingRadius": (0.5, 100.0),
         "maxDeltaV": (0.1, 100.0), "cooldownSeconds": (0.0, 7200.0), "eolFuelThreshold": (0.0, 100.0),
         "lowFuelWarning": (0.0, 500.0), "cdmWarningKm": (0.1, 50.0), "cdmHorizonSeconds": (600.0, 172800.0),
         "cdmScreenIntervalSeconds": (60.0, 86400.0),
+        "fleetStaggerWindowS": (0.0, 600.0), "fleetStaggerGapS": (1.0, 600.0), "fleetStaggerMaxDelayS": (0.0, 3600.0),
+        "fleetPriorityRiskWeight": (0.0, 1.0), "fleetPriorityFuelWeight": (0.0, 1.0),
+        "fleetPriorityDriftWeight": (0.0, 1.0), "fleetPriorityTcaWeight": (0.0, 1.0),
     }
     STRATEGIES = ("Auto", "TriShunt", "RadialOverride")
 

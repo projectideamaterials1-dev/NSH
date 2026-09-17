@@ -26,6 +26,7 @@ class BurnRequest:
     ts: float                 # POSIX seconds
     dv_kms: tuple             # ECI (x, y, z) km/s
     maneuver_type: str = "EXTERNAL"
+    actor: str = "unknown"    # who/what requested this burn, for the audit trail
 
     @property
     def dv_mps(self) -> float:
@@ -119,7 +120,10 @@ def evaluate_sequence(state, sat_id: str, burns: List[BurnRequest], check_los: b
 
 def queue_burns(state, sat_id: str, burns: List[BurnRequest], source: str = "api") -> None:
     for b in burns:
-        state.maneuver_queue.append((b.ts, sat_id, b.dv_kms[0], b.dv_kms[1], b.dv_kms[2], b.burn_id, b.maneuver_type))
+        state.maneuver_queue.append(
+            (b.ts, sat_id, b.dv_kms[0], b.dv_kms[1], b.dv_kms[2], b.burn_id, b.maneuver_type, b.actor)
+        )
+        state.notify_pending_maneuver(b.ts, sat_id, b.dv_kms[0], b.dv_kms[1], b.dv_kms[2], b.burn_id)
     state.burn_version += 1
     for b in burns:
         state.emit("info", "maneuver", f"Burn {b.burn_id} scheduled ({b.maneuver_type.replace('_', ' ').lower()}, "

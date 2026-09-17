@@ -10,6 +10,7 @@ Enabled by default at <DATA_DIR>/acm_archive.db; set ACM_ARCHIVE=0 to disable or
 ACM_DB_PATH to choose the file.
 """
 import json
+import logging
 import os
 import queue
 import sqlite3
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import List, Optional
 
 from satellite_api.timeutils import data_dir
+
+logger = logging.getLogger(__name__)
 
 DB_PATH = os.environ.get("ACM_DB_PATH") or str(data_dir() / "acm_archive.db")
 
@@ -46,6 +49,7 @@ SCHEMA = [
         lat REAL,
         lon REAL,
         reason TEXT,
+        actor TEXT,
         recorded_at TEXT,
         PRIMARY KEY (burn_id, status)
     )
@@ -82,6 +86,11 @@ def init_db(path: Optional[str] = None):
     cursor = conn.cursor()
     for statement in SCHEMA:
         cursor.execute(statement)
+    # Additive migration for databases created before the actor column existed.
+    try:
+        cursor.execute("ALTER TABLE maneuver_history ADD COLUMN actor TEXT")
+    except sqlite3.OperationalError:
+        pass  # already has the column
     conn.commit()
     conn.close()
 
@@ -156,21 +165,40 @@ class MissionArchive:
                         self._write_maneuver(conn, payload)
                     elif kind == "event":
                         self._write_event(conn, payload)
+                    elif kind == "pending_maneuver":
+                        self._write_pending(conn, payload)
                     conn.commit()
-            except sqlite3.Error:
+            except Exception:
+                # A single malformed payload must never kill this thread: doing so
+                # silently stops all future persistence, leaks the input queue
+                # (handle() keeps enqueueing forever), and hangs flush()/every
+                # archive read for its full timeout from then on.
+                logger.exception("Mission archive: dropping unwritable %s payload", kind)
                 conn.rollback()
         conn.close()
 
     @staticmethod
-    def _write_maneuver(conn, m: dict):
+    def _write_pending(conn, p: dict):
+        conn.execute('''
+            INSERT OR REPLACE INTO pending_maneuvers (burn_id, ts, sat_id, dvx, dvy, dvz)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (p.get("burn_id"), p.get("ts"), p.get("sat_id"), p.get("dvx"), p.get("dvy"), p.get("dvz")))
+
+    _TERMINAL_STATUSES = ("executed", "rejected", "cancelled")
+
+    @classmethod
+    def _write_maneuver(cls, conn, m: dict):
         dv = m.get("deltaV_vector") or {}
         conn.execute('''
             INSERT OR REPLACE INTO maneuver_history
-            (burn_id, satellite_id, burnTime, dvx, dvy, dvz, status, maneuver_type, delta_v_mps, fuel_kg, lat, lon, reason, recorded_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (burn_id, satellite_id, burnTime, dvx, dvy, dvz, status, maneuver_type, delta_v_mps, fuel_kg, lat, lon, reason, actor, recorded_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (m.get("burn_id"), m.get("satellite_id"), m.get("burnTime"), dv.get("x"), dv.get("y"), dv.get("z"),
               m.get("status"), m.get("maneuver_type"), m.get("delta_v_magnitude"), m.get("fuel_consumed_kg"),
-              m.get("lat"), m.get("lon"), m.get("reason"), datetime.now(timezone.utc).isoformat()))
+              m.get("lat"), m.get("lon"), m.get("reason"), m.get("actor"), datetime.now(timezone.utc).isoformat()))
+        if m.get("status") in cls._TERMINAL_STATUSES:
+            # The burn reached a terminal outcome - it's no longer "pending" for reconciliation.
+            conn.execute("DELETE FROM pending_maneuvers WHERE burn_id = ?", (m.get("burn_id"),))
 
     def _write_event(self, conn, e: dict):
         conn.execute('''
@@ -198,6 +226,30 @@ class MissionArchive:
         args.append(limit)
         with self._read_lock:
             return [dict(r) for r in self._reader().execute(sql, args).fetchall()]
+
+    def reconcile_on_startup(self) -> List[dict]:
+        """Returns pending_maneuvers rows with no terminal maneuver_history record - i.e. burns
+        that were accepted but whose outcome (executed/rejected/cancelled) was never recorded,
+        most likely because the process crashed between the two. Full simulation state (position,
+        fuel, etc.) can't be reconstructed from SQLite alone, so these need manual/operator review
+        rather than automatic replay."""
+        self.flush()
+        with self._read_lock:
+            rows = self._reader().execute('''
+                SELECT p.* FROM pending_maneuvers p
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM maneuver_history h
+                    WHERE h.burn_id = p.burn_id AND h.status IN ('executed', 'rejected', 'cancelled')
+                )
+            ''').fetchall()
+        orphans = [dict(r) for r in rows]
+        if orphans:
+            logger.warning(
+                "Mission archive: %d pending maneuver(s) have no recorded outcome "
+                "(likely an ungraceful shutdown) and need operator review: %s",
+                len(orphans), [o["burn_id"] for o in orphans],
+            )
+        return orphans
 
     def events(self, level: Optional[str] = None, satellite_id: Optional[str] = None, limit: int = 200) -> List[dict]:
         self.flush()

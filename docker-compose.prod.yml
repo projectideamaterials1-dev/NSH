@@ -1,27 +1,55 @@
 services:
+  # Single-replica by default. To run N replicas for HA, `docker compose up --scale backend=N`:
+  # all replicas share REDIS_URL and elect one leader (state_redis.py) to run the
+  # autopilot/screening loops; the rest serve reads and reject mutating requests with 503
+  # (LeaderGateMiddleware) so a client hitting a non-leader replica retries instead of silently
+  # losing the write. Each replica should still get its own ACM_DB_PATH/data volume - the SQLite
+  # archive is not a shared multi-writer store, only Redis is.
   backend:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    # No host port mapping: nginx is the only ingress (TLS on :443), so plain HTTP on :8000
+    # can't be reached directly from outside the compose network, bypassing TLS. Add back
+    # "8000:8000" temporarily if you need to hit the backend directly for local debugging.
+    expose:
+      - "8000"
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
-      # Leave empty to disable API-key auth; when set, clients must send X-API-Key
-      # (build the dashboard with VITE_API_KEY to match).
-      - API_KEY=${API_KEY:-}
+      # Leave both empty to disable API-key auth entirely. Operator keys can do everything
+      # (including commanding maneuvers); readonly keys can only GET. Comma-separated for
+      # multiple operators/keys (rotate by adding a new one before removing the old).
+      # (build the dashboard with VITE_API_KEY set to one of the operator keys to match.)
+      - API_KEYS_OPERATOR=${API_KEYS_OPERATOR:-}
+      - API_KEYS_READONLY=${API_KEYS_READONLY:-}
       - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-0}
-      # Mission state survives restarts: snapshots in Redis, history in the SQLite archive under /app/data
-      - REDIS_URL=redis://redis:6379/0
+      # Only trust X-Forwarded-For/X-Real-IP (for rate limiting) from these peer IPs - set to
+      # the nginx service's address if running behind it, otherwise leave empty.
+      - TRUSTED_PROXY_IPS=${TRUSTED_PROXY_IPS:-}
+      # Comma-separated allow-list for browser-based clients on a different origin than this
+      # backend; leave empty for same-origin only (the bundled dashboard needs no CORS grant).
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+      # Mission state survives restarts: snapshots in Redis, history in the SQLite archive under /app/data.
+      # REQUIRE_DURABLE_STATE=1 refuses to start rather than silently running in-memory-only if
+      # Redis is unreachable - appropriate for a real deployment, off by default for local/demo use.
+      # REDIS_PASSWORD must be set in your .env (see .env.example) - compose fails fast below
+      # rather than silently starting Redis unauthenticated.
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in your .env file}@redis:6379/0
       - REDIS_SAVE_INTERVAL_S=10
+      - REQUIRE_DURABLE_STATE=${REQUIRE_DURABLE_STATE:-0}
+      - LEADER_LOCK_TTL_S=${LEADER_LOCK_TTL_S:-15}
+      - LEADER_RENEW_INTERVAL_S=${LEADER_RENEW_INTERVAL_S:-5}
       - ACM_ARCHIVE=1
       - AUTOPILOT=${AUTOPILOT:-1}
       # Real-world data on startup (CelesTrak source keys, see GET /api/catalog/sources); empty = off
       - REALWORLD_FLEET=${REALWORLD_FLEET:-}
       - REALWORLD_OBJECTS=${REALWORLD_OBJECTS:-fengyun-1c-debris,cosmos-2251-debris,iridium-33-debris}
       - REALWORLD_LIVE=${REALWORLD_LIVE:-1}
+    # Runs as uid/gid 1000 (non-root, see Dockerfile) - the bind-mounted host directory must be
+    # writable by that uid, e.g. `mkdir -p backend/data && chown -R 1000:1000 backend/data` (or
+    # `chmod -R o+rwX backend/data` if you can't chown on your host) before first start.
     volumes:
       - ./backend/data:/app/data
     healthcheck:
@@ -35,18 +63,27 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    # Not published to the host - only reachable from other containers on this compose
+    # network - but still requires a password so a compromised/misconfigured neighbor
+    # container (or a later change that does publish the port) can't read/write mission
+    # state or the leader-election lock unauthenticated.
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in your .env file}
     volumes:
       - redis_data:/data
 
-  # Optional TLS/edge proxy on port 80 in front of the backend (which already serves the UI).
+  # Optional edge proxy in front of the backend (which already serves the UI on its own).
+  # nginx.conf terminates TLS on 443 and redirects plain :80 to it - run
+  # scripts/generate-dev-cert.sh for a local/staging self-signed cert, or mount a real
+  # certificate (e.g. certbot/Let's Encrypt) at the same ./certs paths for production.
   nginx:
     image: nginx:alpine
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
     depends_on:
       - backend
 

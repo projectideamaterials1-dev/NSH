@@ -4,3 +4,4 @@ pytest-asyncio>=0.23
 pytest-cov>=4.1
 httpx>=0.25
 requests>=2.31
+hypothesis>=6.100

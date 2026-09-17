@@ -43,8 +43,8 @@ EVASION_TYPES = {"PHASING_PROGRADE", "PHASING_RETROGRADE", "RADIAL_SHUNT"}
 
 logger = logging.getLogger(__name__)
 
-# Queue entry: (burn_ts, sat_id, dvx, dvy, dvz, burn_id, maneuver_type)
-Maneuver = Tuple[float, str, float, float, float, str, str]
+# Queue entry: (burn_ts, sat_id, dvx, dvy, dvz, burn_id, maneuver_type, actor)
+Maneuver = Tuple[float, str, float, float, float, str, str, str]
 
 
 def _unpack_maneuver(maneuver: tuple) -> Maneuver:
@@ -54,7 +54,10 @@ def _unpack_maneuver(maneuver: tuple) -> Maneuver:
         burn_ts, sat_id, dvx, dvy, dvz = maneuver
         burn_id = f"PENDING_{sat_id}_{int(burn_ts)}"
     maneuver_type = maneuver[6] if len(maneuver) >= 7 else "EXTERNAL"
-    return float(burn_ts), sat_id, float(dvx), float(dvy), float(dvz), burn_id, maneuver_type
+    # Older/short queue tuples (pre-actor-tracking, or the low-level test helper) have no
+    # actor - "unknown" rather than a fabricated identity.
+    actor = maneuver[7] if len(maneuver) >= 8 else "unknown"
+    return float(burn_ts), sat_id, float(dvx), float(dvy), float(dvz), burn_id, maneuver_type, actor
 
 
 def fuel_for_burn(dv_mps: float, wet_mass_kg: float) -> float:
@@ -186,6 +189,12 @@ class StateManager:
         self.events.append(event)
         self._notify("event", event)
         return event
+
+    def notify_pending_maneuver(self, ts: float, sat_id: str, dvx: float, dvy: float, dvz: float, burn_id: str):
+        """Records a burn the instant it's queued (before execution) - so a crash between
+        'accepted' and 'executed' still leaves a durable trace for reconciliation on restart."""
+        self._notify("pending_maneuver", {"ts": ts, "sat_id": sat_id, "dvx": dvx, "dvy": dvy, "dvz": dvz,
+                                           "burn_id": burn_id})
 
     def _notify(self, kind: str, payload: dict):
         for listener in self.listeners:
@@ -408,7 +417,7 @@ class StateManager:
         self._notify("maneuver", entry)
 
     def _maneuver_dict(self, maneuver: Maneuver, status: str, **extra) -> dict:
-        burn_ts, sat_id, dvx, dvy, dvz, burn_id, maneuver_type = maneuver
+        burn_ts, sat_id, dvx, dvy, dvz, burn_id, maneuver_type, actor = maneuver
         entry = {
             "burn_id": burn_id,
             "satellite_id": sat_id,
@@ -423,6 +432,7 @@ class StateManager:
             "lat": None,
             "lon": None,
             "status": status,
+            "actor": actor,
         }
         entry.update(extra)
         return entry
@@ -441,7 +451,7 @@ class StateManager:
 
         for raw in self.maneuver_queue:
             maneuver = _unpack_maneuver(raw)
-            burn_ts, sat_id, dvx, dvy, dvz, burn_id, maneuver_type = maneuver
+            burn_ts, sat_id, dvx, dvy, dvz, burn_id, maneuver_type, _actor = maneuver
             if burn_ts > target_time_ts + 0.1:
                 remaining_queue.append(maneuver)
                 continue
@@ -512,12 +522,12 @@ class StateManager:
             return self._execute_due_maneuvers(target_time_ts)
 
     async def add_maneuver(self, maneuver: tuple):
-        """Adds a maneuver to the queue. maneuver: (ts, sat_id, dvx, dvy, dvz, burn_id[, maneuver_type])"""
+        """Adds a maneuver to the queue. maneuver: (ts, sat_id, dvx, dvy, dvz, burn_id[, maneuver_type[, actor]])"""
         async with self.lock:
             self.maneuver_queue.append(_unpack_maneuver(maneuver))
             self.burn_version += 1
 
-    async def cancel_maneuver(self, burn_id: str) -> bool:
+    async def cancel_maneuver(self, burn_id: str, actor: str = "unknown") -> bool:
         """Cancels a pending maneuver by burn_id."""
         async with self.lock:
             cancelled = [m for m in self.maneuver_queue if len(m) >= 6 and m[5] == burn_id]
@@ -526,8 +536,11 @@ class StateManager:
             self.maneuver_queue = [m for m in self.maneuver_queue if not (len(m) >= 6 and m[5] == burn_id)]
             self.burn_version += 1
             maneuver = _unpack_maneuver(cancelled[0])
-            self._record(self._maneuver_dict(maneuver, "cancelled"))
-            self.emit("info", "maneuver", f"Burn {burn_id} cancelled by operator", satellite_id=maneuver[1], burn_id=burn_id)
+            # Overrides the stored actor with whoever issued *this* cancellation - more useful
+            # for a cancelled record than who originally scheduled the (never-executed) burn.
+            self._record(self._maneuver_dict(maneuver, "cancelled", actor=actor))
+            self.emit("info", "maneuver", f"Burn {burn_id} cancelled by {actor}", satellite_id=maneuver[1],
+                      burn_id=burn_id, actor=actor)
             return True
 
     async def get_all_maneuvers(self) -> List[dict]:

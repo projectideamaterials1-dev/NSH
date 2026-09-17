@@ -62,6 +62,7 @@ async def schedule_maneuver(request: ManeuverScheduleRequest, req: Request):
     if not request.maneuver_sequence:
         raise HTTPException(status_code=422, detail="maneuver_sequence must not be empty.")
 
+    actor = getattr(req.state, "actor", "unknown")
     burns = []
     for burn in request.maneuver_sequence:
         try:
@@ -69,7 +70,7 @@ async def schedule_maneuver(request: ManeuverScheduleRequest, req: Request):
         except ValueError:
             raise HTTPException(status_code=422, detail=f"Invalid burnTime for {burn.burn_id}: {burn.burnTime!r}")
         dv = burn.deltaV_vector
-        burns.append(BurnRequest(burn.burn_id, ts, (dv.x, dv.y, dv.z), "EXTERNAL"))
+        burns.append(BurnRequest(burn.burn_id, ts, (dv.x, dv.y, dv.z), "EXTERNAL", actor))
 
     async with state.lock:
         evaluation = evaluate_sequence(state, sat_id, burns)

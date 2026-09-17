@@ -26,7 +26,7 @@ J2 = 1.08263e-3
 J2_CONST = 1.5 * J2 * MU_EARTH * R_EARTH * R_EARTH
 
 CHUNK_DT = 5.0              # CCD sub-interval (matches the C++ engine)
-MAX_INTEGRATION_STEP = 5.0  # RK4 step for the NumPy fallback
+MAX_INTEGRATION_STEP = 1.0  # RK4 step for the NumPy fallback (matches the C++ engine)
 
 
 def j2_acceleration(r: np.ndarray) -> np.ndarray:

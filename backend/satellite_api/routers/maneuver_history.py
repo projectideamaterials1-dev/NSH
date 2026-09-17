@@ -36,6 +36,7 @@ async def get_maneuvers(
 async def cancel_maneuver(request: Request, burn_id: str):
     """Cancels a pending (not yet executed) burn."""
     state = request.app.state.orbital_state
-    if not await state.cancel_maneuver(burn_id):
+    actor = getattr(request.state, "actor", "unknown")
+    if not await state.cancel_maneuver(burn_id, actor=actor):
         raise HTTPException(status_code=404, detail=f"No pending burn with id {burn_id}.")
     return {"status": "CANCELLED", "burn_id": burn_id}

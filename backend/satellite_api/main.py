@@ -9,7 +9,7 @@ from fastapi.responses import ORJSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from satellite_api.logging_config import setup_logging
-from satellite_api.middleware.auth import APIKeyMiddleware, RateLimitMiddleware
+from satellite_api.middleware.auth import APIKeyMiddleware, LeaderGateMiddleware, RateLimitMiddleware
 
 setup_logging()
 
@@ -43,30 +43,75 @@ async def _autoload_catalog(service, conjunction_service):
         logger.error(f"Startup catalog load failed: {e}")
 
 
+def _require_durable_state() -> bool:
+    return os.environ.get("REQUIRE_DURABLE_STATE", "0").strip().lower() not in ("0", "", "false", "off", "no")
+
+
 def _create_state():
-    """Redis-backed state when REDIS_URL is set, otherwise the in-memory StateManager."""
+    """Redis-backed state when REDIS_URL is set, otherwise the in-memory StateManager.
+
+    REQUIRE_DURABLE_STATE=1 makes an unavailable/misconfigured Redis a hard startup failure
+    instead of a silent fallback to in-memory state - for a system that can command real
+    maneuvers, losing durability unnoticed is worse than refusing to start.
+    """
     redis_url = os.environ.get("REDIS_URL", "").strip()
     if redis_url:
         try:
             return RedisStateManager(redis_url=redis_url)
         except RuntimeError as e:
+            if _require_durable_state():
+                raise RuntimeError(f"REQUIRE_DURABLE_STATE is set but Redis state init failed: {e}") from e
             logger.error(f"{e}; falling back to in-memory state")
+    elif _require_durable_state():
+        raise RuntimeError("REQUIRE_DURABLE_STATE is set but REDIS_URL is not configured")
     return get_state()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state = app.state.orbital_state
+    operations_service = None
+    live_service = None
+    background_enabled = os.environ.get("ACM_BACKGROUND", "1") != "0"
+    if background_enabled:
+        # Created before restore() so the autopilot's planner-lock snapshot hook (registered
+        # below) is in place in time to be populated by the restore itself.
+        operations_service = operations.get_service_for_state(app, state)
+        live_service = get_realworld_service(app, state)
     if isinstance(state, RedisStateManager):
+        if operations_service is not None:
+            state.register_snapshot_hook(
+                "autopilot_brain", operations_service.autopilot.snapshot_brain, operations_service.autopilot.restore_brain
+            )
         try:
             await state.restore()
             state.start_autosave(float(os.environ.get("REDIS_SAVE_INTERVAL_S", "10")))
         except Exception as e:
+            if _require_durable_state():
+                raise RuntimeError(f"REQUIRE_DURABLE_STATE is set but Redis restore/autosave failed: {e}") from e
             logger.error(f"Redis unavailable ({e}); continuing without persistence")
-    if os.environ.get("ACM_BACKGROUND", "1") != "0":
-        operations_service = operations.get_service_for_state(app, state)
+        if operations_service is not None:
+            # Multiple replicas may point at the same Redis; only the elected leader may run
+            # the autopilot/screening loops (see state_redis.py) - every other replica keeps
+            # serving reads from the shared, Redis-backed state but must not plan/schedule burns.
+            async def _on_gain():
+                operations_service.start()
+                live_service.start()
+                await _autoload_catalog(live_service, operations_service)
+
+            async def _on_lose():
+                await operations_service.stop()
+                await live_service.stop()
+
+            state.start_leader_election(
+                ttl_s=float(os.environ.get("LEADER_LOCK_TTL_S", "15")),
+                interval_s=float(os.environ.get("LEADER_RENEW_INTERVAL_S", "5")),
+                on_gain=_on_gain, on_lose=_on_lose,
+            )
+    elif operations_service is not None:
+        # No shared state across processes is possible without Redis, so a single in-memory
+        # instance is always safe to run its own loops directly (no leader election needed).
         operations_service.start()
-        live_service = get_realworld_service(app, state)
         live_service.start()
         await _autoload_catalog(live_service, operations_service)
     yield
@@ -77,6 +122,7 @@ async def lifespan(app: FastAPI):
     if live_service:
         await live_service.stop()
     if isinstance(state, RedisStateManager):
+        await state.stop_leader_election()
         await state.stop_autosave(final_save=True)
     archive = getattr(app.state, "archive", None)
     if archive:
@@ -98,16 +144,27 @@ app = FastAPI(
 # ============================================================================
 # MIDDLEWARE (last added = outermost; CORS must wrap auth so 401s carry CORS headers)
 # ============================================================================
+# ALLOWED_ORIGINS unset -> same-origin only (the bundled dashboard is served from this same
+# port/origin, so it needs no CORS grant at all); set it to a comma-separated allow-list for
+# a dashboard hosted on a different origin. "*" is intentionally not a supported value here -
+# combined with the X-API-Key header this app authenticates with, a wildcard origin would let
+# any third-party page drive every /api/* endpoint (including maneuver commands) from a
+# victim's browser if that browser happens to have the key cached/embedded anywhere reachable.
+_allowed_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+
+# Innermost: checked last, only for requests that already passed auth/rate-limit.
+app.add_middleware(LeaderGateMiddleware, get_state=lambda: app.state.orbital_state)
 app.add_middleware(APIKeyMiddleware)
 app.add_middleware(RateLimitMiddleware, calls_per_minute=int(os.environ.get("RATE_LIMIT_PER_MINUTE", "0") or 0))
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["X-Total-Count", "X-Page", "X-Per-Page"],
-)
+if _allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allowed_origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["X-Total-Count", "X-Page", "X-Per-Page"],
+    )
 
 # ============================================================================
 # GLOBAL STATE BINDING
@@ -115,9 +172,11 @@ app.add_middleware(
 # Zero-copy state manager (run with a single uvicorn worker); Redis-backed when REDIS_URL is set.
 app.state.orbital_state = _create_state()
 app.state.archive = None
+app.state.unreconciled_maneuvers = []
 if archive_enabled():
     try:
         app.state.archive = MissionArchive().attach(app.state.orbital_state)
+        app.state.unreconciled_maneuvers = app.state.archive.reconcile_on_startup()
     except Exception as e:  # read-only filesystem etc.
         logger.warning(f"Mission archive disabled: {e}")
 
@@ -144,8 +203,11 @@ def _status():
         "engine_ready": app.state.orbital_state.is_ready(),
         "autopilot": CONFIG.autopilotEnabled,
         "persistence": "redis" if isinstance(app.state.orbital_state, RedisStateManager) else "memory",
+        "is_leader": (app.state.orbital_state.is_leader if isinstance(app.state.orbital_state, RedisStateManager)
+                     else True),
         "archive": app.state.archive is not None,
         "live": bool(getattr(getattr(app.state, "realworld", None), "live", False)),
+        "unreconciled_maneuvers": len(getattr(app.state, "unreconciled_maneuvers", [])),
     }
 
 

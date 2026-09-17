@@ -1,7 +1,10 @@
 """Autonomy loop and operations API: screening, autopilot, events, metrics, satellites, planner, config."""
+import numpy as np
 import pytest
 
+from satellite_api.acm.brain import AutonomousBrain, Conjunction
 from satellite_api.acm.scenario import circular_state_over, make_threat
+from satellite_api.config import CONFIG
 from satellite_api.ground_stations import STATIONS
 from satellite_api.timeutils import iso_z
 from tests.conftest import make_object
@@ -232,3 +235,93 @@ async def test_planner_acts_when_contact_begins_between_screens(client):
     assert cdm["status"] == "MITIGATED"
     rejections = [e for e in state.events if e["category"] == "autopilot" and "rejected" in e["message"]]
     assert len(rejections) == 1                                              # not repeated every pass
+
+
+def _drift_earliest_burn_ts(state, sat_id: str) -> float:
+    """Earliest queued burn timestamp for a satellite (its t1 station-keeping leg)."""
+    return min(item[0] for item in state.maneuver_queue if item[1] == sat_id)
+
+
+def _drift_along_track(state, sat_id: str, km: float) -> None:
+    """Nudges a satellite along its own velocity direction, away from its nominal ghost slot.
+    The station-keeping healer only reacts to along-track drift (it heals via a period
+    adjustment) - a purely radial offset produces a near-zero required delta-v and no plan."""
+    idx = state.sat_id_to_idx[sat_id]
+    v_hat = state.sat_buffer[idx, 3:6] / np.linalg.norm(state.sat_buffer[idx, 3:6])
+    state.sat_buffer[idx, :3] += km * v_hat
+
+
+@pytest.mark.asyncio
+async def test_fleet_coordinator_staggers_clustered_sk_burns_end_to_end(client):
+    """Regression test for the clustering bug: without fleet coordination every station-keeping
+    burn planned in the same cycle defaults to the same hardcoded t1=15.0 offset."""
+    from satellite_api.main import app
+    from satellite_api.routers.operations import get_service_for_state
+
+    sat = circular_state_over(ISTRAC.latitude, ISTRAC.longitude, T0)
+    fuels = {"SAT-0": 6.0, "SAT-1": 40.0, "SAT-2": 20.0, "SAT-3": 45.0}   # SAT-0 most urgent, SAT-3 least
+    await _ingest(client, [_obj(sid, "SATELLITE", sat) for sid in fuels])
+
+    state = app.state.orbital_state
+    for sid, fuel in fuels.items():
+        _drift_along_track(state, sid, 7.0)    # past 0.6 * stationKeepingRadius (default 10km -> 6km)
+        state.sat_fuel[state.sat_id_to_idx[sid]] = fuel
+
+    service = get_service_for_state(app, state)
+    summary = await service.plan_cycle()
+
+    assert summary["sequences_scheduled"] == 4 and summary["sequences_rejected"] == 0
+    assert summary["sk_burns_staggered"] == 3   # the lowest-fuel satellite keeps its original slot
+
+    burn_ts = {sid: _drift_earliest_burn_ts(state, sid) for sid in fuels}
+    assert len({round(t) for t in burn_ts.values()}) == 4     # no two satellites share a burn time
+    assert burn_ts["SAT-0"] == pytest.approx(T0 + 15.0)        # most urgent (lowest fuel): unstaggered
+    assert burn_ts["SAT-0"] < burn_ts["SAT-2"] < burn_ts["SAT-1"] < burn_ts["SAT-3"]
+
+    events = [e for e in state.events if e["category"] == "fleet_coordinator"]
+    assert len(events) == 3
+    assert {e["satellite_id"] for e in events} == {"SAT-1", "SAT-2", "SAT-3"}
+    assert all("priority_score" in e["data"] for e in events)
+
+
+@pytest.mark.asyncio
+async def test_fleet_coordinator_never_retimes_evasion(client):
+    """A live evasion sequence planned in the same cycle as a clustered station-keeping group
+    must come out exactly as AutonomousBrain would plan it alone - the coordinator only ever
+    delays STATION_KEEPING plans."""
+    from satellite_api.main import app
+    from satellite_api.routers.operations import get_service_for_state
+
+    sat_a = await _threat_scenario(client, tca_s=1800.0, miss_km=0.05)   # SAT-A: threatened, evades
+
+    sk_fuels = {"SAT-C": 6.0, "SAT-D": 40.0, "SAT-E": 20.0}
+    sk_sat = circular_state_over(ISTRAC.latitude, ISTRAC.longitude, T0)
+    await _ingest(client, [_obj(sid, "SATELLITE", sk_sat) for sid in sk_fuels])
+
+    state = app.state.orbital_state
+    for sid, fuel in sk_fuels.items():
+        _drift_along_track(state, sid, 7.0)
+        state.sat_fuel[state.sat_id_to_idx[sid]] = fuel
+
+    service = get_service_for_state(app, state)
+    await service.run_cycle(horizon_s=7200)   # screens for the debris threat, then plans+schedules
+
+    # Reconstruct the exact same evasion sequence AutonomousBrain would plan on its own, fed
+    # the actual measured TCA from the CDM the live cycle just detected (not the nominal 1800.0,
+    # to avoid asserting against a value the refinement pass may have adjusted by a second or two).
+    cdm = next(c for c in state.cdms.items if c["object_id"] == "DEB-THREAT")
+    expected = AutonomousBrain().calculate_perfect_evasion_sequence(
+        sat_idx=0, threats=[Conjunction(sat_idx=0, debris_idx=0, tca_seconds=cdm["tca_ts"] - T0,
+                                        miss_distance_km=cdm["miss_distance_km"], relative_velocity_kms=7.5,
+                                        risk_score=1.0)],
+        current_fuel_kg=CONFIG.initialFuel, sat_state=sat_a, nominal_state=sat_a,
+    )
+    expected_offsets = sorted(p.burn_time_offset_s for p in expected)
+
+    actual_offsets = sorted(ts - T0 for ts in
+                            (item[0] for item in state.maneuver_queue if item[1] == "SAT-A"))
+    assert actual_offsets == pytest.approx(expected_offsets, abs=1e-3)
+
+    # The SK cluster was still staggered - both effects happened in the same cycle independently.
+    sk_ts = {sid: _drift_earliest_burn_ts(state, sid) for sid in sk_fuels}
+    assert len({round(t) for t in sk_ts.values()}) == 3
