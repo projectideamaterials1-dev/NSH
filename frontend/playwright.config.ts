@@ -8,7 +8,10 @@ const WEB_PORT = Number(process.env.E2E_WEB_PORT ?? 3010);
 
 export default defineConfig({
   testDir: './e2e',
-  timeout: 60_000,
+  // Shared CI runners are measurably slower than a local dev machine (uvicorn + vite + chromium
+  // all competing for 2 cores) - the manual-burn-scheduling test takes ~40s locally but needs
+  // more headroom there, so give CI runs a longer budget rather than a flaky 60s cutoff.
+  timeout: process.env.CI ? 120_000 : 60_000,
   expect: { timeout: 15_000 },
   fullyParallel: false,
   workers: 1,
