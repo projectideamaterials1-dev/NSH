@@ -462,7 +462,7 @@ export const DeckGLMap: React.FC = () => {
 
       {/* Replay banner */}
       {replay && (
-        <div className="absolute top-14 xl:top-3 left-3 flex items-center gap-3 bg-warn/15 border border-warn/50 rounded-lg px-3 py-2 shadow-lg" role="status">
+        <div className="absolute top-14 left-3 flex items-center gap-3 bg-warn/15 border border-warn/50 rounded-lg px-3 py-2 shadow-lg" role="status">
           <History className="w-4 h-4 text-warn" />
           <span className="text-[13px] text-ink">
             <span title={replay.predicted ? 'Satellites only (no debris), with every queued burn applied' : undefined}>
