@@ -45,14 +45,15 @@ def _shell(states: np.ndarray):
     return rp, ra
 
 
-def _carry(states: np.ndarray, dt: float) -> None:
+def _carry(states: np.ndarray, dt: float, ballistic=None) -> None:
     """Propagates rows in place (C++ engine when built)."""
-    propagate_fast(states, dt)
+    propagate_fast(states, dt, ballistic)
 
 
 def verify_sequence(sat_state: np.ndarray, sat_id: str, burns: Sequence[dict], objects: np.ndarray,
                     object_ids: Sequence[str], object_types: Sequence[str], start_ts: float, horizon_s: float,
-                    threat_ids: Iterable[str] = ()) -> dict:
+                    threat_ids: Iterable[str] = (), sat_ballistic: float = float("nan"),
+                    object_ballistic=None) -> dict:
     """Screens the post-maneuver trajectory of one satellite.
 
     burns: [{"offset_s", "dv_eci_kms": (x, y, z)}] relative to `start_ts`.
@@ -64,37 +65,40 @@ def verify_sequence(sat_state: np.ndarray, sat_id: str, burns: Sequence[dict], o
     burns = sorted(burns, key=lambda b: b["offset_s"])
     sat = np.asarray(sat_state, dtype=float).reshape(1, 6).copy()
     objs = np.asarray(objects, dtype=float).reshape(-1, 6)
+    obj_b = np.full(len(objs), np.nan) if object_ballistic is None else np.asarray(object_ballistic, dtype=float)
 
     # Orbit-shell prefilter: an object can only come within the warning radius if the radial
     # ranges overlap. The satellite's range is taken after its first burn, with margin.
     if len(objs) and burns:
         probe = sat.copy()
-        _carry(probe, burns[0]["offset_s"])
+        _carry(probe, burns[0]["offset_s"], np.array([sat_ballistic]))
         probe[0, 3:] += burns[0]["dv_eci_kms"]
         rp_s, ra_s = _shell(np.vstack([sat, probe]))
         lo, hi = rp_s.min() - SHELL_MARGIN_KM - CONFIG.cdmWarningKm, ra_s.max() + SHELL_MARGIN_KM + CONFIG.cdmWarningKm
         rp_o, ra_o = _shell(objs)
         keep = (ra_o >= lo) & (rp_o <= hi)
         objs = objs[keep]
+        obj_b = obj_b[keep]
         object_ids = [o for o, k in zip(object_ids, keep) if k]
         object_types = [t for t, k in zip(object_types, keep) if k]
 
     combined = np.vstack([sat, objs]) if len(objs) else sat.copy()
+    combined_b = np.concatenate([[sat_ballistic], obj_b])
     predictions: List[dict] = []
     t = 0.0
     epochs = [b["offset_s"] for b in burns] + [horizon_s]
     for k, epoch in enumerate(epochs):
         if k == 0:
-            _carry(combined, epoch - t)          # the pre-burn arc was screened by the normal cycle
+            _carry(combined, epoch - t, combined_b)   # the pre-burn arc was screened by the normal cycle
         else:
             seg = epoch - t
             if seg > 0 and len(combined) > 1:
                 found = screen(combined[:1], combined[1:], [sat_id], list(object_ids), start_ts + t, seg,
-                               CONFIG.cdmWarningKm)
+                               CONFIG.cdmWarningKm, sat_ballistic=combined_b[:1], debris_ballistic=combined_b[1:])
                 for p in found:
                     p["object_type"] = object_types[object_ids.index(p["object_id"])]
                 predictions.extend(found)
-            _carry(combined, seg)
+            _carry(combined, seg, combined_b)
         t = epoch
         if k < len(burns):
             combined[0, 3:] += burns[k]["dv_eci_kms"]
@@ -120,7 +124,7 @@ def verify_sequence(sat_state: np.ndarray, sat_id: str, burns: Sequence[dict], o
 
 def trade_space(sat_state: np.ndarray, obj_state: np.ndarray, tca_offset_s: float, obj_is_owned: bool,
                 axis: str = "T", n_times: int = 8, n_dv: int = 11, max_dv_mps: Optional[float] = None,
-                fuel_kg: float = 50.0) -> dict:
+                fuel_kg: float = 50.0, sat_ballistic: float = float("nan"), obj_ballistic: float = float("nan")) -> dict:
     """Miss distance and Pc at TCA for single impulsive burns on a (burn time x Δv) grid."""
     axis_idx = {"R": 0, "T": 1, "N": 2}[axis.upper()]
     max_dv = (CONFIG.maxDeltaV if max_dv_mps is None else max_dv_mps) / 2.0
@@ -134,12 +138,13 @@ def trade_space(sat_state: np.ndarray, obj_state: np.ndarray, tca_offset_s: floa
     B = np.repeat(np.asarray(obj_state, dtype=float).reshape(1, 6), k, axis=0)
     burn_t = np.array([c[0] for c in combos])
     burn_dv = np.array([c[1] for c in combos]) / 1000.0
+    pair_b = np.concatenate([np.full(k, sat_ballistic), np.full(k, obj_ballistic)])
 
     # Carry every copy forward, applying each burn in RTN at its own epoch.
     t = 0.0
     for epoch in offsets:
         pair = np.vstack([A, B])
-        propagate_states(pair, epoch - t, max_step=BRIDGE_STEP_S)
+        propagate_states(pair, epoch - t, max_step=BRIDGE_STEP_S, ballistic=pair_b)
         A, B = pair[:k], pair[k:]
         t = epoch
         rows = np.nonzero(burn_t == epoch)[0]
@@ -147,9 +152,9 @@ def trade_space(sat_state: np.ndarray, obj_state: np.ndarray, tca_offset_s: floa
             A[i, 3:] += rtn_basis(A[i, :3], A[i, 3:])[:, axis_idx] * burn_dv[i]
     start = max(t, tca_offset_s - TRADE_WINDOW_S / 2)
     pair = np.vstack([A, B])
-    propagate_states(pair, start - t, max_step=BRIDGE_STEP_S)
+    propagate_states(pair, start - t, max_step=BRIDGE_STEP_S, ballistic=pair_b)
     A, B = pair[:k], pair[k:]
-    miss, t_rel, A_at, B_at = closest_approach(A, B, TRADE_WINDOW_S, 2.0)
+    miss, t_rel, A_at, B_at = closest_approach(A, B, TRADE_WINDOW_S, 2.0, pair_b[:k], pair_b[k:])
 
     grid = []
     for i, (bt, dv) in enumerate(combos):

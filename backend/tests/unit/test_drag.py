@@ -79,3 +79,54 @@ def test_native_and_numpy_drag_agree():
     numpy_ = sats.copy()
     pe._numpy_process_conjunctions(numpy_, np.zeros((0, 6)), 0.1, 600.0)
     assert np.linalg.norm(native[:, :3] - numpy_[:, :3], axis=1).max() < 1e-6
+
+
+# ── per-object ballistic coefficients ──────────────────────────────────────────
+def test_per_object_ballistic_coefficients_in_both_engines():
+    configure_drag(True, 0.01, 1.0)
+    base = np.vstack([_circular(400.0), _circular(400.0)])
+    ballistic = np.array([0.002, 0.05])
+    numpy_ = base.copy()
+    pe._numpy_process_conjunctions(numpy_, np.zeros((0, 6)), 0.0, 1800.0, ballistic, None)
+    # The heavier-drag object lags behind (lower orbit, faster decay).
+    assert _sma(numpy_[1:2]) < _sma(numpy_[0:1])
+    if pe._native_set_drag is not None:
+        native = base.copy()
+        pe.process_conjunctions(native, np.zeros((0, 6)), 0.0, 1800.0, ballistic, None)
+        assert np.abs(native - numpy_).max() < 1e-6
+    # NaN / non-positive entries fall back to the global coefficient.
+    fallback, reference = base[:1].copy(), base[:1].copy()
+    propagate_states(fallback, 600.0, ballistic=np.array([np.nan]))
+    propagate_states(reference, 600.0)
+    assert np.array_equal(fallback, reference)
+
+
+def test_ballistic_coefficient_from_bstar():
+    from types import SimpleNamespace
+    from satellite_api.realworld.catalog import ballistic_coefficient
+    as_obj = (lambda bstar: SimpleNamespace(satrec=SimpleNamespace(bstar=bstar)))
+    assert ballistic_coefficient(as_obj(1e-4)) == pytest.approx(2e-4 / 0.15696615)
+    assert np.isnan(ballistic_coefficient(as_obj(-3e-4)))      # negative B*: fit artefact
+    assert np.isnan(ballistic_coefficient(as_obj(0.5)))        # absurd B*: not physics
+    assert np.isnan(ballistic_coefficient(as_obj(0.0)))
+
+
+@pytest.mark.asyncio
+async def test_telemetry_ballistic_coefficients_drive_decay_and_survive_removal(client):
+    from satellite_api.main import app
+    from satellite_api.config import CONFIG
+    sat = _circular(350.0)[0]
+    obj = lambda i, b: {"id": i, "type": "SATELLITE", "r": dict(zip("xyz", sat[:3])), "v": dict(zip("xyz", sat[3:])),
+                        **({"ballistic_coefficient": b} if b is not None else {})}
+    await client.post("/api/telemetry", json={"timestamp": "2026-01-01T00:00:00.000Z",
+                                              "objects": [obj("LIGHT", 0.002), obj("HEAVY", 0.08), obj("PLAIN", None)]})
+    state = app.state.orbital_state
+    assert np.isnan(state.sat_ballistic[state.sat_id_to_idx["PLAIN"]])
+    CONFIG.atmosphericDrag = True
+    await client.post("/api/simulate/step", json={"step_seconds": 3600})
+    sma = {sid: _sma(state.sat_buffer[i:i + 1]) for sid, i in state.sat_id_to_idx.items()}
+    assert sma["HEAVY"] < sma["PLAIN"] < sma["LIGHT"]
+
+    async with state.lock:
+        state.remove_satellites(["LIGHT"])
+    assert state.sat_ballistic[state.sat_id_to_idx["HEAVY"]] == pytest.approx(0.08)

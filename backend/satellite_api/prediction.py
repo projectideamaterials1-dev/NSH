@@ -16,13 +16,13 @@ from satellite_api.physics_engine import propagate_fast
 from satellite_api.timeutils import iso_z
 
 
-def _advance(states: np.ndarray, dt: float) -> None:
+def _advance(states: np.ndarray, dt: float, ballistic=None) -> None:
     if dt > 1e-9:
-        propagate_fast(states, dt)
+        propagate_fast(states, dt, ballistic)
 
 
 def predict_frames(sat_states: np.ndarray, sat_ids: Sequence[str], queue: Sequence[tuple], start_ts: float,
-                   horizon_s: float, step_s: float) -> Dict[str, object]:
+                   horizon_s: float, step_s: float, ballistic=None) -> Dict[str, object]:
     """queue: maneuver tuples (burn_ts, sat_id, dvx, dvy, dvz, ...) in ECI km/s."""
     states = np.ascontiguousarray(sat_states, dtype=np.float64).copy()
     row = {sid: i for i, sid in enumerate(sat_ids)}
@@ -34,11 +34,11 @@ def predict_frames(sat_states: np.ndarray, sat_ids: Sequence[str], queue: Sequen
     for k in range(1, n_frames + 1):
         target = start_ts + k * step_s
         while b < len(burns) and burns[b][0] <= target:
-            _advance(states, burns[b][0] - t)
+            _advance(states, burns[b][0] - t, ballistic)
             t = burns[b][0]
             states[burns[b][1], 3:] += burns[b][2]
             b += 1
-        _advance(states, target - t)
+        _advance(states, target - t, ballistic)
         t = target
         lla = convert_states_to_lla(states, datetime.fromtimestamp(t, tz=timezone.utc), as_array=True)
         frames.append({

@@ -179,11 +179,12 @@ async def predict(request: Request, horizon_s: float = Query(10800.0, ge=300.0, 
         sats = state.sat_buffer[:n].copy()
         ids = [state.idx_to_sat_id[i] for i in range(n)]
         queue = list(state.maneuver_queue)
+        sat_b, _ = state.ballistic_arrays()
         start_ts = state.now_ts
         tcas = [{"kind": "TCA", "timestamp": c["tca"], "ts": c["tca_ts"], "satellite_id": c["satellite_id"],
                  "label": f"{c['satellite_id']} / {c['object_id']}", "risk": c["risk"], "cdm_id": c["cdm_id"]}
                 for c in state.cdms.open() if start_ts < c["tca_ts"] <= start_ts + horizon_s]
-    result = await asyncio.to_thread(predict_frames, sats, ids, queue, start_ts, horizon_s, step_s)
+    result = await asyncio.to_thread(predict_frames, sats, ids, queue, start_ts, horizon_s, step_s, sat_b)
     burns = [{"kind": "BURN", "timestamp": iso_z(m[0]), "ts": m[0], "satellite_id": m[1], "label": m[5],
               "risk": None} for m in queue if start_ts < m[0] <= start_ts + horizon_s]
     return ORJSONResponse({

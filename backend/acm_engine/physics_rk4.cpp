@@ -78,6 +78,7 @@ inline double atmospheric_density(const double alt_km) {
 // ============================================================================
 inline void compute_acceleration(const double x, const double y, const double z,
                                  const double vx, const double vy, const double vz,
+                                 const double ballistic,
                                  double& ax, double& ay, double& az) {
     const double r2 = x*x + y*y + z*z;
     if (r2 < 1e-20) { ax = ay = az = 0.0; return; }
@@ -101,7 +102,7 @@ inline void compute_acceleration(const double x, const double y, const double z,
             const double vrx = vx + OMEGA_EARTH * y, vry = vy - OMEGA_EARTH * x, vrz = vz;
             const double speed = std::sqrt(vrx*vrx + vry*vry + vrz*vrz);
             // 0.5*rho*B*|v|v in m/s^2 for v in m/s; with v in km/s: x1e6, then /1e3 to km/s^2.
-            const double k = -0.5e3 * g_ballistic * rho * speed;
+            const double k = -0.5e3 * ballistic * rho * speed;
             ax += k * vrx; ay += k * vry; az += k * vrz;
         }
     }
@@ -110,27 +111,27 @@ inline void compute_acceleration(const double x, const double y, const double z,
 // ============================================================================
 // IN-PLACE RUNGE-KUTTA 4 (RK4)
 // ============================================================================
-inline void rk4_step(double* state, const double dt) {
+inline void rk4_step(double* state, const double dt, const double ballistic) {
     const double x = state[0], y = state[1], z = state[2];
     const double vx = state[3], vy = state[4], vz = state[5];
     
     double ax1, ay1, az1;
-    compute_acceleration(x, y, z, vx, vy, vz, ax1, ay1, az1);
+    compute_acceleration(x, y, z, vx, vy, vz, ballistic, ax1, ay1, az1);
     
     const double x2 = x + 0.5*dt*vx, y2 = y + 0.5*dt*vy, z2 = z + 0.5*dt*vz;
     const double vx2 = vx + 0.5*dt*ax1, vy2 = vy + 0.5*dt*ay1, vz2 = vz + 0.5*dt*az1;
     double ax2, ay2, az2;
-    compute_acceleration(x2, y2, z2, vx2, vy2, vz2, ax2, ay2, az2);
+    compute_acceleration(x2, y2, z2, vx2, vy2, vz2, ballistic, ax2, ay2, az2);
     
     const double x3 = x + 0.5*dt*vx2, y3 = y + 0.5*dt*vy2, z3 = z + 0.5*dt*vz2;
     const double vx3 = vx + 0.5*dt*ax2, vy3 = vy + 0.5*dt*ay2, vz3 = vz + 0.5*dt*az2;
     double ax3, ay3, az3;
-    compute_acceleration(x3, y3, z3, vx3, vy3, vz3, ax3, ay3, az3);
+    compute_acceleration(x3, y3, z3, vx3, vy3, vz3, ballistic, ax3, ay3, az3);
     
     const double x4 = x + dt*vx3, y4 = y + dt*vy3, z4 = z + dt*vz3;
     const double vx4 = vx + dt*ax3, vy4 = vy + dt*ay3, vz4 = vz + dt*az3;
     double ax4, ay4, az4;
-    compute_acceleration(x4, y4, z4, vx4, vy4, vz4, ax4, ay4, az4);
+    compute_acceleration(x4, y4, z4, vx4, vy4, vz4, ballistic, ax4, ay4, az4);
     
     const double dt_6 = dt / 6.0;
     state[0] += dt_6 * (vx + 2*vx2 + 2*vx3 + vx4);
@@ -141,7 +142,9 @@ inline void rk4_step(double* state, const double dt) {
     state[5] += dt_6 * (az1 + 2*az2 + 2*az3 + az4);
 }
 
-void propagate_in_place(double* states, const size_t n_objects, const double dt_total) {
+// `ballistic`: optional per-object Cd*A/m [m^2/kg]; entries <= 0 or NaN use the global value.
+void propagate_in_place(double* states, const size_t n_objects, const double dt_total,
+                        const double* ballistic = nullptr) {
     if (dt_total <= 0.0 || n_objects == 0) return;
     const int num_steps = static_cast<int>(std::ceil(dt_total / MAX_INTEGRATION_STEP));
     if (num_steps == 0) return;
@@ -153,8 +156,10 @@ void propagate_in_place(double* states, const size_t n_objects, const double dt_
     #pragma omp parallel for schedule(static)
     for (long long i = 0; i < n; ++i) {
         double* obj_state = states + (i * 6);
+        double b = ballistic ? ballistic[i] : g_ballistic;
+        if (!(b > 0.0)) b = g_ballistic;
         for (int step = 0; step < num_steps; ++step) {
-            rk4_step(obj_state, dt_internal);
+            rk4_step(obj_state, dt_internal, b);
         }
     }
 }
@@ -211,7 +216,9 @@ process_conjunctions(
     py::array_t<double>& sat_states,
     py::array_t<double>& debris_states,
     const double threshold,
-    const double dt_seconds
+    const double dt_seconds,
+    const py::object& sat_ballistic,
+    const py::object& debris_ballistic
 ) {
     // Buffers are acquired while holding the GIL; it is released only around the
     // pure C++ numeric work below.
@@ -234,6 +241,20 @@ process_conjunctions(
 
     const size_t n_sats = sat_buf.shape[0];
     const size_t n_debris = debris_buf.shape[0];
+
+    // Optional per-object ballistic coefficients (copied so the GIL can be released safely).
+    auto read_ballistic = [](const py::object& obj, size_t n, const char* name) {
+        std::vector<double> out;
+        if (obj.is_none()) return out;
+        auto arr = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(obj);
+        if (!arr || arr.ndim() != 1 || static_cast<size_t>(arr.shape(0)) != n) {
+            throw std::runtime_error(std::string(name) + " must be a 1-D array with one entry per object");
+        }
+        out.assign(arr.data(), arr.data() + n);
+        return out;
+    };
+    const std::vector<double> sat_b = read_ballistic(sat_ballistic, n_sats, "sat_ballistic");
+    const std::vector<double> debris_b = read_ballistic(debris_ballistic, n_debris, "debris_ballistic");
     const size_t n_total = n_sats + n_debris;
 
     if (n_total == 0 || dt_seconds <= 0.0) {
@@ -272,8 +293,8 @@ process_conjunctions(
             prev_pos[(n_sats+i)*3+2] = debris_ptr[i*6+2];
         }
 
-        propagate_in_place(sat_ptr, n_sats, current_dt);
-        propagate_in_place(debris_ptr, n_debris, current_dt);
+        propagate_in_place(sat_ptr, n_sats, current_dt, sat_b.empty() ? nullptr : sat_b.data());
+        propagate_in_place(debris_ptr, n_debris, current_dt, debris_b.empty() ? nullptr : debris_b.data());
 
         // Instantly reset the flat hash map (Lightning fast C++ std::fill)
         std::fill(head.begin(), head.end(), -1);
@@ -375,7 +396,9 @@ PYBIND11_MODULE(acm_engine, m) {
           py::arg("sat_states").noconvert(),
           py::arg("debris_states").noconvert(),
           py::arg("threshold"),
-          py::arg("dt_seconds"));
+          py::arg("dt_seconds"),
+          py::arg("sat_ballistic") = py::none(),
+          py::arg("debris_ballistic") = py::none());
     m.def("set_drag", &set_drag,
           "Configures atmospheric drag: enabled, ballistic coefficient Cd*A/m [m^2/kg], density scale",
           py::arg("enabled"), py::arg("ballistic_m2_per_kg"), py::arg("density_scale"));

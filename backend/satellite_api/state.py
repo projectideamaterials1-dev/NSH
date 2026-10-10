@@ -112,6 +112,9 @@ class StateManager:
         self.sat_cooldown_timers = np.zeros((INITIAL_SAT_CAPACITY,), dtype=np.float64)
         self.sat_outside_box = np.zeros((INITIAL_SAT_CAPACITY,), dtype=bool)
         self.sat_fuel_alert = np.zeros((INITIAL_SAT_CAPACITY,), dtype=np.int8)  # 0 ok, 1 low, 2 EOL
+        # Per-object ballistic coefficient Cd*A/m [m^2/kg]; NaN = use CONFIG.ballisticCoefficient.
+        self.sat_ballistic = np.full((INITIAL_SAT_CAPACITY,), np.nan)
+        self.debris_ballistic = np.full((INITIAL_DEBRIS_CAPACITY,), np.nan)
 
         # ── 3. Bi-Directional ID Mapping ───────────────────────────────────
         self.sat_id_to_idx: Dict[str, int] = {}
@@ -244,6 +247,7 @@ class StateManager:
         self.sat_cooldown_timers = _grow(self.sat_cooldown_timers, new_size, 0.0)
         self.sat_outside_box = _grow(self.sat_outside_box, new_size, False)
         self.sat_fuel_alert = _grow(self.sat_fuel_alert, new_size, 0)
+        self.sat_ballistic = _grow(self.sat_ballistic, new_size, np.nan)
 
     def remove_satellites(self, sat_ids, actor: str = "system") -> Dict[int, int]:
         """Removes satellites and compacts the per-satellite buffers so rows stay contiguous.
@@ -263,7 +267,8 @@ class StateManager:
         n = len(keep)
         rows = np.array(keep, dtype=np.int64)
         for name, fill in (("sat_buffer", 0.0), ("nominal_buffer", 0.0), ("sat_fuel", CONFIG.initialFuel),
-                           ("sat_cooldown_timers", 0.0), ("sat_outside_box", False), ("sat_fuel_alert", 0)):
+                           ("sat_cooldown_timers", 0.0), ("sat_outside_box", False), ("sat_fuel_alert", 0),
+                           ("sat_ballistic", np.nan)):
             arr = getattr(self, name)
             arr[:n] = arr[rows]
             arr[n:old_count] = fill
@@ -290,9 +295,11 @@ class StateManager:
         if needed <= cap:
             return
         self.debris_buffer = _grow(self.debris_buffer, max(needed, cap * 2), 0.0)
+        self.debris_ballistic = _grow(self.debris_ballistic, max(needed, cap * 2), np.nan)
 
     async def update_telemetry_raw(self, sat_data: list, debris_data: list,
-                                   sat_ids: list, debris_ids: list, timestamp_str: str):
+                                   sat_ids: list, debris_ids: list, timestamp_str: str,
+                                   sat_ballistic: Optional[list] = None, debris_ballistic: Optional[list] = None):
         """Upserts objects by ID.
 
         Known objects get their state vectors overwritten (fuel, cooldown and the
@@ -315,13 +322,20 @@ class StateManager:
                     self.sat_cooldown_timers[new_idx] = 0.0
                     self.sat_outside_box[new_idx] = False
                     self.sat_fuel_alert[new_idx] = 0
+                    self.sat_ballistic[new_idx] = np.nan
                     new_sats = len(new_rows)
+                if sat_ballistic is not None:
+                    self.sat_ballistic[idxs] = np.asarray(sat_ballistic, dtype=np.float64)
 
             if debris_ids:
                 vecs = np.asarray(debris_data, dtype=np.float64).reshape(-1, 6)
                 idxs, new_rows = self._assign_indices(debris_ids, self.debris_id_to_idx, self.idx_to_debris_id, "debris_count")
                 self._ensure_debris_capacity(self.debris_count)
                 self.debris_buffer[idxs] = vecs
+                if new_rows:
+                    self.debris_ballistic[idxs[new_rows]] = np.nan
+                if debris_ballistic is not None:
+                    self.debris_ballistic[idxs] = np.asarray(debris_ballistic, dtype=np.float64)
                 new_debris = len(new_rows)
 
             self.is_initialized = True
@@ -379,6 +393,13 @@ class StateManager:
         propagate_states(self.nominal_buffer[:n], dt_seconds, drag=False)
         self.sim_seconds_elapsed += dt_seconds
 
+    def ballistic_arrays(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """Copies of the per-object Cd*A/m for the active rows (None when every entry is unset)."""
+        sat_b = self.sat_ballistic[:self.sat_count]
+        deb_b = self.debris_ballistic[:self.debris_count]
+        return (sat_b.copy() if np.isfinite(sat_b).any() else None,
+                deb_b.copy() if np.isfinite(deb_b).any() else None)
+
     def drift_km(self) -> np.ndarray:
         n = self.sat_count
         return np.linalg.norm(self.sat_buffer[:n, :3] - self.nominal_buffer[:n, :3], axis=1)
@@ -434,9 +455,12 @@ class StateManager:
                 dt = next_t - t
                 sat_view = self.sat_buffer[:self.sat_count]
                 deb_view = self.debris_buffer[:self.debris_count]
-                _, _, collisions = await asyncio.to_thread(
-                    engine, sat_view, deb_view, COLLISION_THRESHOLD_KM, dt
-                )
+                sat_b, deb_b = self.ballistic_arrays()
+                if sat_b is None and deb_b is None:
+                    _, _, collisions = await asyncio.to_thread(engine, sat_view, deb_view, COLLISION_THRESHOLD_KM, dt)
+                else:
+                    _, _, collisions = await asyncio.to_thread(
+                        engine, sat_view, deb_view, COLLISION_THRESHOLD_KM, dt, sat_b, deb_b)
                 for row in np.asarray(collisions).reshape(-1, 5):
                     key = (int(row[0]), int(row[1]), int(row[2]))
                     event_ts = t + float(row[4])

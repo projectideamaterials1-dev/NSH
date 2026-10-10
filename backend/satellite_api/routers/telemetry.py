@@ -41,16 +41,23 @@ async def ingest_telemetry(request: Request) -> TelemetryIngestionResponse:
         append_deb_data = debris_data.append
         append_deb_ids = debris_ids.append
 
+        sat_b, deb_b, any_b = [], [], False
         for obj in objects:
             r, v = obj["r"], obj["v"]
             vec = [float(r["x"]), float(r["y"]), float(r["z"]),
                    float(v["x"]), float(v["y"]), float(v["z"])]
+            # Optional per-object ballistic coefficient Cd*A/m [m^2/kg] for the drag model.
+            b = obj.get("ballistic_coefficient")
+            b = float("nan") if b is None else float(b)
+            any_b = any_b or b == b
             if str(obj.get("type", "DEBRIS")).upper() == "SATELLITE":
                 append_sat_data(vec)
                 append_sat_ids(str(obj["id"]))
+                sat_b.append(b)
             else:
                 append_deb_data(vec)
                 append_deb_ids(str(obj["id"]))
+                deb_b.append(b)
     except (ValueError, KeyError, TypeError) as e:
         raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
 
@@ -64,7 +71,8 @@ async def ingest_telemetry(request: Request) -> TelemetryIngestionResponse:
         )
     state.last_telemetry_ts = current_ts
 
-    await state.update_telemetry_raw(sat_data, debris_data, sat_ids, debris_ids, timestamp_str)
+    await state.update_telemetry_raw(sat_data, debris_data, sat_ids, debris_ids, timestamp_str,
+                                     sat_b if any_b else None, deb_b if any_b else None)
 
     pairs = state.warning_pairs()
     return TelemetryIngestionResponse(

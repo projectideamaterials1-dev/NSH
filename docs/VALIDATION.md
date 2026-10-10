@@ -14,10 +14,12 @@ such as Space-Track CDMs from the 18th/19th Space Defense Squadron, before actin
 | Solar / geomagnetic activity | Density multiplier from NOAA SWPC F10.7 and Kp (Jacchia-style exospheric temperature, scale height ∝ T) | `physics_engine.density_scale` |
 | Integrator | Fixed-step RK4, 1 s | same |
 
-Drag uses one ballistic coefficient (`ballisticCoefficient`, Cd·A/m, default 0.01 m²/kg) for every
-propagated object. The station-keeping *ghost slots* are propagated **without** drag on purpose.
-They represent the maintained reference orbit, so a satellite's drag decay shows up as drift
-from its slot, and station-keeping then has to correct it.
+Each object has its own ballistic coefficient (Cd·A/m). For catalog objects it is derived from the
+element set's B* term (B = 2·B*/ρ₀); telemetry can supply `ballistic_coefficient` per object.
+Objects without one, or whose B* is negative or implausible (common for poorly tracked debris),
+use `ballisticCoefficient` (default 0.01 m²/kg). The station-keeping *ghost slots* are propagated
+**without** drag on purpose. They represent the maintained reference orbit, so a satellite's drag
+decay shows up as drift from its slot, and station-keeping then has to correct it.
 
 `GET /api/physics` reports the model in use, including the current density multiplier derived
 from the latest space weather.

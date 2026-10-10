@@ -264,6 +264,9 @@ class RealWorldService:
                     state.nominal_buffer[idx] = s            # slot = the published orbit
                 for did, (obj, _) in zip(deb_ids, chosen_objs):
                     self.objects[did] = obj
+                    state.debris_ballistic[state.debris_id_to_idx[did]] = catalog.ballistic_coefficient(obj)
+                for sid, (obj, _) in zip(sat_ids, chosen_fleet):
+                    state.sat_ballistic[state.sat_id_to_idx[sid]] = catalog.ballistic_coefficient(obj)
                 self._update_attached()
                 self._snapshot_fuel()
                 self.request, self.source_info, self.warnings = request, info, warnings
@@ -304,6 +307,7 @@ class RealWorldService:
                             self.fleet[sid] = obj
                             idx = state.sat_id_to_idx[sid]
                             state.nominal_buffer[idx] = s
+                            state.sat_ballistic[idx] = catalog.ballistic_coefficient(obj)
                             self._anchor_fuel[sid] = float(state.sat_fuel[idx])
                         self._update_attached()
                     added = ids

@@ -175,3 +175,17 @@ def test_legacy_pending_maneuver_helpers(tmp_path):
     add_pending_maneuver(1.0, "SAT-1", 0.0, 0.001, 0.0, "B-LEGACY", path=path)
     rows = sqlite3.connect(path).execute("SELECT burn_id, sat_id FROM pending_maneuvers").fetchall()
     assert rows == [("B-LEGACY", "SAT-1")]
+
+
+@pytest.mark.asyncio
+async def test_redis_snapshot_keeps_per_object_ballistic_coefficients():
+    fake = FakeRedis()
+    original = RedisStateManager(client=fake)
+    await original.update_telemetry_raw([[7000, 0, 0, 0, 7.5, 0]], [[7100, 0, 0, 0, 7.4, 0]], ["SAT-1"], ["DEB-1"], TS,
+                                        sat_ballistic=[0.02], debris_ballistic=[float("nan")])
+    assert await original.save(force=True)
+    RedisStateManager._instance = None
+    restored = RedisStateManager(client=fake)
+    assert await restored.restore()
+    assert restored.sat_ballistic[0] == pytest.approx(0.02)
+    assert np.isnan(restored.debris_ballistic[0])

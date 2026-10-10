@@ -301,6 +301,18 @@ def fetch_norad_ids(ids: Iterable[int], force: bool = False) -> Tuple[List[Catal
     return objects, errors
 
 
+BSTAR_RHO0 = 0.15696615        # SGP4 reference density term, kg/m^2/ER
+BALLISTIC_RANGE = (5e-4, 0.5)   # plausible Cd*A/m [m^2/kg]; B* outside this is fit noise, not physics
+
+
+def ballistic_coefficient(obj: "CatalogObject") -> float:
+    """Cd*A/m [m^2/kg] implied by the element set's B* (B = 2 B*/rho0), or NaN when B* is not
+    physically usable (zero, negative or absurd - common for poorly tracked debris)."""
+    bstar = float(getattr(obj.satrec, "bstar", 0.0) or 0.0)
+    b = 2.0 * bstar / BSTAR_RHO0
+    return b if BALLISTIC_RANGE[0] <= b <= BALLISTIC_RANGE[1] else float("nan")
+
+
 def parse_records(records: list, source: str) -> List[CatalogObject]:
     out = []
     for rec in records:

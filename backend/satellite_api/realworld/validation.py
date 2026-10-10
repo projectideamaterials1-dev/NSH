@@ -19,7 +19,7 @@ from sgp4.api import Satrec
 from satellite_api.physics_engine import _drag, configure_drag, density_scale, propagate_states
 
 DEFAULT_HOURS = (0.5, 1, 2, 3, 6, 9, 12, 18, 24)
-BSTAR_RHO0 = 0.15696615      # SGP4 reference density term, kg/m^2/ER
+from satellite_api.realworld.catalog import BSTAR_RHO0  # noqa: E402  (single definition)
 
 
 def ballistic_from_bstar(bstar: float, default: float = 0.01) -> float:

@@ -16,7 +16,9 @@ where the (N, 6) state arrays are propagated IN PLACE (RK4 + J2 + optional drag)
 Atmospheric drag (configure_drag) uses the piecewise exponential atmosphere of Vallado,
 "Fundamentals of Astrodynamics and Applications", Table 8-4, co-rotating with the Earth,
 scaled by a solar/geomagnetic activity factor derived from NOAA F10.7 and Kp
-(density_scale). One ballistic coefficient Cd*A/m applies to every propagated object.
+(density_scale). Each object can carry its own ballistic coefficient Cd*A/m (for catalog
+objects it is derived from the element set's B* term); NaN / non-positive entries fall back to
+the global value set by configure_drag.
 """
 import logging
 import math
@@ -73,8 +75,17 @@ def density_scale(f107_sfu, kp) -> float:
     return float(min(10.0, max(0.1, math.exp(span / h_ref - span / (h_ref * ratio)))))
 
 
-def drag_acceleration(r: np.ndarray, v: np.ndarray) -> np.ndarray:
-    """Drag acceleration [km/s^2] for (N, 3) ECI positions/velocities [km, km/s]."""
+def effective_ballistic(ballistic, n: int) -> np.ndarray:
+    """Per-row Cd*A/m with invalid / missing entries replaced by the global value."""
+    if ballistic is None:
+        return np.full(n, _drag["ballistic"])
+    b = np.asarray(ballistic, dtype=float)
+    return np.where(np.isfinite(b) & (b > 0), b, _drag["ballistic"])
+
+
+def drag_acceleration(r: np.ndarray, v: np.ndarray, ballistic=None) -> np.ndarray:
+    """Drag acceleration [km/s^2] for (N, 3) ECI positions/velocities [km, km/s]; `ballistic`
+    is an optional per-row Cd*A/m array."""
     v_rel = v.copy()
     v_rel[:, 0] += OMEGA_EARTH * r[:, 1]
     v_rel[:, 1] -= OMEGA_EARTH * r[:, 0]
@@ -82,7 +93,7 @@ def drag_acceleration(r: np.ndarray, v: np.ndarray) -> np.ndarray:
     rho = atmospheric_density(alt) * _drag["scale"]
     speed = np.sqrt(np.einsum("ij,ij->i", v_rel, v_rel))
     # 0.5*rho*B*|v|*v is m/s^2 for v in m/s; with v in km/s that is x1e6, then /1e3 to km/s^2.
-    return (-0.5e3 * _drag["ballistic"] * rho * speed)[:, None] * v_rel
+    return (-0.5e3 * effective_ballistic(ballistic, len(r)) * rho * speed)[:, None] * v_rel
 
 
 def j2_acceleration(r: np.ndarray) -> np.ndarray:
@@ -101,7 +112,7 @@ def j2_acceleration(r: np.ndarray) -> np.ndarray:
 
 
 def propagate_states(states: np.ndarray, dt_seconds: float,
-                     max_step: float = MAX_INTEGRATION_STEP, drag: bool = True) -> None:
+                     max_step: float = MAX_INTEGRATION_STEP, drag: bool = True, ballistic=None) -> None:
     """Propagates an (N, 6) ECI state array in place with fixed-step RK4 + J2 (+ drag).
 
     Drag applies when configure_drag() enabled it; pass drag=False for drag-free reference
@@ -110,8 +121,10 @@ def propagate_states(states: np.ndarray, dt_seconds: float,
     if dt_seconds <= 0.0 or len(states) == 0:
         return
     if drag and _drag["enabled"]:
+        b = effective_ballistic(ballistic, len(states))
+
         def accel(r_, v_):
-            return j2_acceleration(r_) + drag_acceleration(r_, v_)
+            return j2_acceleration(r_) + drag_acceleration(r_, v_, b)
     else:
         def accel(r_, v_):
             return j2_acceleration(r_)
@@ -132,7 +145,7 @@ def propagate_states(states: np.ndarray, dt_seconds: float,
 
 
 def _numpy_process_conjunctions(sat_states: np.ndarray, debris_states: np.ndarray,
-                                threshold: float, dt_seconds: float):
+                                threshold: float, dt_seconds: float, sat_ballistic=None, debris_ballistic=None):
     n_sats = len(sat_states)
     collisions = []
     reported = set()
@@ -144,8 +157,8 @@ def _numpy_process_conjunctions(sat_states: np.ndarray, debris_states: np.ndarra
         sat_prev = sat_states[:, 0:3].copy()
         deb_prev = debris_states[:, 0:3].copy()
 
-        propagate_states(sat_states, chunk)
-        propagate_states(debris_states, chunk)
+        propagate_states(sat_states, chunk, ballistic=sat_ballistic)
+        propagate_states(debris_states, chunk, ballistic=debris_ballistic)
 
         if n_sats:
             sat_disp = sat_states[:, 0:3] - sat_prev
@@ -213,23 +226,28 @@ def drag_settings() -> dict:
     return {**_drag, "native_support": _native_set_drag is not None}
 
 
-def propagate_fast(states: np.ndarray, dt_seconds: float) -> None:
+def propagate_fast(states: np.ndarray, dt_seconds: float, ballistic=None) -> None:
     """In-place propagation through the C++ engine when it supports the active force model
     (no conjunction search), the NumPy integrator otherwise. For bulk look-ahead work."""
     if dt_seconds <= 0.0 or len(states) == 0:
         return
     if _native is not None and (_native_set_drag is not None or not _drag["enabled"]):
         work = states if states.flags.c_contiguous and states.dtype == np.float64 else np.ascontiguousarray(states, dtype=np.float64)
-        _native(np.zeros((0, 6)), work, 0.0, dt_seconds)
+        _native(np.zeros((0, 6)), work, 0.0, dt_seconds, None,
+                None if ballistic is None else np.ascontiguousarray(ballistic, dtype=np.float64))
         if work is not states:
             states[...] = work
     else:
-        propagate_states(states, dt_seconds)
+        propagate_states(states, dt_seconds, ballistic=ballistic)
 
 
 def process_conjunctions(sat_states: np.ndarray, debris_states: np.ndarray,
-                         threshold: float, dt_seconds: float):
+                         threshold: float, dt_seconds: float, sat_ballistic=None, debris_ballistic=None):
+    """Propagates both arrays in place (optionally with per-object Cd*A/m) and returns CCD hits."""
     # A native build without drag support would silently drop drag; use NumPy then.
     if _native is not None and (_native_set_drag is not None or not _drag["enabled"]):
-        return _native(sat_states, debris_states, threshold, dt_seconds)
-    return _numpy_process_conjunctions(sat_states, debris_states, threshold, dt_seconds)
+        if sat_ballistic is None and debris_ballistic is None:
+            return _native(sat_states, debris_states, threshold, dt_seconds)
+        as_arr = (lambda b: None if b is None else np.ascontiguousarray(b, dtype=np.float64))
+        return _native(sat_states, debris_states, threshold, dt_seconds, as_arr(sat_ballistic), as_arr(debris_ballistic))
+    return _numpy_process_conjunctions(sat_states, debris_states, threshold, dt_seconds, sat_ballistic, debris_ballistic)

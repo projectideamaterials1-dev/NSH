@@ -88,13 +88,23 @@ def _approach_angle_deg(r_sat: np.ndarray, v_sat: np.ndarray, v_rel: np.ndarray)
     return (math.degrees(math.atan2(float(incoming @ n_hat), float(incoming @ t_hat))) + 360.0) % 360.0
 
 
+def _pair_ballistic(ballistic_a, ballistic_b, k: int):
+    if ballistic_a is None and ballistic_b is None:
+        return None
+    a = np.full(k, np.nan) if ballistic_a is None else np.asarray(ballistic_a, dtype=float)
+    b = np.full(k, np.nan) if ballistic_b is None else np.asarray(ballistic_b, dtype=float)
+    return np.concatenate([a, b])
+
+
 def closest_approach(A: np.ndarray, B: np.ndarray, window_s: float = REFINE_WINDOW_S,
-                     step_s: float = REFINE_STEP_S):
+                     step_s: float = REFINE_STEP_S, ballistic_a=None, ballistic_b=None):
     """Row-wise closest approach of pairs (A[i], B[i]) over the next `window_s`: linear CCD
     between `step_s` samples. Inputs are not modified. Returns (miss_km, t_offset_s, A_at, B_at),
-    where A_at/B_at are the states at the sample nearest each pair's TCA."""
+    where A_at/B_at are the states at the sample nearest each pair's TCA. `ballistic_a/b` are
+    optional per-row Cd*A/m arrays (NaN = global)."""
     A, B = A.copy(), B.copy()
     k = len(A)
+    pair_b = _pair_ballistic(ballistic_a, ballistic_b, k)
     best_d = np.full(k, np.inf)
     best_t = np.zeros(k)
     best_A = A.copy()
@@ -102,7 +112,7 @@ def closest_approach(A: np.ndarray, B: np.ndarray, window_s: float = REFINE_WIND
     for step in range(int(window_s / step_s)):
         p0 = B[:, :3] - A[:, :3]
         pair = np.vstack([A, B])
-        propagate_states(pair, step_s, max_step=step_s)
+        propagate_states(pair, step_s, max_step=step_s, ballistic=pair_b)
         A_next, B_next = pair[:k], pair[k:]
         d = (B_next[:, :3] - A_next[:, :3]) - p0
         dd = np.einsum("ij,ij->i", d, d)
@@ -122,8 +132,10 @@ def closest_approach(A: np.ndarray, B: np.ndarray, window_s: float = REFINE_WIND
 def screen(sat_states: np.ndarray, debris_states: np.ndarray, sat_ids: Sequence[str], debris_ids: Sequence[str],
            start_ts: float, horizon_s: float, warning_km: float = 5.0,
            engine: Callable = process_conjunctions, priority_pairs: Optional[frozenset] = None,
-           max_refine: Optional[int] = None) -> List[dict]:
+           max_refine: Optional[int] = None, sat_ballistic=None, debris_ballistic=None) -> List[dict]:
     """Predicts close approaches within `horizon_s` of `start_ts`. Inputs are not modified.
+
+    `sat_ballistic` / `debris_ballistic`: optional per-object Cd*A/m (NaN = global value).
 
     `max_refine` bounds how many broad-phase candidates get the (more expensive) refinement
     pass, for use when the caller has detected it's falling behind its screening cadence
@@ -139,7 +151,10 @@ def screen(sat_states: np.ndarray, debris_states: np.ndarray, sat_ids: Sequence[
     sat0 = np.ascontiguousarray(sat_states, dtype=np.float64)
     deb0 = np.ascontiguousarray(debris_states, dtype=np.float64).reshape(-1, 6)
 
-    _, _, cands = engine(sat0.copy(), deb0.copy(), warning_km, horizon_s)
+    if sat_ballistic is None and debris_ballistic is None:
+        _, _, cands = engine(sat0.copy(), deb0.copy(), warning_km, horizon_s)
+    else:
+        _, _, cands = engine(sat0.copy(), deb0.copy(), warning_km, horizon_s, sat_ballistic, debris_ballistic)
     cands = np.asarray(cands, dtype=np.float64).reshape(-1, 5)
     if len(cands) == 0:
         return []
@@ -165,6 +180,13 @@ def screen(sat_states: np.ndarray, debris_states: np.ndarray, sat_ids: Sequence[
         B[is_deb] = deb0[t_idx[is_deb]]
     if (~is_deb).any():
         B[~is_deb] = sat0[t_idx[~is_deb]]
+    bal_a = bal_b = None
+    if sat_ballistic is not None or debris_ballistic is not None:
+        sb = np.full(n_sat, np.nan) if sat_ballistic is None else np.asarray(sat_ballistic, dtype=float)
+        db = np.full(len(deb0), np.nan) if debris_ballistic is None else np.asarray(debris_ballistic, dtype=float)
+        bal_a = sb[s_idx]
+        bal_b = np.where(is_deb, db[np.where(is_deb, t_idx, 0)] if len(db) else np.nan,
+                         sb[np.where(is_deb, 0, t_idx)])
 
     # Bring every pair to shortly before its first entry into the warning sphere.
     t_start = np.maximum(0.0, cands[:, 4] - REFINE_LEAD_S)
@@ -175,11 +197,11 @@ def screen(sat_states: np.ndarray, debris_states: np.ndarray, sat_ids: Sequence[
         if dt > 1e-9:
             rows = order[pos:]
             pair = np.vstack([A[rows], B[rows]])
-            propagate_states(pair, dt)
+            propagate_states(pair, dt, ballistic=None if bal_a is None else np.concatenate([bal_a[rows], bal_b[rows]]))
             A[rows], B[rows] = pair[:len(rows)], pair[len(rows):]
             t_now = t_start[row]
 
-    best_d, best_t, best_A, best_B = closest_approach(A, B)
+    best_d, best_t, best_A, best_B = closest_approach(A, B, ballistic_a=bal_a, ballistic_b=bal_b)
 
     results = []
     for i in range(k):

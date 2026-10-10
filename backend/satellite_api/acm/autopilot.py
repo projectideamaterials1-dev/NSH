@@ -293,7 +293,7 @@ class Autopilot:
                                                                         nominal, mode=mode, direction=direction)
                     if alt:
                         options.append((label, alt))
-            objects, ids, types = _screen_objects(state, idx)
+            objects, ids, types, obj_b = _screen_objects(state, idx)
             screen_horizon = CONFIG.cdmHorizonSeconds if ENGINE_NAME == "cpp" else min(CONFIG.cdmHorizonSeconds, 3600.0)
             horizon = max(screen_horizon, max(t["tca_s"] for t in threat_rows) + 600.0)
             threat_ids = {t["object_id"] for t in threat_rows}
@@ -312,7 +312,8 @@ class Autopilot:
             burns = [{"offset_s": p.burn_time_offset_s,
                       "dv_eci_kms": np.array([p.delta_v_eci_dict[a] for a in "xyz"])} for p in plan]
             check = await asyncio.to_thread(verify_sequence, state.sat_buffer[idx].copy(), sid, burns, objects,
-                                            ids, types, now_ts, horizon, threat_ids)
+                                            ids, types, now_ts, horizon, threat_ids,
+                                            float(state.sat_ballistic[idx]), obj_b)
             cand["verification"] = check
             cand["clean"] = check["clean"]
             unresolved = sum(r["needs_action"] for r in check["primary"])
@@ -458,12 +459,14 @@ def _screen_objects(state, idx: int):
     objects = np.vstack([state.debris_buffer[:state.debris_count], state.sat_buffer[others]])
     ids = [state.idx_to_debris_id[i] for i in range(state.debris_count)] + [state.idx_to_sat_id[i] for i in others]
     types = ["DEBRIS"] * state.debris_count + ["SATELLITE"] * len(others)
+    ballistic = np.concatenate([state.debris_ballistic[:state.debris_count], state.sat_ballistic[others]])
     if state.attached_pairs:
         keep = np.array([not state.is_attached(sid, o) for o in ids], dtype=bool)
         objects = objects[keep]
+        ballistic = ballistic[keep]
         ids = [o for o, k in zip(ids, keep) if k]
         types = [t for t, k in zip(types, keep) if k]
-    return objects.copy(), ids, types
+    return objects.copy(), ids, types, ballistic.copy()
 
 
 def public_proposal(prop: dict) -> dict:
@@ -506,6 +509,7 @@ class ConjunctionService:
                 debris = state.debris_buffer[:state.debris_count].copy()
                 sat_ids = [state.idx_to_sat_id[i] for i in range(state.sat_count)]
                 deb_ids = [state.idx_to_debris_id[i] for i in range(state.debris_count)]
+                sat_b, deb_b = state.ballistic_arrays()
                 start_ts = state.now_ts
                 versions = (state.telemetry_version, state.burn_version)
                 refiner = self.refiner
@@ -526,7 +530,7 @@ class ConjunctionService:
             coarse_km = CONFIG.cdmWarningKm + (refiner.margin_km(horizon) if refiner else 0.0)
             predictions = await asyncio.to_thread(
                 screen, sats, debris, sat_ids, deb_ids, start_ts, horizon, coarse_km, self.engine,
-                priority_pairs, max_refine)
+                priority_pairs, max_refine, sat_b, deb_b)
             if refiner:
                 predictions = await asyncio.to_thread(refiner.refine, predictions, refine_snapshot, CONFIG.cdmWarningKm)
             elapsed = time.perf_counter() - t0

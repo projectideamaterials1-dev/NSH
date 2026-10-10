@@ -220,6 +220,8 @@ class RedisStateManager(StateManager):
                 "outside_box": self.sat_outside_box[:n].astype(np.int8).tobytes(),
                 "fuel_alert": self.sat_fuel_alert[:n].tobytes(),
                 "debris": self.debris_buffer[:m].tobytes(),
+                "sat_ballistic": self.sat_ballistic[:n].tobytes(),
+                "debris_ballistic": self.debris_ballistic[:m].tobytes(),
             }
             self._last_saved_version = version
         await self.redis.hset(self.key, mapping=mapping)
@@ -253,6 +255,11 @@ class RedisStateManager(StateManager):
             self.sat_outside_box[:n] = arr("outside_box", np.int8).astype(bool)
             self.sat_fuel_alert[:n] = arr("fuel_alert", np.int8)
             self.debris_buffer[:m] = arr("debris", np.float64, 6)
+            # Older snapshots predate per-object drag: leave those rows on the global coefficient.
+            if "sat_ballistic" in raw:
+                self.sat_ballistic[:n] = arr("sat_ballistic", np.float64)
+            if "debris_ballistic" in raw:
+                self.debris_ballistic[:m] = arr("debris_ballistic", np.float64)
             self.sat_id_to_idx = {s: i for i, s in enumerate(sat_ids)}
             self.idx_to_sat_id = dict(enumerate(sat_ids))
             self.debris_id_to_idx = {d: i for i, d in enumerate(deb_ids)}

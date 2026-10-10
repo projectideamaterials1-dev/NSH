@@ -154,9 +154,11 @@ async def conjunction_tradespace(
             raise HTTPException(status_code=404, detail=f"Object {cdm['object_id']} is no longer tracked.")
         sat_state = state.sat_buffer[sat_idx].copy()
         fuel = float(state.sat_fuel[sat_idx])
+        sat_b = float(state.sat_ballistic[sat_idx])
+        obj_b = float(state.debris_ballistic[obj_idx] if cdm["object_type"] == "DEBRIS" else state.sat_ballistic[obj_idx])
         planned = [m for m in state.maneuver_queue if m[5] in cdm["mitigation_burn_ids"]]
     result = await asyncio.to_thread(trade_space, sat_state, obj_state, cdm["tca_ts"] - now_ts,
-                                     cdm["object_type"] == "SATELLITE", axis, n_times, n_dv, None, fuel)
+                                     cdm["object_type"] == "SATELLITE", axis, n_times, n_dv, None, fuel, sat_b, obj_b)
     planned_first = min(planned, key=lambda m: m[0]) if planned else None
     return {
         "cdm_id": cdm_id, "satellite_id": cdm["satellite_id"], "object_id": cdm["object_id"],
