@@ -156,7 +156,7 @@ class FeedMonitor:
         self.app = app
         self.last: Dict[str, str] = {}
         self._task: Optional[asyncio.Task] = None
-        self._last_weather = 0.0
+        self._last_weather = float("-inf")       # see SpaceTrackPoller: monotonic() starts near 0 at boot
         self.spacetrack = spacetrack.SpaceTrackPoller()
 
     async def check(self) -> Dict[str, dict]:

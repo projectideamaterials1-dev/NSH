@@ -88,7 +88,9 @@ class SpaceTrackPoller:
     def __init__(self, client_factory=None):
         self.client_factory = client_factory or (lambda: SpaceTrackClient(*credentials()))
         self._client = None
-        self._last = 0.0
+        # -inf, not 0: time.monotonic() counts from boot on Linux, so a freshly started container
+        # would otherwise wait up to POLL_S before its first poll.
+        self._last = float("-inf")
 
     def due(self) -> bool:
         FEED["configured"] = credentials() is not None

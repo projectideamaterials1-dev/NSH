@@ -233,12 +233,21 @@ def propagate_fast(states: np.ndarray, dt_seconds: float, ballistic=None) -> Non
         return
     if _native is not None and (_native_set_drag is not None or not _drag["enabled"]):
         work = states if states.flags.c_contiguous and states.dtype == np.float64 else np.ascontiguousarray(states, dtype=np.float64)
-        _native(np.zeros((0, 6)), work, 0.0, dt_seconds, None,
-                None if ballistic is None else np.ascontiguousarray(ballistic, dtype=np.float64))
+        _native(np.zeros((0, 6)), work, 0.0, dt_seconds, None, _native_ballistic(ballistic))
         if work is not states:
             states[...] = work
     else:
         propagate_states(states, dt_seconds, ballistic=ballistic)
+
+
+def _native_ballistic(ballistic):
+    """Per-object Cd*A/m for the C++ engine with every invalid entry replaced by -1 (= use the global
+    value). The engine is built with -ffast-math, which assumes NaN never occurs, so NaN must not
+    reach it."""
+    if ballistic is None:
+        return None
+    b = np.asarray(ballistic, dtype=np.float64)
+    return np.ascontiguousarray(np.where(np.isfinite(b) & (b > 0), b, -1.0))
 
 
 def process_conjunctions(sat_states: np.ndarray, debris_states: np.ndarray,
@@ -248,6 +257,6 @@ def process_conjunctions(sat_states: np.ndarray, debris_states: np.ndarray,
     if _native is not None and (_native_set_drag is not None or not _drag["enabled"]):
         if sat_ballistic is None and debris_ballistic is None:
             return _native(sat_states, debris_states, threshold, dt_seconds)
-        as_arr = (lambda b: None if b is None else np.ascontiguousarray(b, dtype=np.float64))
-        return _native(sat_states, debris_states, threshold, dt_seconds, as_arr(sat_ballistic), as_arr(debris_ballistic))
+        return _native(sat_states, debris_states, threshold, dt_seconds,
+                       _native_ballistic(sat_ballistic), _native_ballistic(debris_ballistic))
     return _numpy_process_conjunctions(sat_states, debris_states, threshold, dt_seconds, sat_ballistic, debris_ballistic)
