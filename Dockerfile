@@ -8,7 +8,7 @@ RUN npm run build
 
 # Stage 2: Build the backend + C++ engine into a venv (build toolchain never reaches the
 # final image - it compiles acm_engine, but nothing in the final stage needs a compiler).
-FROM ubuntu:22.04 AS backend-builder
+FROM ubuntu:26.04 AS backend-builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -40,7 +40,7 @@ RUN pip install --no-cache-dir . \
 #   vendors) are removed here in the builder and never reach a layer of the runtime image.
 
 # Stage 3: Runtime image - no compiler, no headers, non-root user.
-FROM ubuntu:22.04
+FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
