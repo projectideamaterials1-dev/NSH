@@ -189,3 +189,42 @@ async def test_redis_snapshot_keeps_per_object_ballistic_coefficients():
     assert await restored.restore()
     assert restored.sat_ballistic[0] == pytest.approx(0.02)
     assert np.isnan(restored.debris_ballistic[0])
+
+
+@pytest.mark.asyncio
+async def test_pending_proposals_and_decisions_survive_a_restart():
+    from satellite_api.acm.autopilot import Autopilot
+    from satellite_api.acm.scenario import circular_state_over, make_threat
+    from satellite_api.config import CONFIG
+    from satellite_api.ground_stations import STATIONS
+
+    CONFIG.autopilotMode = "APPROVAL"
+    fake = FakeRedis()
+    t0 = 1767225600.0
+    original = RedisStateManager(client=fake)
+    autopilot = Autopilot()
+    original.register_snapshot_hook("autopilot_brain", autopilot.snapshot_brain, autopilot.restore_brain)
+    gs = next(s for s in STATIONS if s.id == "GS-001")
+    sat = circular_state_over(gs.latitude, gs.longitude, t0)
+    await original.update_telemetry_raw([list(sat)], [list(make_threat(sat, 1800.0, 0.05))], ["SAT-A"], ["DEB-T"], TS)
+    from satellite_api.acm.conjunctions import annotate_pc, screen
+    preds = annotate_pc(screen(original.sat_buffer[:1].copy(), original.debris_buffer[:1].copy(), ["SAT-A"], ["DEB-T"],
+                               t0, 3600.0), t0)
+    async with original.lock:
+        original.cdms.apply(preds, t0, original.emit)
+        summary = await autopilot.plan_and_schedule(original)
+    assert summary["sequences_proposed"] == 1
+    pid = next(iter(original.proposals))
+    assert await original.save(force=True)
+
+    RedisStateManager._instance = None
+    restored = RedisStateManager(client=fake)
+    fresh_autopilot = Autopilot()
+    restored.register_snapshot_hook("autopilot_brain", fresh_autopilot.snapshot_brain, fresh_autopilot.restore_brain)
+    assert await restored.restore()
+    assert restored.proposals[pid]["status"] == "PENDING"
+    assert [d["outcome"] for d in restored.decisions] == ["PROPOSED"]
+    async with restored.lock:
+        approved = fresh_autopilot.approve(restored, pid, actor="operator:user:alice")
+    assert approved["status"] == "APPROVED" and restored.maneuver_queue
+    assert fresh_autopilot._proposal_seq >= 1          # new proposals will not reuse restored ids

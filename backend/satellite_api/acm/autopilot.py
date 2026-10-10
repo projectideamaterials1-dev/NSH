@@ -88,6 +88,7 @@ class Autopilot:
         return {
             "locked_satellites": {str(idx): list(value) for idx, value in self.brain.locked_satellites.items()},
             "eol_scheduled": sorted(self.brain.eol_scheduled),
+            "proposal_seq": self._proposal_seq,
         }
 
     def restore_brain(self, payload: dict):
@@ -95,6 +96,7 @@ class Autopilot:
             int(idx): tuple(value) for idx, value in payload.get("locked_satellites", {}).items()
         }
         self.brain.eol_scheduled = set(payload.get("eol_scheduled", []))
+        self._proposal_seq = max(self._proposal_seq, int(payload.get("proposal_seq", 0)))
 
     # ── planning ────────────────────────────────────────────────────────────────
     async def plan_and_schedule(self, state) -> Dict[str, int]:

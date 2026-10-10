@@ -67,6 +67,21 @@ class ManeuverPlan:
     category: str = EVASION        # STATION_KEEPING | EVASION | EOL - default is the most
                                     # conservative (fleet_coordinator never re-times it)
 
+def plan_to_dict(p: ManeuverPlan) -> dict:
+    """JSON-safe form of a plan (for proposals persisted in the Redis snapshot)."""
+    return {"sat_idx": int(p.sat_idx), "maneuver_type": p.maneuver_type.value,
+            "delta_v_rtn": [float(x) for x in p.delta_v_rtn], "burn_time_offset_s": float(p.burn_time_offset_s),
+            "estimated_fuel_kg": float(p.estimated_fuel_kg), "recovery_required": bool(p.recovery_required),
+            "confidence": float(p.confidence), "category": p.category}
+
+
+def plan_from_dict(d: dict) -> ManeuverPlan:
+    return ManeuverPlan(sat_idx=d["sat_idx"], maneuver_type=ManeuverType(d["maneuver_type"]),
+                        delta_v_rtn=np.array(d["delta_v_rtn"], dtype=float), burn_time_offset_s=d["burn_time_offset_s"],
+                        estimated_fuel_kg=d["estimated_fuel_kg"], recovery_required=d["recovery_required"],
+                        confidence=d["confidence"], category=d["category"])
+
+
 class AutonomousBrain:
     def __init__(self):
         self.eol_scheduled = set()

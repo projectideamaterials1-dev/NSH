@@ -38,6 +38,16 @@ _COUNTERS = ("total_collisions", "telemetry_version", "burn_version", "sk_in_box
              "burns_rejected", "sim_seconds_elapsed", "event_seq", "last_telemetry_ts")
 
 
+def _proposal_to_json(p: dict) -> dict:
+    from satellite_api.acm.brain import plan_to_dict
+    return {**{k: v for k, v in p.items() if k != "_plans"}, "_plans": [plan_to_dict(x) for x in p.get("_plans", [])]}
+
+
+def _proposal_from_json(p: dict) -> dict:
+    from satellite_api.acm.brain import plan_from_dict
+    return {**p, "_plans": [plan_from_dict(x) for x in p.get("_plans", [])]}
+
+
 class RedisStateManager(StateManager):
     _instance = None  # separate singleton from the plain StateManager
 
@@ -209,6 +219,11 @@ class RedisStateManager(StateManager):
                 "eol_satellites": sorted(self.eol_satellites),
                 "attached_pairs": [sorted(pair) for pair in self.attached_pairs],
                 "external_cdms": self.external_cdms.to_list(),
+                # Human-in-the-loop state: pending proposals must survive a restart or failover, or an
+                # operator's approval would hit a 404 and the threat would silently be re-proposed.
+                "decisions": list(self.decisions)[-300:], "decision_seq": self.decision_seq,
+                "proposals": [_proposal_to_json(p) for p in self.proposals.values()],
+                "burn_rationale": dict(list(self.burn_rationale.items())[-1000:]),
                 "counters": {k: getattr(self, k) for k in _COUNTERS},
                 "external": {name: snap_fn() for name, (snap_fn, _) in self._external_snapshot_hooks.items()},
             }
@@ -278,6 +293,11 @@ class RedisStateManager(StateManager):
             self.eol_satellites = set(meta["eol_satellites"])
             self.attached_pairs = {frozenset(pair) for pair in meta.get("attached_pairs", [])}
             self.external_cdms.restore(meta.get("external_cdms", []))
+            self.decisions.clear()
+            self.decisions.extend(meta.get("decisions", []))
+            self.decision_seq = meta.get("decision_seq", 0)
+            self.proposals = {p["proposal_id"]: _proposal_from_json(p) for p in meta.get("proposals", [])}
+            self.burn_rationale = dict(meta.get("burn_rationale", {}))
             for k, v in meta["counters"].items():
                 setattr(self, k, float("-inf") if v in (None, "-inf") and k == "last_telemetry_ts" else v)
             self.active_cdm_warnings = len(self.cdms.open())
