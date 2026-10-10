@@ -22,6 +22,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+# The distro's venv seeds an old setuptools (several CVEs); it ends up in the runtime image.
+RUN pip install --no-cache-dir --upgrade pip "setuptools>=78.1.1"
 
 WORKDIR /app
 COPY backend/requirements.txt .
@@ -31,7 +33,11 @@ COPY backend/ .
 
 # Compiles the acm_engine C++ extension (OpenMP via GCC) and installs satellite_api into the venv
 RUN pip install --no-cache-dir . \
-    && python3 -c "import acm_engine; assert hasattr(acm_engine, 'process_conjunctions')"
+    && python3 -c "import acm_engine; assert hasattr(acm_engine, 'process_conjunctions')" \
+    && pip uninstall -y -q pip setuptools \
+    && python3 -c "import satellite_api.main"
+# ^ Nothing installs packages at runtime, so pip/setuptools (and the urllib3/msgpack copies pip
+#   vendors) are removed here in the builder and never reach a layer of the runtime image.
 
 # Stage 3: Runtime image - no compiler, no headers, non-root user.
 FROM ubuntu:22.04
@@ -46,7 +52,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # extension links against, curl for the HEALTHCHECK, ca-certificates so HTTPS to CelesTrak and
 # NOAA verifies (without it every live-data fetch fails TLS and the engine silently runs on cached
 # element sets) - no compiler or dev headers here.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
     python3 \
     libgomp1 \
     curl \
