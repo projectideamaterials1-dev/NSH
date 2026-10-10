@@ -143,6 +143,28 @@ export interface Conjunction {
   safe_miss_km?: number;
   propagator?: string;
   encounter_plane?: EncounterPlane;
+  /** "time-scaled RTN model", or "CDM <originator> <message id>" when a measured covariance was used. */
+  covariance_model?: string;
+  covariance_measured?: boolean;
+  /** Matching external CDM (uploaded CCSDS CDM or Space-Track cdm_public), for comparison. */
+  external?: ExternalCdmSummary;
+}
+
+export interface ExternalCdmSummary {
+  message_id: string;
+  originator: string;
+  created: string | null;
+  tca: string;
+  miss_km: number | null;
+  pc: number | null;
+  pc_method: string | null;
+  has_covariance: boolean;
+  source: string;
+}
+
+export interface CdmImportResult {
+  matched: (ExternalCdmSummary & { satellite_id: string; object_id: string })[];
+  unmatched: (ExternalCdmSummary & { objects: string[] })[];
 }
 
 export interface EncounterPlane {
@@ -577,6 +599,7 @@ export interface TelemetryActions {
 
 /** Operations data and operator commands. */
 export interface OpsActions {
+  importCdm: (text: string) => Promise<CdmImportResult>;
   fetchDecisions: () => Promise<void>;
   answerProposal: (proposalId: string, approve: boolean, reason?: string) => Promise<Proposal>;
   fetchTradeSpace: (cdmId: string, axis: 'T' | 'R' | 'N') => Promise<TradeSpace>;

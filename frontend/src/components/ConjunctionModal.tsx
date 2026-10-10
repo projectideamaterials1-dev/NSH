@@ -283,12 +283,15 @@ export const ConjunctionModal: React.FC = () => {
     ['Status', CDM_STATUS_META[cdm.status]?.label ?? cdm.status],
     ['Propagator', cdm.propagator ?? 'RK4 + J2'],
   ];
+  const ext = cdm.external;
 
   return (
     <Modal width={980} onClose={close}
       title={<span className="flex items-center gap-2">{cdm.satellite_id} <span className="text-faint">↔</span> {cdm.object_id}
         <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded" style={{ color: risk.color, background: `${risk.color}1f` }}>{risk.label}</span></span>}
-      subtitle={`${cdm.cdm_id} · TCA ${formatUtcTime(cdm.tca)} UTC · Pc uses a modelled covariance, not orbit-determination data`}>
+      subtitle={`${cdm.cdm_id} · TCA ${formatUtcTime(cdm.tca)} UTC · ${cdm.covariance_measured
+        ? `Pc from measured covariance (${cdm.covariance_model})`
+        : 'Pc uses a modelled covariance - import a CDM for measured covariance'}`}>
       <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
         {stats.map(([k, v]) => (
           <div key={k} className="bg-raised border border-line rounded-lg px-3 py-2">
@@ -297,6 +300,20 @@ export const ConjunctionModal: React.FC = () => {
           </div>
         ))}
       </dl>
+      {ext && (
+        <section className="mb-5 rounded-lg border border-accent/40 bg-accent/5 px-4 py-3 text-[13px]" aria-label="External CDM comparison">
+          <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+            <span className="text-muted">External CDM <b className="text-ink">{ext.message_id}</b> · {ext.originator}</span>
+            <span className="tabular">Their Pc <b className="text-ink">{formatPc(ext.pc)}</b> vs ours <b className="text-ink">{formatPc(cdm.pc)}</b></span>
+            <span className="tabular">Their miss <b className="text-ink">{ext.miss_km == null ? '—' : formatKm(ext.miss_km)}</b> vs ours <b className="text-ink">{formatKm(cdm.miss_distance_km)}</b></span>
+            <span className="tabular text-muted">their TCA {formatUtcTime(ext.tca)}</span>
+          </div>
+          <p className="text-[12px] text-muted mt-1">
+            {ext.has_covariance ? 'Its covariances are used for our Pc.' : 'No covariance in this message (public CDM): our Pc still uses the model.'}
+            {' '}Large disagreement means one side has stale or different orbit data - trust the authoritative source.
+          </p>
+        </section>
+      )}
       <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6">
         <section>
           <h4 className="section-title mb-2">Encounter plane</h4>

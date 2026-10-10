@@ -24,7 +24,7 @@ import time
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
-from satellite_api.realworld import catalog, space_weather
+from satellite_api.realworld import catalog, space_weather, spacetrack
 from satellite_api.timeutils import iso_z
 
 logger = logging.getLogger(__name__)
@@ -122,9 +122,31 @@ def noaa_status(now: Optional[float] = None) -> dict:
             "kp": data.get("kp"), "f107_sfu": data.get("f107_sfu")}
 
 
+def spacetrack_status(now: Optional[float] = None) -> dict:
+    now = time.time() if now is None else now
+    feed = spacetrack.FEED
+    if not spacetrack.credentials():
+        return {"feed": "space_track", "status": "idle", "issues": [],
+                "detail": "SPACETRACK_IDENTITY / SPACETRACK_PASSWORD not set", "age_s": None}
+    age = _age(feed["last_success"], now)
+    issues, status = [], "ok"
+    if feed["last_error_at"] and (feed["last_success"] is None or feed["last_error_at"] >= feed["last_success"]):
+        issues.append(f"last fetch failed: {feed['last_error']}")
+        status = "error" if feed["last_success"] is None else "degraded"
+    if age is not None and age > 3 * spacetrack.POLL_S:
+        issues.append(f"no successful fetch for {age / 3600:.1f} h")
+        status = "stale"
+    if feed["last_success"] is None and status == "ok":
+        status, issues = "idle", ["first poll pending"]
+    return {"feed": "space_track", "status": status, "issues": issues, "age_s": age,
+            "last_success": iso_z(feed["last_success"]) if feed["last_success"] else None,
+            "cdms_last_poll": feed["last_count"]}
+
+
 def assess(realworld) -> Dict[str, dict]:
     now = time.time()
-    return {"celestrak": celestrak_status(realworld, now), "noaa_swpc": noaa_status(now)}
+    return {"celestrak": celestrak_status(realworld, now), "noaa_swpc": noaa_status(now),
+            "space_track": spacetrack_status(now)}
 
 
 class FeedMonitor:
@@ -135,6 +157,7 @@ class FeedMonitor:
         self.last: Dict[str, str] = {}
         self._task: Optional[asyncio.Task] = None
         self._last_weather = 0.0
+        self.spacetrack = spacetrack.SpaceTrackPoller()
 
     async def check(self) -> Dict[str, dict]:
         if time.monotonic() - self._last_weather >= WEATHER_REFRESH_S:
@@ -143,6 +166,7 @@ class FeedMonitor:
                 await asyncio.to_thread(space_weather.fetch_space_weather)
             except Exception as e:     # nothing ever fetched: reported as an error status below
                 logger.warning(f"Space weather refresh failed: {e}")
+        await self._poll_spacetrack()
         feeds = assess(getattr(self.app.state, "realworld", None))
         state = self.app.state.orbital_state
         for name, info in feeds.items():
@@ -151,7 +175,8 @@ class FeedMonitor:
             self.last[name] = current
             if previous is None or previous == current or current == "idle":
                 continue
-            label = "CelesTrak element sets" if name == "celestrak" else "NOAA space weather"
+            label = {"celestrak": "CelesTrak element sets", "noaa_swpc": "NOAA space weather",
+                     "space_track": "Space-Track CDMs"}[name]
             if current == "ok":
                 level, message = "ok", f"{label} feed recovered"
             else:
@@ -160,6 +185,27 @@ class FeedMonitor:
             async with state.lock:
                 state.emit(level, "data_feed", message, feed=name, status=current)
         return feeds
+
+    async def _poll_spacetrack(self):
+        """Public CDMs for the loaded fleet (needs Space-Track credentials and a real catalog)."""
+        realworld = getattr(self.app.state, "realworld", None)
+        if not self.spacetrack.due() or realworld is None or not realworld.fleet:
+            return
+        from satellite_api.realworld.cdm_ingest import parse_json_record
+        from satellite_api.routers.realworld import ingest_cdms
+        norad_ids = [obj.norad_id for obj in realworld.fleet.values()]
+        try:
+            records = await asyncio.to_thread(self.spacetrack.fetch, norad_ids)
+        except Exception:
+            return                                  # reported through spacetrack_status
+        cdms = []
+        for rec in records:
+            try:
+                cdms.append(parse_json_record(rec))
+            except ValueError:
+                continue
+        if cdms:
+            await ingest_cdms(self.app, cdms)
 
     async def _loop(self):
         while True:

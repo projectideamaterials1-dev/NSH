@@ -14,6 +14,7 @@ Real-world data API:
   GET  /api/space-weather                NOAA SWPC Kp, F10.7 and G/S/R scales
 """
 import asyncio
+import time
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -26,6 +27,35 @@ from satellite_api.realworld.space_weather import fetch_space_weather
 from satellite_api.timeutils import iso_z
 
 router = APIRouter(tags=["Real-world data"])
+
+
+def _norad_map(app) -> dict:
+    service = getattr(app.state, "realworld", None)
+    if service is None:
+        return {}
+    return {obj.norad_id: eid for table in (service.fleet, service.objects) for eid, obj in table.items()}
+
+
+async def ingest_cdms(app, cdms: list) -> dict:
+    """Matches parsed CDMs to engine pairs, stores them and asks for a re-screen. Returns a summary."""
+    from satellite_api.realworld.cdm_ingest import external_summary, resolve_pair
+    state = app.state.orbital_state
+    norad = _norad_map(app)
+    matched, unmatched = [], []
+    async with state.lock:
+        now_ts = state.now_ts if state.current_time else time.time()
+        for cdm in cdms:
+            pair = resolve_pair(cdm, state.sat_id_to_idx, list(state.debris_id_to_idx) + list(state.sat_id_to_idx), norad)
+            rec = state.external_cdms.add(cdm, pair, now_ts)
+            row = {**external_summary(rec), "satellite_id": rec["satellite_id"], "object_id": rec["object_id"],
+                   "objects": [o["designator"] or o["name"] for o in cdm["objects"]]}
+            (matched if pair else unmatched).append(row)
+        state.external_cdms.prune(now_ts)
+        if matched:
+            state.telemetry_version += 1           # triggers a screening cycle that re-assesses Pc
+            state.emit("info", "conjunction", f"{len(matched)} external CDM(s) ingested "
+                       f"({sum(r['has_covariance'] for r in matched)} with covariance)")
+    return {"matched": matched, "unmatched": unmatched}
 
 
 def _service(request: Request) -> RealWorldService:
@@ -170,3 +200,37 @@ async def space_weather(force: bool = Query(False)):
         return await asyncio.to_thread(fetch_space_weather, force)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"NOAA SWPC unavailable: {e}")
+
+
+# ============================================================================
+# external conjunction data messages
+# ============================================================================
+@router.post("/api/cdm", tags=["Operations"])
+async def upload_cdm(request: Request):
+    """Ingests external CDMs: CCSDS KVN text (one or several messages), CCSDS-keyword JSON, or
+    Space-Track `cdm_public` JSON. Messages carrying both objects' RTN covariance make Pc use the
+    measured covariance; all of them are shown next to this engine's own assessment."""
+    from satellite_api.realworld.cdm_ingest import CDMParseError, parse_any
+    body = await request.body()
+    if not body.strip():
+        raise HTTPException(status_code=400, detail="Empty body: send CDM text or JSON")
+    if len(body) > 5_000_000:
+        raise HTTPException(status_code=413, detail="CDM payload too large (5 MB max)")
+    try:
+        cdms = parse_any(body)
+    except (CDMParseError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=f"Could not parse CDM: {e}")
+    return await ingest_cdms(request.app, cdms)
+
+
+@router.get("/api/cdm", tags=["Operations"])
+async def list_external_cdms(request: Request, matched: Optional[bool] = None):
+    """External CDMs received (uploaded or polled from Space-Track), newest TCA last."""
+    from satellite_api.realworld.cdm_ingest import external_summary
+    state = request.app.state.orbital_state
+    async with state.lock:
+        items = state.external_cdms.to_list()
+    rows = [{**external_summary(r), "satellite_id": r["satellite_id"], "object_id": r["object_id"],
+             "matched": r["matched"], "objects": [o["designator"] or o["name"] for o in r["objects"]]}
+            for r in items if matched is None or r["matched"] == matched]
+    return {"cdms": rows}

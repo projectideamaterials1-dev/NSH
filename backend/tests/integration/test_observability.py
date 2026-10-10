@@ -105,7 +105,7 @@ async def test_feed_monitor_reports_status_changes(client, monkeypatch):
 
     health = (await client.get("/health")).json()
     assert health["feeds"]["noaa_swpc"] == "ok" and health["feeds"]["celestrak"] == "idle"
-    assert set((await client.get("/api/feeds")).json()) == {"celestrak", "noaa_swpc"}
+    assert set((await client.get("/api/feeds")).json()) == {"celestrak", "noaa_swpc", "space_track"}
 
 
 def test_assess_marks_missing_weather_as_idle_then_error():

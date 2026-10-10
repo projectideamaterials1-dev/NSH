@@ -24,6 +24,7 @@ import numpy as np
 from satellite_api.acm.brain import COLLISION_THRESHOLD_KM
 from satellite_api.acm.collision_probability import assess
 from satellite_api.config import CONFIG
+from satellite_api.realworld.cdm_ingest import covariances_for, external_summary, lookup
 from satellite_api.physics_engine import process_conjunctions, propagate_states
 from satellite_api.timeutils import iso_z
 
@@ -58,16 +59,27 @@ def needs_action(cdm: dict) -> bool:
     return cdm["miss_distance_km"] <= EVASION_TRIGGER_KM or (pc is not None and pc >= CONFIG.pcManeuverThreshold)
 
 
-def annotate_pc(predictions: List[dict], now_ts: float) -> List[dict]:
+def annotate_pc(predictions: List[dict], now_ts: float, external_index: Optional[dict] = None) -> List[dict]:
     """Adds Pc + encounter-plane geometry from the TCA states that screen()/the SGP4 refiner
-    attach as `_state_sat`/`_state_obj`, then drops those internal fields."""
+    attach as `_state_sat`/`_state_obj`, then drops those internal fields.
+
+    `external_index` (ExternalCDMStore.index()): when an external CDM describes the same encounter,
+    its Pc/miss are attached for comparison and, if it carries both covariances, Pc is computed
+    from those measured covariances instead of the model."""
     for p in predictions:
         a, b = p.pop("_state_sat", None), p.pop("_state_obj", None)
+        rec = lookup(external_index, p["satellite_id"], p["object_id"], p["tca_ts"]) if external_index else None
+        cov_sat = cov_obj = None
+        if rec is not None:
+            p["external"] = external_summary(rec)
+            cov_sat, cov_obj = covariances_for(rec)
         if a is None or b is None:
             continue
         p.update(assess(a, b, p["miss_distance_km"], p["tca_ts"] - now_ts,
                         obj_is_owned=p["object_type"] == "SATELLITE", hbr_m=CONFIG.hardBodyRadiusM,
-                        covariance_scale=CONFIG.covarianceScale, pc_threshold=CONFIG.pcManeuverThreshold))
+                        covariance_scale=CONFIG.covarianceScale, pc_threshold=CONFIG.pcManeuverThreshold,
+                        cov_sat_rtn=cov_sat, cov_obj_rtn=cov_obj,
+                        covariance_source=f"CDM {rec['originator']} {rec['message_id']}" if rec else None))
     return predictions
 
 

@@ -121,13 +121,21 @@ def required_miss_km(miss_dir_xy: np.ndarray, cov_2d: np.ndarray, hbr_km: float,
 
 def assess(state_sat: np.ndarray, state_obj: np.ndarray, miss_km: float, dt_to_tca_s: float,
            obj_is_owned: bool, hbr_m: float = DEFAULT_HBR_M, covariance_scale: float = 1.0,
-           pc_threshold: Optional[float] = None) -> dict:
-    """Pc and encounter-plane geometry for one conjunction (states at/near TCA, same frame)."""
+           pc_threshold: Optional[float] = None, cov_sat_rtn: Optional[np.ndarray] = None,
+           cov_obj_rtn: Optional[np.ndarray] = None, covariance_source: Optional[str] = None) -> dict:
+    """Pc and encounter-plane geometry for one conjunction (states at/near TCA, same frame).
+
+    `cov_sat_rtn` / `cov_obj_rtn`: measured 3x3 RTN position covariances [km^2] (e.g. from a CCSDS
+    CDM). When both are given they replace the time-scaled model covariance."""
     state_sat = np.asarray(state_sat, dtype=float)
     state_obj = np.asarray(state_obj, dtype=float)
     x_hat, y_hat, _ = encounter_frame(state_sat, state_obj)
-    cov = (eci_covariance(state_sat, model_covariance_rtn(dt_to_tca_s, True, covariance_scale))
-           + eci_covariance(state_obj, model_covariance_rtn(dt_to_tca_s, obj_is_owned, covariance_scale)))
+    measured = cov_sat_rtn is not None and cov_obj_rtn is not None
+    if measured:
+        cov = eci_covariance(state_sat, np.asarray(cov_sat_rtn, dtype=float)) +             eci_covariance(state_obj, np.asarray(cov_obj_rtn, dtype=float))
+    else:
+        cov = (eci_covariance(state_sat, model_covariance_rtn(dt_to_tca_s, True, covariance_scale))
+               + eci_covariance(state_obj, model_covariance_rtn(dt_to_tca_s, obj_is_owned, covariance_scale)))
     plane = np.vstack([x_hat, y_hat])
     # Tiny floor keeps degenerate (co-moving / near-zero covariance) geometry well-posed.
     cov_2d = plane @ cov @ plane.T + np.eye(2) * 1e-12
@@ -144,7 +152,8 @@ def assess(state_sat: np.ndarray, state_obj: np.ndarray, miss_km: float, dt_to_t
     out = {
         "pc": pc,
         "hbr_m": hbr_m,
-        "covariance_model": "time-scaled RTN model",
+        "covariance_model": (covariance_source or "measured (CDM)") if measured else "time-scaled RTN model",
+        "covariance_measured": measured,
         "encounter_plane": {
             "miss_x_km": float(miss_km), "miss_y_km": 0.0,
             "sigma_major_km": sigma_major, "sigma_minor_km": sigma_minor,

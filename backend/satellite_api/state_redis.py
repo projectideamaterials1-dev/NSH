@@ -208,6 +208,7 @@ class RedisStateManager(StateManager):
                               for k, v in self.sat_modes.items()},
                 "eol_satellites": sorted(self.eol_satellites),
                 "attached_pairs": [sorted(pair) for pair in self.attached_pairs],
+                "external_cdms": self.external_cdms.to_list(),
                 "counters": {k: getattr(self, k) for k in _COUNTERS},
                 "external": {name: snap_fn() for name, (snap_fn, _) in self._external_snapshot_hooks.items()},
             }
@@ -276,6 +277,7 @@ class RedisStateManager(StateManager):
                               for k, v in meta["sat_modes"].items()}
             self.eol_satellites = set(meta["eol_satellites"])
             self.attached_pairs = {frozenset(pair) for pair in meta.get("attached_pairs", [])}
+            self.external_cdms.restore(meta.get("external_cdms", []))
             for k, v in meta["counters"].items():
                 setattr(self, k, float("-inf") if v in (None, "-inf") and k == "last_telemetry_ts" else v)
             self.active_cdm_warnings = len(self.cdms.open())

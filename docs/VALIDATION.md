@@ -77,3 +77,19 @@ uncertainty grows linearly with time to TCA:
 `pcManeuverThreshold` (default 1e-4, a common operator maneuver threshold) or a miss under
 100 m, and WARNING at Pc ≥ 1e-6 or a miss under 1 km. For a Pc-driven encounter, evasion sizes
 its burn to reach the miss distance at which Pc falls a decade below the threshold.
+
+### Measured covariance and external CDMs
+
+`POST /api/cdm` (or **Import CDM** on the Threats tab) accepts CCSDS CDMs in KVN or JSON. When a
+message matches a predicted encounter (same satellite/object pair, TCA within 10 minutes) and
+carries both objects' RTN position covariance, Pc is computed from **those** covariances instead of
+the model. The conjunction then shows `covariance_model: CDM <originator> <message id>`. Operators
+receive such CDMs for their own spacecraft from Space-Track (`cdm` class) or commercial SSA
+providers.
+
+With `SPACETRACK_IDENTITY` / `SPACETRACK_PASSWORD` set, the backend also polls Space-Track's public
+CDMs (`cdm_public`) for the loaded fleet, at most once an hour to respect Space-Track's rate limits.
+Public CDMs carry no covariance, but their Pc and miss distance appear next to this engine's own,
+so any disagreement is visible. Feed health for this source is reported as `space_track` in
+`GET /api/feeds`.
+

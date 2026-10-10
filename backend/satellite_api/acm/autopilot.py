@@ -510,6 +510,7 @@ class ConjunctionService:
                 sat_ids = [state.idx_to_sat_id[i] for i in range(state.sat_count)]
                 deb_ids = [state.idx_to_debris_id[i] for i in range(state.debris_count)]
                 sat_b, deb_b = state.ballistic_arrays()
+                external_index = state.external_cdms.index()
                 start_ts = state.now_ts
                 versions = (state.telemetry_version, state.burn_version)
                 refiner = self.refiner
@@ -538,7 +539,7 @@ class ConjunctionService:
             SCREEN_DURATION.observe(elapsed)
             if state.attached_pairs:
                 predictions = [p for p in predictions if not state.is_attached(p["satellite_id"], p["object_id"])]
-            predictions = await asyncio.to_thread(annotate_pc, predictions, start_ts)
+            predictions = await asyncio.to_thread(annotate_pc, predictions, start_ts, external_index)
 
             async with state.lock:
                 stats = state.cdms.apply(predictions, state.now_ts, state.emit)

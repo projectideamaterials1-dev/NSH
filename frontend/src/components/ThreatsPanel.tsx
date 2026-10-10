@@ -2,7 +2,7 @@
 // Fleet-wide predicted conjunctions (CDMs) with risk, time to closest approach and response status.
 
 import React, { useMemo, useState } from 'react';
-import { Crosshair, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Crosshair, FileUp, RefreshCw, ShieldCheck } from 'lucide-react';
 import useOrbitalStore from '../store/useOrbitalStore';
 import type { Conjunction } from '../store/useOrbitalStore';
 import { CDM_STATUS_META, formatDuration, formatKm, formatPc, formatUtcTime, needsAction, riskMeta, secondsUntil } from '../lib/format';
@@ -22,6 +22,24 @@ export const ThreatsPanel: React.FC = () => {
   const [filter, setFilter] = useState<'actionable' | 'all'>('actionable');
   const openConjunction = useOrbitalStore(s => s.openConjunction);
   const pcThreshold = useOrbitalStore(s => s.config?.pcManeuverThreshold ?? 1e-4);
+  const importCdm = useOrbitalStore(s => s.importCdm);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [importMsg, setImportMsg] = useState<{ tone: 'ok' | 'warn' | 'crit'; text: string } | null>(null);
+
+  const onFile = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const r = await importCdm(await file.text());
+      const cov = r.matched.filter(m => m.has_covariance).length;
+      setImportMsg(r.matched.length
+        ? { tone: 'ok', text: `${r.matched.length} CDM(s) matched (${cov} with covariance)${r.unmatched.length ? `, ${r.unmatched.length} unmatched` : ''}. Pc updates after the next screen.` }
+        : { tone: 'warn', text: `No CDM matched a tracked satellite/object pair (${r.unmatched.length} received).` });
+    } catch (e) {
+      setImportMsg({ tone: 'crit', text: e instanceof Error ? e.message : 'Import failed' });
+    } finally {
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
 
   const rows = useMemo(() => {
     const list = conjunctions.filter((c: Conjunction) => filter === 'all' || c.risk !== 'WATCH');
@@ -41,12 +59,22 @@ export const ThreatsPanel: React.FC = () => {
           </button>
         </div>
         <div className="flex-1" />
+        <input ref={fileRef} type="file" accept=".cdm,.kvn,.txt,.json,text/plain,application/json" className="hidden"
+          onChange={e => onFile(e.target.files?.[0])} aria-label="CDM file" />
+        <Button onClick={() => fileRef.current?.click()} icon={<FileUp className="w-4 h-4" />}
+          title="Import CCSDS CDMs (KVN or JSON) or Space-Track cdm_public JSON" aria-label="Import CDM" />
         <Button onClick={() => screenNow()} disabled={!hasData || screening}
           icon={<RefreshCw className={`w-4 h-4 ${screening ? 'animate-spin' : ''}`} />} title="Run conjunction screening now">
           {screening ? 'Screening…' : 'Screen now'}
         </Button>
       </div>
 
+      {importMsg && (
+        <div className={`px-4 py-2 text-[12px] border-b border-line/60 ${importMsg.tone === 'ok' ? 'text-ok' : importMsg.tone === 'warn' ? 'text-warn' : 'text-crit'}`}
+          role="status">
+          {importMsg.text}
+        </div>
+      )}
       {lastScreen && (
         <div className="px-4 py-2 text-[11px] text-faint border-b border-line/60 tabular">
           Last screen {formatUtcTime(lastScreen.screened_at)} · {formatDuration(lastScreen.horizon_s)} ahead ·
@@ -92,7 +120,13 @@ export const ThreatsPanel: React.FC = () => {
                     <div className="flex items-center gap-1.5 mt-1 text-[12px] text-muted tabular whitespace-nowrap">
                       <span className={eta < 600 ? 'text-warn' : ''} title={`TCA ${formatUtcTime(c.tca)} UTC`}>TCA in {formatDuration(eta)}</span>
                       <span className="text-faint">·</span>
-                      <span title="Probability of collision">Pc {formatPc(c.pc)}</span>
+                      <span title={c.covariance_measured ? `Pc from measured covariance (${c.covariance_model})` : 'Probability of collision (modelled covariance)'}>
+                        Pc {formatPc(c.pc)}
+                      </span>
+                      {c.external && (
+                        <span className="text-[10px] font-semibold px-1 rounded border border-accent/50 text-accent"
+                          title={`External CDM ${c.external.message_id} (${c.external.originator}): Pc ${formatPc(c.external.pc)}`}>CDM</span>
+                      )}
                       <span className="ml-auto truncate min-w-0" style={{ color: status.color }}>{status.label}</span>
                     </div>
                   </button>

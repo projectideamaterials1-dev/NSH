@@ -5,6 +5,7 @@ import { apiJson } from '../../api/http';
 import { CONSTANTS } from '../frames';
 import type {
   AutopilotInfo,
+  CdmImportResult,
   CatalogObjectInfo,
   Conjunction,
   Decision,
@@ -113,6 +114,16 @@ export const createOpsActions = (set: SetState, get: GetState): OpsActions => ({
   },
 
   openConjunction: (cdmId) => set({ conjunctionDetailId: cdmId }),
+
+  importCdm: async (text) => {
+    const result = await apiJson<CdmImportResult>('/api/cdm', {
+      method: 'POST', body: text, headers: { 'Content-Type': 'text/plain' },
+    });
+    // The backend re-screens on its own once a CDM matches; refresh shortly after to show it.
+    await get().fetchOps();
+    setTimeout(() => { get().fetchOps(); }, 2500);
+    return result;
+  },
 
   fetchAutopilot: async () => {
     try {

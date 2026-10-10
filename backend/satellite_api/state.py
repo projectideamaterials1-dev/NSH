@@ -21,6 +21,7 @@ from satellite_api.config import CONFIG
 from satellite_api.coordinates import convert_states_to_lla
 from satellite_api.physics_engine import configure_drag, density_scale, process_conjunctions, propagate_states
 from satellite_api.realworld import space_weather
+from satellite_api.realworld.cdm_ingest import ExternalCDMStore
 from satellite_api.timeutils import iso_z, parse_iso_utc
 
 # ============================================================================
@@ -161,6 +162,7 @@ class StateManager:
         self.decision_seq = 0
         self.burn_rationale: Dict[str, str] = {}                # burn_id -> why it was planned
         self.proposals: Dict[str, dict] = {}                    # proposal_id -> awaiting/answered proposal
+        self.external_cdms = ExternalCDMStore()                  # CCSDS / Space-Track CDMs (realworld/cdm_ingest.py)
 
     def record_decision(self, **entry) -> dict:
         self.decision_seq += 1

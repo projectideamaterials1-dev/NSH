@@ -65,6 +65,9 @@ services:
       - REALWORLD_MAX_OBJECTS=${REALWORLD_MAX_OBJECTS:-5000}
       # Optional bearer token required by GET /metrics (Prometheus `authorization:` setting).
       - METRICS_TOKEN=${METRICS_TOKEN:-}
+      # Optional Space-Track account: public CDMs as an authoritative Pc/miss cross-check.
+      - SPACETRACK_IDENTITY=${SPACETRACK_IDENTITY:-}
+      - SPACETRACK_PASSWORD=${SPACETRACK_PASSWORD:-}
     # Runs as uid/gid 1000 (non-root, see Dockerfile) - the bind-mounted host directory must be
     # writable by that uid, e.g. `mkdir -p backend/data && chown -R 1000:1000 backend/data` (or
     # `chmod -R o+rwX backend/data` if you can't chown on your host) before first start.
