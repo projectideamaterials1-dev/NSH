@@ -147,7 +147,7 @@ async def test_redis_round_trip_preserves_staggered_lock_window():
         original.sat_fuel[idx] = fuel
 
     async with original.lock:
-        summary = autopilot.plan_and_schedule(original)
+        summary = await autopilot.plan_and_schedule(original)
     assert summary["sk_burns_staggered"] == 2
 
     idx0 = original.sat_id_to_idx["SK-0"]

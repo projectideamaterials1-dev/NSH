@@ -8,23 +8,32 @@ ConjunctionService.run_cycle():
      in a worker thread (acm.conjunctions.screen);
   2. merges predictions into the CDM registry (events for new/escalated/cleared threats);
   3. if the autopilot is enabled, plans with AutonomousBrain using the selected avoidance
-     plugin (evasion + recovery, station-keeping return, end-of-life graveyard), validates
-     every sequence with acm.scheduler and queues accepted burns.
+     plugin (evasion + recovery, station-keeping return, end-of-life graveyard). Evasions are
+     verified against the post-maneuver trajectory (acm.decision_support.verify_sequence);
+     if the primary threat is not cleared or a secondary conjunction appears, the mirrored and
+     other-axis alternatives are tried. Every sequence is validated with acm.scheduler, then
+     queued (AUTONOMOUS mode) or held as a proposal for an operator (APPROVAL mode). Each
+     decision is logged with a plain-language rationale (state.decisions).
 A background task (started by the FastAPI lifespan) runs full cycles whenever simulation time has
 advanced by CONFIG.cdmScreenIntervalSeconds or telemetry/burns changed, and in between re-runs the
 (cheap) planner every PLAN_INTERVAL_S of simulation time while threats are open, so burns are
 uplinked as soon as a threatened satellite enters ground-station contact.
 """
 import asyncio
+import copy
 import logging
+import math
 import time
 from collections import defaultdict, deque
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 
-from satellite_api.acm.brain import AutonomousBrain, Conjunction
+from satellite_api.acm.brain import EOL, EVASION, STATION_KEEPING, AutonomousBrain, Conjunction
 from satellite_api.acm.conjunctions import annotate_pc, needs_action, screen
+from satellite_api.acm.decision_support import (
+    rationale_eol, rationale_evasion, rationale_station_keeping, verify_sequence,
+)
 from satellite_api.acm.fleet_coordinator import coordinate_fleet
 from satellite_api.acm.plugins import get_plugin
 from satellite_api.acm.scheduler import BurnRequest, evaluate_sequence, queue_burns
@@ -49,6 +58,9 @@ DURATION_HISTORY_LEN = 20       # rolling window of recent screen durations, for
 # bound the (expensive) refinement pass to priority + closest candidates - see conjunctions.screen -
 # until a screen completes quickly enough to prove it has recovered.
 MAX_REFINE_WHEN_OVERLOADED = 1000
+MAX_EVASION_CANDIDATES = 4      # the planner's choice plus mirrored / other-axis alternatives
+MAX_RATIONALES = 5000
+MAX_PROPOSALS = 200
 
 
 class Autopilot:
@@ -57,6 +69,7 @@ class Autopilot:
         self.stations = brain_stations()
         self.last_plan_summary: Dict[str, int] = {}
         self._last_reject: Dict[str, tuple] = {}
+        self._proposal_seq = 0
 
     def reset(self):
         self.brain = AutonomousBrain()
@@ -82,29 +95,38 @@ class Autopilot:
         }
         self.brain.eol_scheduled = set(payload.get("eol_scheduled", []))
 
-    def plan_and_schedule(self, state) -> Dict[str, int]:
-        """Runs the planner on the current state and queues validated burns. Caller holds the lock."""
-        summary = {"sequences_planned": 0, "sequences_scheduled": 0, "sequences_rejected": 0}
+    # ── planning ────────────────────────────────────────────────────────────────
+    async def plan_and_schedule(self, state) -> Dict[str, int]:
+        """Runs the planner on the current state and queues (or, in APPROVAL mode, proposes)
+        validated burns. Caller holds the lock; post-maneuver verification screens run in a
+        worker thread meanwhile."""
+        summary = {"sequences_planned": 0, "sequences_scheduled": 0, "sequences_rejected": 0,
+                   "sequences_proposed": 0}
         n = state.sat_count
         if n == 0 or state.current_time is None:
             return summary
         now = state.current_time
         now_ts = now.timestamp()
         plugin = get_plugin(CONFIG.avoidanceStrategy)
+        self.expire_proposals(state)
+        pending_sats = {p["satellite_id"] for p in state.proposals.values() if p["status"] == "PENDING"}
 
-        conjunctions = []
+        conjunctions, threat_cdms = [], defaultdict(list)
         for cdm in state.cdms.open():
             idx = state.sat_id_to_idx.get(cdm["satellite_id"])
             if idx is None or cdm["status"] != "ACTIVE" or cdm["tca_ts"] <= now_ts:
                 continue
-            conjunctions.append(Conjunction(
+            conj = Conjunction(
                 sat_idx=idx, debris_idx=0, tca_seconds=cdm["tca_ts"] - now_ts,
                 miss_distance_km=cdm["miss_distance_km"], relative_velocity_kms=cdm["relative_velocity_kms"],
                 risk_score=1.0 if cdm["risk"] == "CRITICAL" else 0.5,
                 pc=cdm.get("pc"), requires_action=needs_action(cdm),
                 # Pc-sized clearance: the miss at which Pc falls a decade below the threshold.
-                target_clearance_km=min(cdm.get("safe_miss_km") or 0.2, 5.0),
-            ))
+                target_clearance_km=_clearance(cdm),
+            )
+            conjunctions.append(conj)
+            if conj.is_threat():
+                threat_cdms[idx].append(cdm)
 
         sat_states = state.sat_buffer[:n].copy()
         nominal = state.nominal_buffer[:n].copy()
@@ -123,6 +145,13 @@ class Autopilot:
                 p = self.brain.plan_eol(i, sat_states[i], fuels[i], max_dv_kms=CONFIG.maxDeltaV / 1000.0)
                 if p:
                     plans.append(p)
+
+        # A satellite with a proposal awaiting the operator is not re-planned until it is answered.
+        if pending_sats:
+            for p in plans:
+                if state.idx_to_sat_id[p.sat_idx] in pending_sats:
+                    self._release(p.sat_idx, p.category == EOL)
+            plans = [p for p in plans if state.idx_to_sat_id[p.sat_idx] not in pending_sats]
 
         # ── Fleet-wide coordination: prioritize + stagger clustered station-keeping burns. ──
         # Never re-times EVASION/EOL plans - see acm/fleet_coordinator.py's module docstring
@@ -146,46 +175,298 @@ class Autopilot:
         for idx, seq in by_sat.items():
             sid = state.idx_to_sat_id[idx]
             summary["sequences_planned"] += 1
-            burns = []
-            for k, p in enumerate(sorted(seq, key=lambda p: p.burn_time_offset_s)):
-                dv = p.delta_v_eci_dict
-                burns.append(BurnRequest(
-                    burn_id=f"AUTO-{sid}-{p.maneuver_type.value}-{int(now_ts + p.burn_time_offset_s)}-{k}",
-                    ts=now_ts + p.burn_time_offset_s, dv_kms=(dv["x"], dv["y"], dv["z"]),
-                    maneuver_type=p.maneuver_type.value, actor="autopilot",
-                ))
+            seq = sorted(seq, key=lambda p: p.burn_time_offset_s)
+            kind = EOL if any(p.category == EOL for p in seq) else (
+                EVASION if any(p.category == EVASION for p in seq) else STATION_KEEPING)
+            candidates = []
+            total_dv_mps = sum(float(np.linalg.norm(p.delta_v_rtn)) for p in seq) * 1000.0
+            if kind == EVASION:
+                seq, rationale, candidates = await self._choose_evasion(
+                    state, idx, seq, threat_cdms.get(idx, []), fuels[idx], now_ts)
+            elif kind == EOL:
+                rationale = rationale_eol(fuels[idx], total_dv_mps)
+            else:
+                rationale = rationale_station_keeping(
+                    float(np.linalg.norm(sat_states[idx, :3] - nominal[idx, :3])), total_dv_mps,
+                    sum(p.estimated_fuel_kg for p in seq))
+
+            burns = self._burn_requests(sid, seq, now_ts)
             evaluation = evaluate_sequence(state, sid, burns)
-            is_evasion = any(b.maneuver_type in EVASION_TYPES for b in burns)
-            is_eol = any(b.maneuver_type == "EOL_GRAVEYARD" for b in burns)
-            if evaluation.accepted:
-                queue_burns(state, sid, burns, source="autopilot")
+            cdm_ids = [c["cdm_id"] for c in threat_cdms.get(idx, [])] if kind == EVASION else []
+            if evaluation.accepted and CONFIG.autopilotMode == "APPROVAL":
+                self._propose(state, idx, sid, kind, seq, burns, evaluation, rationale, candidates, cdm_ids, now_ts)
+                summary["sequences_proposed"] += 1
+            elif evaluation.accepted:
+                self._commit(state, sid, burns, evaluation, kind, rationale, plugin.name(), actor="autopilot")
                 self._last_reject.pop(sid, None)
                 summary["sequences_scheduled"] += 1
-                end_ts = burns[-1].ts + 1.0
-                mode = "GRAVEYARD" if is_eol else ("EVADING" if is_evasion else "RECOVERING")
-                state.sat_modes[sid] = {"mode": mode, "until_ts": float("inf") if is_eol else end_ts}
-                if is_evasion:
-                    linked = state.cdms.link_mitigation(sid, [b.burn_id for b in burns], now_ts)
-                    state.emit("ok", "autopilot", f"Avoidance planned ({plugin.name()}): {len(burns)} burns, "
-                               f"{evaluation.fuel_needed_kg:.3f} kg", satellite_id=sid, cdm_ids=linked)
-                elif is_eol:
-                    state.emit("warn", "autopilot", "End-of-life graveyard burn scheduled", satellite_id=sid)
-                else:
-                    state.emit("info", "autopilot", "Station-keeping return scheduled", satellite_id=sid)
+                state.record_decision(satellite_id=sid, kind=kind, outcome="SCHEDULED", rationale=rationale,
+                                      cdm_ids=cdm_ids, candidates=candidates, burns=self._burn_rows(burns),
+                                      fuel_kg=round(evaluation.fuel_needed_kg, 4), actor="autopilot")
             else:
                 summary["sequences_rejected"] += 1
                 # Release the planner lock so the next cycle can try again (e.g. after LOS returns).
-                self.brain.locked_satellites.pop(idx, None)
-                if is_eol:
-                    self.brain.eol_scheduled.discard(idx)
+                self._release(idx, kind == EOL)
                 previous = self._last_reject.get(sid)
                 if previous is None or previous[0] != evaluation.reason or now_ts - previous[1] >= REJECT_EVENT_THROTTLE_S:
                     self._last_reject[sid] = (evaluation.reason, now_ts)
                     state.emit("warn", "autopilot", f"Planned sequence rejected: {evaluation.reason.replace('_', ' ').lower()}",
                                satellite_id=sid, reason=evaluation.reason)
+                    state.record_decision(satellite_id=sid, kind=kind, outcome="REJECTED", rationale=rationale,
+                                          reason=evaluation.reason, cdm_ids=cdm_ids, candidates=candidates,
+                                          burns=self._burn_rows(burns), actor="autopilot")
         self.last_plan_summary = summary
         return summary
 
+    # ── helpers ─────────────────────────────────────────────────────────────────
+    def _release(self, idx: int, is_eol: bool = False):
+        self.brain.locked_satellites.pop(idx, None)
+        if is_eol:
+            self.brain.eol_scheduled.discard(idx)
+
+    @staticmethod
+    def _burn_requests(sid: str, seq, now_ts: float, actor: str = "autopilot") -> List[BurnRequest]:
+        burns = []
+        for k, p in enumerate(sorted(seq, key=lambda p: p.burn_time_offset_s)):
+            dv = p.delta_v_eci_dict
+            burns.append(BurnRequest(
+                burn_id=f"AUTO-{sid}-{p.maneuver_type.value}-{int(now_ts + p.burn_time_offset_s)}-{k}",
+                ts=now_ts + p.burn_time_offset_s, dv_kms=(dv["x"], dv["y"], dv["z"]),
+                maneuver_type=p.maneuver_type.value, actor=actor,
+            ))
+        return burns
+
+    @staticmethod
+    def _burn_rows(burns: List[BurnRequest]) -> List[dict]:
+        return [{"burn_id": b.burn_id, "burn_time": iso_z(b.ts), "ts": b.ts, "delta_v_mps": round(b.dv_mps, 4),
+                 "maneuver_type": b.maneuver_type} for b in burns]
+
+    def _commit(self, state, sid: str, burns: List[BurnRequest], evaluation, kind: str, rationale: str,
+                strategy: str, actor: str):
+        for b in burns:
+            state.burn_rationale[b.burn_id] = rationale
+        while len(state.burn_rationale) > MAX_RATIONALES:
+            state.burn_rationale.pop(next(iter(state.burn_rationale)))
+        queue_burns(state, sid, burns, source=actor)
+        now_ts = state.now_ts
+        mode = "GRAVEYARD" if kind == EOL else ("EVADING" if kind == EVASION else "RECOVERING")
+        state.sat_modes[sid] = {"mode": mode, "until_ts": float("inf") if kind == EOL else burns[-1].ts + 1.0}
+        if kind == EVASION:
+            linked = state.cdms.link_mitigation(sid, [b.burn_id for b in burns], now_ts)
+            state.emit("ok", "autopilot", f"Avoidance planned ({strategy}): {len(burns)} burns, "
+                       f"{evaluation.fuel_needed_kg:.3f} kg", satellite_id=sid, cdm_ids=linked, rationale=rationale)
+        elif kind == EOL:
+            state.emit("warn", "autopilot", "End-of-life graveyard burn scheduled", satellite_id=sid, rationale=rationale)
+        else:
+            state.emit("info", "autopilot", "Station-keeping return scheduled", satellite_id=sid, rationale=rationale)
+
+    async def _choose_evasion(self, state, idx: int, seq, threats: List[dict], fuel_kg: float, now_ts: float):
+        """Verifies the planner's evasion against the post-maneuver trajectory and, when it leaves the
+        primary threat unresolved or creates a secondary conjunction, tries the alternatives."""
+        sid = state.idx_to_sat_id[idx]
+        threat_rows = sorted(({"object_id": c["object_id"], "miss_distance_km": c["miss_distance_km"],
+                               "pc": c.get("pc"), "tca_s": c["tca_ts"] - now_ts, "clearance_km": _clearance(c)}
+                              for c in threats),
+                             key=lambda t: (-(t["pc"] or 0.0), t["miss_distance_km"]))
+        if not threat_rows:     # planner acted on a CDM that closed meanwhile: nothing to verify against
+            first = seq[0].burn_time_offset_s
+            threat_rows = [{"object_id": "unknown", "miss_distance_km": 0.0, "pc": None, "tca_s": first,
+                            "clearance_km": 0.2}]
+        first_label = _label("radial" if any(p.maneuver_type.value == "RADIAL_SHUNT" for p in seq) else "transverse",
+                             _direction(seq))
+        options = [(first_label, seq)]
+        verify = CONFIG.verifyManeuvers and bool(threats)
+        if verify:
+            sat_state = state.sat_buffer[idx].copy()
+            nominal = state.nominal_buffer[idx].copy()
+            brain_threats = [Conjunction(sat_idx=idx, debris_idx=0, tca_seconds=t["tca_s"],
+                                         miss_distance_km=t["miss_distance_km"], relative_velocity_kms=0.0,
+                                         risk_score=1.0, pc=t["pc"], requires_action=True,
+                                         target_clearance_km=t["clearance_km"]) for t in threat_rows]
+            for mode in ("transverse", "radial"):
+                for direction in (1.0, -1.0):
+                    label = _label(mode, direction)
+                    if label == first_label:
+                        continue
+                    alt = self.brain.calculate_perfect_evasion_sequence(idx, brain_threats, fuel_kg, sat_state,
+                                                                        nominal, mode=mode, direction=direction)
+                    if alt:
+                        options.append((label, alt))
+            objects, ids, types = _screen_objects(state, idx)
+            screen_horizon = CONFIG.cdmHorizonSeconds if ENGINE_NAME == "cpp" else min(CONFIG.cdmHorizonSeconds, 3600.0)
+            horizon = max(screen_horizon, max(t["tca_s"] for t in threat_rows) + 600.0)
+            threat_ids = {t["object_id"] for t in threat_rows}
+
+        candidates, chosen, rejected = [], None, []
+        for label, plan in options[:MAX_EVASION_CANDIDATES]:
+            cand = {"label": label, "n_burns": len(plan),
+                    "total_dv_mps": round(sum(float(np.linalg.norm(p.delta_v_rtn)) for p in plan) * 1000, 4),
+                    "fuel_kg": round(sum(p.estimated_fuel_kg for p in plan), 4),
+                    "first_burn_s": threat_rows[0]["tca_s"] - plan[0].burn_time_offset_s,
+                    "clean": None, "_plan": plan, "_score": (0, 0.0, 0.0)}
+            candidates.append(cand)
+            if not verify:
+                chosen = cand
+                break
+            burns = [{"offset_s": p.burn_time_offset_s,
+                      "dv_eci_kms": np.array([p.delta_v_eci_dict[a] for a in "xyz"])} for p in plan]
+            check = await asyncio.to_thread(verify_sequence, state.sat_buffer[idx].copy(), sid, burns, objects,
+                                            ids, types, now_ts, horizon, threat_ids)
+            cand["verification"] = check
+            cand["clean"] = check["clean"]
+            unresolved = sum(r["needs_action"] for r in check["primary"])
+            secondary = sum(r["needs_action"] for r in check["secondary"])
+            closest_secondary = min([r["miss_distance_km"] for r in check["secondary"]] or [math.inf])
+            cand["_score"] = (unresolved + secondary, -closest_secondary, cand["fuel_kg"])
+            if check["clean"]:
+                chosen = cand
+                break
+            rejected.append({"label": label, "why": ", ".join(filter(None, [
+                f"{secondary} secondary conjunction(s)" if secondary else "",
+                "primary threat not cleared" if unresolved else ""]))})
+        if chosen is None:
+            chosen = min(candidates, key=lambda c: c["_score"])
+            state.emit("crit", "autopilot", f"No evasion option is fully clean; using {chosen['label']} "
+                       f"(least residual risk). Operator review advised.", satellite_id=sid)
+        plan = chosen["_plan"]
+        self.brain.locked_satellites[idx] = (now_ts + plan[-1].burn_time_offset_s + 1.0, "EVASION")
+        rejected = [r for r in rejected if r["label"] != chosen["label"]]
+        rationale = rationale_evasion(threat_rows, chosen, rejected, chosen["fuel_kg"])
+        for c in candidates:
+            c["chosen"] = c is chosen
+            c.pop("_plan")
+            c.pop("_score")
+        return plan, rationale, candidates
+
+    # ── human-in-the-loop ───────────────────────────────────────────────────────
+    def _propose(self, state, idx, sid, kind, seq, burns, evaluation, rationale, candidates, cdm_ids, now_ts):
+        self._release(idx, kind == EOL)
+        self._proposal_seq += 1
+        pid = f"PRP-{self._proposal_seq:05d}"
+        state.proposals[pid] = {
+            "proposal_id": pid, "satellite_id": sid, "kind": kind, "status": "PENDING",
+            "created_ts": now_ts, "created_at": iso_z(now_ts),
+            "expires_ts": now_ts + CONFIG.approvalTimeoutSeconds,
+            "expires_at": iso_z(now_ts + CONFIG.approvalTimeoutSeconds),
+            "timeout_action": CONFIG.approvalTimeoutAction,
+            "rationale": rationale, "cdm_ids": cdm_ids, "candidates": candidates,
+            "burns": self._burn_rows(burns), "fuel_kg": round(evaluation.fuel_needed_kg, 4),
+            # RTN burns relative to the proposal epoch: re-targeted from the state at approval time
+            "_plans": [copy.deepcopy(p) for p in seq],
+        }
+        while len(state.proposals) > MAX_PROPOSALS:
+            oldest = next((k for k, v in state.proposals.items() if v["status"] != "PENDING"), None)
+            if oldest is None:
+                break
+            state.proposals.pop(oldest)
+        state.emit("warn", "autopilot", f"{kind.replace('_', ' ').title()} proposal {pid} awaiting operator approval "
+                   f"(times out in {CONFIG.approvalTimeoutSeconds / 60:.0f} sim min: {CONFIG.approvalTimeoutAction.lower()})",
+                   satellite_id=sid, proposal_id=pid, rationale=rationale)
+        state.record_decision(satellite_id=sid, kind=kind, outcome="PROPOSED", rationale=rationale, cdm_ids=cdm_ids,
+                              candidates=candidates, burns=self._burn_rows(burns), proposal_id=pid,
+                              fuel_kg=round(evaluation.fuel_needed_kg, 4), actor="autopilot")
+
+    def approve(self, state, proposal_id: str, actor: str) -> dict:
+        """Re-targets the proposed burns from the current state and queues them. Caller holds the lock."""
+        prop = _pending(state, proposal_id)
+        sid = prop["satellite_id"]
+        idx = state.sat_id_to_idx.get(sid)
+        if idx is None:
+            prop["status"] = "FAILED"
+            raise ValueError("Satellite no longer tracked")
+        now_ts = state.now_ts
+        plans = [copy.deepcopy(p) for p in prop["_plans"]]
+        self.brain._generate_sequential_eci(plans, state.sat_buffer[idx, :3].copy(), state.sat_buffer[idx, 3:6].copy())
+        burns = self._burn_requests(sid, plans, now_ts, actor=actor)
+        evaluation = evaluate_sequence(state, sid, burns)
+        if not evaluation.accepted:
+            prop.update(status="FAILED", answered_at=iso_z(now_ts), answered_by=actor, reason=evaluation.reason)
+            state.emit("warn", "autopilot", f"Approved proposal {proposal_id} failed validation: "
+                       f"{evaluation.reason.replace('_', ' ').lower()}", satellite_id=sid, proposal_id=proposal_id)
+            state.record_decision(satellite_id=sid, kind=prop["kind"], outcome="FAILED", rationale=prop["rationale"],
+                                  reason=evaluation.reason, proposal_id=proposal_id, actor=actor)
+            return prop
+        rationale = f"{prop['rationale']} Approved by {actor}."
+        self._commit(state, sid, burns, evaluation, prop["kind"], rationale, CONFIG.avoidanceStrategy, actor=actor)
+        lock_reason = {EVASION: "EVASION", STATION_KEEPING: "SK"}.get(prop["kind"])
+        if lock_reason:
+            self.brain.locked_satellites[idx] = (burns[-1].ts + 1.0, lock_reason)
+        else:
+            self.brain.eol_scheduled.add(idx)
+        prop.update(status="APPROVED", answered_at=iso_z(now_ts), answered_by=actor, burns=self._burn_rows(burns))
+        state.record_decision(satellite_id=sid, kind=prop["kind"], outcome="APPROVED", rationale=rationale,
+                              cdm_ids=prop["cdm_ids"], burns=self._burn_rows(burns), proposal_id=proposal_id,
+                              fuel_kg=round(evaluation.fuel_needed_kg, 4), actor=actor)
+        return prop
+
+    def reject(self, state, proposal_id: str, actor: str, reason: str = "") -> dict:
+        prop = _pending(state, proposal_id)
+        prop.update(status="REJECTED", answered_at=iso_z(state.now_ts), answered_by=actor, reason=reason or None)
+        state.emit("info", "autopilot", f"Proposal {proposal_id} rejected by {actor}" + (f": {reason}" if reason else ""),
+                   satellite_id=prop["satellite_id"], proposal_id=proposal_id)
+        state.record_decision(satellite_id=prop["satellite_id"], kind=prop["kind"], outcome="REJECTED_BY_OPERATOR",
+                              rationale=prop["rationale"], reason=reason or None, proposal_id=proposal_id, actor=actor)
+        return prop
+
+    def expire_proposals(self, state):
+        """Applies the timeout action to proposals nobody answered in time. Caller holds the lock."""
+        now_ts = state.now_ts
+        for pid, prop in list(state.proposals.items()):
+            if prop["status"] != "PENDING" or now_ts < prop["expires_ts"]:
+                continue
+            if prop["timeout_action"] == "EXECUTE":
+                state.emit("warn", "autopilot", f"Proposal {pid} unanswered; executing per timeout policy",
+                           satellite_id=prop["satellite_id"], proposal_id=pid)
+                self.approve(state, pid, actor="autopilot:timeout")
+            else:
+                prop.update(status="EXPIRED", answered_at=iso_z(now_ts), answered_by="timeout")
+                state.emit("crit" if prop["kind"] == EVASION else "warn", "autopilot",
+                           f"Proposal {pid} expired without an operator decision; it will be re-planned",
+                           satellite_id=prop["satellite_id"], proposal_id=pid)
+                state.record_decision(satellite_id=prop["satellite_id"], kind=prop["kind"], outcome="EXPIRED",
+                                      rationale=prop["rationale"], proposal_id=pid, actor="timeout")
+
+
+def _clearance(cdm: dict) -> float:
+    return min(cdm.get("safe_miss_km") or 0.2, 5.0)
+
+
+def _label(mode: str, direction: float) -> str:
+    return ("radial shunt" if mode == "radial" else "transverse phasing") + (
+        " (prograde/up)" if direction > 0 else " (retrograde/down)")
+
+
+def _direction(seq) -> float:
+    first = seq[0].delta_v_rtn
+    return 1.0 if float(first[int(np.argmax(np.abs(first)))]) >= 0 else -1.0
+
+
+def _pending(state, proposal_id: str) -> dict:
+    prop = state.proposals.get(proposal_id)
+    if prop is None:
+        raise KeyError(proposal_id)
+    if prop["status"] != "PENDING":
+        raise ValueError(f"Proposal is already {prop['status'].lower()}")
+    return prop
+
+
+def _screen_objects(state, idx: int):
+    """Every other tracked object (debris, then satellites), minus physically attached ones."""
+    sid = state.idx_to_sat_id[idx]
+    others = [i for i in range(state.sat_count) if i != idx]
+    objects = np.vstack([state.debris_buffer[:state.debris_count], state.sat_buffer[others]])
+    ids = [state.idx_to_debris_id[i] for i in range(state.debris_count)] + [state.idx_to_sat_id[i] for i in others]
+    types = ["DEBRIS"] * state.debris_count + ["SATELLITE"] * len(others)
+    if state.attached_pairs:
+        keep = np.array([not state.is_attached(sid, o) for o in ids], dtype=bool)
+        objects = objects[keep]
+        ids = [o for o, k in zip(ids, keep) if k]
+        types = [t for t, k in zip(types, keep) if k]
+    return objects.copy(), ids, types
+
+
+def public_proposal(prop: dict) -> dict:
+    return {k: v for k, v in prop.items() if not k.startswith("_")}
 
 class ConjunctionService:
     def __init__(self, state, engine=process_conjunctions):
@@ -257,7 +538,7 @@ class ConjunctionService:
                 stats = state.cdms.apply(predictions, state.now_ts, state.emit)
                 state.active_cdm_warnings = len(state.cdms.open())
                 do_plan = CONFIG.autopilotEnabled if plan is None else plan
-                plan_summary = self.autopilot.plan_and_schedule(state) if do_plan else {}
+                plan_summary = await self.autopilot.plan_and_schedule(state) if do_plan else {}
                 if do_plan:
                     self._last_plan_ts = state.now_ts
 
@@ -322,7 +603,7 @@ class ConjunctionService:
         state = self.state
         async with self._cycle_lock:
             async with state.lock:
-                summary = self.autopilot.plan_and_schedule(state)
+                summary = await self.autopilot.plan_and_schedule(state)
                 self._last_plan_ts = state.now_ts
                 return summary
 

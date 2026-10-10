@@ -40,6 +40,7 @@ INITIAL_SAT_CAPACITY = 100
 INITIAL_DEBRIS_CAPACITY = 15000
 MAX_HISTORY = 5000
 MAX_EVENTS = 1000
+MAX_DECISIONS = 500
 EVASION_TYPES = {"PHASING_PROGRADE", "PHASING_RETROGRADE", "RADIAL_SHUNT"}
 
 logger = logging.getLogger(__name__)
@@ -152,6 +153,18 @@ class StateManager:
         # Pairs of object IDs that are physically attached (e.g. vehicles docked to a station): never
         # reported as collisions or conjunctions. Maintained by realworld.live for catalog objects.
         self.attached_pairs: set = set()
+        # Explainability / human-in-the-loop (acm/autopilot.py)
+        self.decisions: deque = deque(maxlen=MAX_DECISIONS)    # autopilot decision log
+        self.decision_seq = 0
+        self.burn_rationale: Dict[str, str] = {}                # burn_id -> why it was planned
+        self.proposals: Dict[str, dict] = {}                    # proposal_id -> awaiting/answered proposal
+
+    def record_decision(self, **entry) -> dict:
+        self.decision_seq += 1
+        decision = {"decision_id": f"DEC-{self.decision_seq:05d}", "sim_time": iso_z(self.now_ts)
+                    if self.current_time else None, **entry}
+        self.decisions.append(decision)
+        return decision
 
     def is_attached(self, id_a: str, id_b: str) -> bool:
         return bool(self.attached_pairs) and frozenset((id_a, id_b)) in self.attached_pairs
@@ -485,6 +498,7 @@ class StateManager:
             "lon": None,
             "status": status,
             "actor": actor,
+            "rationale": self.burn_rationale.get(burn_id),
         }
         entry.update(extra)
         return entry

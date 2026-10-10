@@ -5,6 +5,10 @@ Operations API used by the dashboard (the PS endpoints are unchanged):
 
   GET  /api/conjunctions                 predicted conjunctions (CDMs)
   POST /api/conjunctions/screen          run screening (+ autopilot) now
+  GET  /api/conjunctions/{id}/tradespace maneuver trade study: miss and Pc over burn time x delta-v
+  GET  /api/decisions                    autopilot decision log with plain-language rationale
+  GET  /api/proposals                    maneuver proposals (APPROVAL mode)
+  POST /api/proposals/{id}/approve | /reject
   GET  /api/events                       operator event feed
   GET  /api/metrics                      mission scorecard
   GET  /api/autopilot  | PUT /api/autopilot
@@ -16,6 +20,7 @@ Operations API used by the dashboard (the PS endpoints are unchanged):
   POST /api/maneuver/manual              plan (dry run) or schedule an RTN/ECI burn sequence
   GET  /api/archive/maneuvers | /api/archive/events   persisted history (SQLite)
 """
+import asyncio
 import math
 from datetime import timedelta
 from typing import List, Literal, Optional
@@ -24,7 +29,8 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from satellite_api.acm.autopilot import ConjunctionService
+from satellite_api.acm.autopilot import ConjunctionService, public_proposal
+from satellite_api.acm.decision_support import trade_space
 from satellite_api.acm.plugins import PLUGINS
 from satellite_api.acm.scheduler import BurnRequest, evaluate_sequence, queue_burns
 from satellite_api.config import CONFIG, save_config
@@ -116,6 +122,101 @@ async def screen_now(
     state = request.app.state.orbital_state
     _require_ready(state)
     return await get_service(request).run_cycle(horizon_s=horizon_s, plan=plan)
+
+
+@router.get("/api/conjunctions/{cdm_id}/tradespace", tags=["Operations"])
+async def conjunction_tradespace(
+    cdm_id: str, request: Request,
+    axis: Literal["T", "R", "N"] = Query("T", description="RTN axis of the trial burns"),
+    n_times: int = Query(8, ge=2, le=16), n_dv: int = Query(11, ge=3, le=21),
+):
+    """Single-burn trade study for one conjunction: miss distance and Pc at TCA for every
+    combination of burn time (15 s from now up to 2 min before TCA) and delta-v (+-maxDeltaV/2)."""
+    state = request.app.state.orbital_state
+    _require_ready(state)
+    async with state.lock:
+        cdm = next((c for c in state.cdms.items if c["cdm_id"] == cdm_id), None)
+        if cdm is None:
+            raise HTTPException(status_code=404, detail=f"Conjunction {cdm_id} not found.")
+        now_ts = state.now_ts
+        if cdm["tca_ts"] <= now_ts + 30.0:
+            raise HTTPException(status_code=409, detail="TCA is too close (or past) for a trade study.")
+        sat_idx = _sat_index(state, cdm["satellite_id"])
+        if cdm["object_type"] == "DEBRIS":
+            obj_idx = state.debris_id_to_idx.get(cdm["object_id"])
+            obj_state = None if obj_idx is None else state.debris_buffer[obj_idx].copy()
+        else:
+            obj_idx = state.sat_id_to_idx.get(cdm["object_id"])
+            obj_state = None if obj_idx is None else state.sat_buffer[obj_idx].copy()
+        if obj_state is None:
+            raise HTTPException(status_code=404, detail=f"Object {cdm['object_id']} is no longer tracked.")
+        sat_state = state.sat_buffer[sat_idx].copy()
+        fuel = float(state.sat_fuel[sat_idx])
+        planned = [m for m in state.maneuver_queue if m[5] in cdm["mitigation_burn_ids"]]
+    result = await asyncio.to_thread(trade_space, sat_state, obj_state, cdm["tca_ts"] - now_ts,
+                                     cdm["object_type"] == "SATELLITE", axis, n_times, n_dv, None, fuel)
+    planned_first = min(planned, key=lambda m: m[0]) if planned else None
+    return {
+        "cdm_id": cdm_id, "satellite_id": cdm["satellite_id"], "object_id": cdm["object_id"],
+        "computed_at": iso_z(now_ts), "tca": cdm["tca"], **result,
+        "baseline": {"miss_km": cdm["miss_distance_km"], "pc": cdm.get("pc")},
+        "planned_burn": None if planned_first is None else {
+            "burn_id": planned_first[5], "burn_offset_s": planned_first[0] - now_ts,
+            "dv_mps": math.sqrt(sum(c * c for c in planned_first[2:5])) * 1000.0,
+        },
+    }
+
+
+@router.get("/api/decisions", tags=["Operations"])
+async def list_decisions(request: Request, satellite_id: Optional[str] = None,
+                         limit: int = Query(100, ge=1, le=500)):
+    """Autopilot decisions (newest first) with the rationale, the options considered and the outcome."""
+    state = request.app.state.orbital_state
+    async with state.lock:
+        items = [d for d in reversed(state.decisions) if not satellite_id or d["satellite_id"] == satellite_id]
+        return {"decisions": items[:limit]}
+
+
+@router.get("/api/proposals", tags=["Operations"])
+async def list_proposals(request: Request, status: Optional[str] = Query("PENDING", description="PENDING | all")):
+    state = request.app.state.orbital_state
+    async with state.lock:
+        items = [public_proposal(p) for p in state.proposals.values()
+                 if status in (None, "all") or p["status"] == status.upper()]
+        return {"proposals": sorted(items, key=lambda p: p["created_ts"], reverse=True),
+                "mode": CONFIG.autopilotMode, "timeout_s": CONFIG.approvalTimeoutSeconds,
+                "timeout_action": CONFIG.approvalTimeoutAction}
+
+
+class ProposalAnswer(BaseModel):
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+async def _answer_proposal(request: Request, proposal_id: str, approve: bool, reason: Optional[str]):
+    state = request.app.state.orbital_state
+    _require_ready(state)
+    actor = f"operator:{getattr(request.state, 'actor', 'unknown')}"
+    autopilot = get_service(request).autopilot
+    async with state.lock:
+        try:
+            prop = autopilot.approve(state, proposal_id, actor) if approve else \
+                autopilot.reject(state, proposal_id, actor, reason or "")
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found.")
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return public_proposal(prop)
+
+
+@router.post("/api/proposals/{proposal_id}/approve", tags=["Operations"])
+async def approve_proposal(proposal_id: str, request: Request):
+    """Approves a pending maneuver proposal: burns are re-targeted from the current state, validated and queued."""
+    return await _answer_proposal(request, proposal_id, True, None)
+
+
+@router.post("/api/proposals/{proposal_id}/reject", tags=["Operations"])
+async def reject_proposal(proposal_id: str, request: Request, answer: Optional[ProposalAnswer] = None):
+    return await _answer_proposal(request, proposal_id, False, answer.reason if answer else None)
 
 
 @router.get("/api/events", tags=["Operations"])

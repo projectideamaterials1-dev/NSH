@@ -88,6 +88,37 @@ def _approach_angle_deg(r_sat: np.ndarray, v_sat: np.ndarray, v_rel: np.ndarray)
     return (math.degrees(math.atan2(float(incoming @ n_hat), float(incoming @ t_hat))) + 360.0) % 360.0
 
 
+def closest_approach(A: np.ndarray, B: np.ndarray, window_s: float = REFINE_WINDOW_S,
+                     step_s: float = REFINE_STEP_S):
+    """Row-wise closest approach of pairs (A[i], B[i]) over the next `window_s`: linear CCD
+    between `step_s` samples. Inputs are not modified. Returns (miss_km, t_offset_s, A_at, B_at),
+    where A_at/B_at are the states at the sample nearest each pair's TCA."""
+    A, B = A.copy(), B.copy()
+    k = len(A)
+    best_d = np.full(k, np.inf)
+    best_t = np.zeros(k)
+    best_A = A.copy()
+    best_B = B.copy()
+    for step in range(int(window_s / step_s)):
+        p0 = B[:, :3] - A[:, :3]
+        pair = np.vstack([A, B])
+        propagate_states(pair, step_s, max_step=step_s)
+        A_next, B_next = pair[:k], pair[k:]
+        d = (B_next[:, :3] - A_next[:, :3]) - p0
+        dd = np.einsum("ij,ij->i", d, d)
+        frac = np.where(dd > 1e-12, np.clip(-np.einsum("ij,ij->i", p0, d) / np.maximum(dd, 1e-12), 0.0, 1.0), 0.0)
+        closest = np.linalg.norm(p0 + frac[:, None] * d, axis=1)
+        better = closest < best_d
+        if better.any():
+            best_d[better] = closest[better]
+            best_t[better] = step * step_s + frac[better] * step_s
+            use_next = (frac[better] > 0.5)[:, None]   # nearest sample to the TCA, for velocities/geometry
+            best_A[better] = np.where(use_next, A_next[better], A[better])
+            best_B[better] = np.where(use_next, B_next[better], B[better])
+        A, B = A_next, B_next
+    return best_d, best_t, best_A, best_B
+
+
 def screen(sat_states: np.ndarray, debris_states: np.ndarray, sat_ids: Sequence[str], debris_ids: Sequence[str],
            start_ts: float, horizon_s: float, warning_km: float = 5.0,
            engine: Callable = process_conjunctions, priority_pairs: Optional[frozenset] = None,
@@ -148,29 +179,7 @@ def screen(sat_states: np.ndarray, debris_states: np.ndarray, sat_ids: Sequence[
             A[rows], B[rows] = pair[:len(rows)], pair[len(rows):]
             t_now = t_start[row]
 
-    # Fine search with linear CCD between 2 s samples.
-    best_d = np.full(k, np.inf)
-    best_t = np.zeros(k)
-    best_A = A.copy()
-    best_B = B.copy()
-    steps = int(REFINE_WINDOW_S / REFINE_STEP_S)
-    for step in range(steps):
-        p0 = B[:, :3] - A[:, :3]
-        pair = np.vstack([A, B])
-        propagate_states(pair, REFINE_STEP_S, max_step=REFINE_STEP_S)
-        A_next, B_next = pair[:k], pair[k:]
-        d = (B_next[:, :3] - A_next[:, :3]) - p0
-        dd = np.einsum("ij,ij->i", d, d)
-        frac = np.where(dd > 1e-12, np.clip(-np.einsum("ij,ij->i", p0, d) / np.maximum(dd, 1e-12), 0.0, 1.0), 0.0)
-        closest = np.linalg.norm(p0 + frac[:, None] * d, axis=1)
-        better = closest < best_d
-        if better.any():
-            best_d[better] = closest[better]
-            best_t[better] = step * REFINE_STEP_S + frac[better] * REFINE_STEP_S
-            use_next = (frac[better] > 0.5)[:, None]   # nearest sample to the TCA, for velocities/geometry
-            best_A[better] = np.where(use_next, A_next[better], A[better])
-            best_B[better] = np.where(use_next, B_next[better], B[better])
-        A, B = A_next, B_next
+    best_d, best_t, best_A, best_B = closest_approach(A, B)
 
     results = []
     for i in range(k):

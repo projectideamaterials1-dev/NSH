@@ -26,6 +26,12 @@ class SimConfig:
     lowFuelWarning: float = 10.0         # kg, alert threshold
     autopilotEnabled: bool = True
     avoidanceStrategy: str = "Auto"      # Auto | TriShunt | RadialOverride
+    # AUTONOMOUS: validated burns are queued directly. APPROVAL: they become proposals an operator
+    # approves or rejects (POST /api/proposals/{id}/approve|reject); unanswered proposals time out.
+    autopilotMode: str = "AUTONOMOUS"
+    approvalTimeoutSeconds: float = 1800.0   # sim seconds before an unanswered proposal times out
+    approvalTimeoutAction: str = "DISCARD"   # DISCARD (re-proposed next cycle) | EXECUTE
+    verifyManeuvers: bool = True             # re-screen post-maneuver trajectories for secondary conjunctions
     cdmWarningKm: float = 5.0            # screening sphere
     cdmHorizonSeconds: float = 10800.0   # look-ahead (3 h)
     cdmScreenIntervalSeconds: float = 600.0  # sim seconds between automatic screens
@@ -56,12 +62,14 @@ class SimConfig:
         "lowFuelWarning": (0.0, 500.0), "cdmWarningKm": (0.1, 50.0), "cdmHorizonSeconds": (600.0, 172800.0),
         "cdmScreenIntervalSeconds": (60.0, 86400.0),
         "pcManeuverThreshold": (1e-7, 1e-2), "hardBodyRadiusM": (1.0, 200.0), "covarianceScale": (0.1, 10.0),
-        "ballisticCoefficient": (0.001, 0.2),
+        "ballisticCoefficient": (0.001, 0.2), "approvalTimeoutSeconds": (60.0, 86400.0),
         "fleetStaggerWindowS": (0.0, 600.0), "fleetStaggerGapS": (1.0, 600.0), "fleetStaggerMaxDelayS": (0.0, 3600.0),
         "fleetPriorityRiskWeight": (0.0, 1.0), "fleetPriorityFuelWeight": (0.0, 1.0),
         "fleetPriorityDriftWeight": (0.0, 1.0), "fleetPriorityTcaWeight": (0.0, 1.0),
     }
     STRATEGIES = ("Auto", "TriShunt", "RadialOverride")
+    CHOICES = {"avoidanceStrategy": STRATEGIES, "autopilotMode": ("AUTONOMOUS", "APPROVAL"),
+               "approvalTimeoutAction": ("DISCARD", "EXECUTE")}
 
     def update(self, values: dict) -> None:
         """Validates and applies a partial update. Raises ValueError on bad input."""
@@ -83,8 +91,8 @@ class SimConfig:
                 lo, hi = self.LIMITS[key]
                 if not lo <= value <= hi:
                     raise ValueError(f"{key} must be between {lo} and {hi}")
-            elif key == "avoidanceStrategy" and value not in self.STRATEGIES:
-                raise ValueError(f"avoidanceStrategy must be one of {list(self.STRATEGIES)}")
+            elif key in self.CHOICES and value not in self.CHOICES[key]:
+                raise ValueError(f"{key} must be one of {list(self.CHOICES[key])}")
             staged[key] = value
         for key, value in staged.items():
             setattr(self, key, value)

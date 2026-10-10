@@ -176,8 +176,11 @@ class AutonomousBrain:
             v_curr += dv_eci
             t_curr = p.burn_time_offset_s
 
-    def calculate_perfect_evasion_sequence(self, sat_idx: int, threats: List[Conjunction], current_fuel_kg: float, sat_state: np.ndarray, nominal_state: np.ndarray, mode: str = "auto") -> List[ManeuverPlan]:
-        """mode: "auto" (transverse unless it would leave the box), "transverse" or "radial"."""
+    def calculate_perfect_evasion_sequence(self, sat_idx: int, threats: List[Conjunction], current_fuel_kg: float, sat_state: np.ndarray, nominal_state: np.ndarray, mode: str = "auto", direction: float = 1.0) -> List[ManeuverPlan]:
+        """mode: "auto" (transverse unless it would leave the box), "transverse" or "radial".
+        direction: +1 prograde / radial-up first burn, -1 retrograde / radial-down (the
+        autopilot tries the mirror image when the first choice creates a new conjunction)."""
+        direction = -1.0 if direction < 0 else 1.0
         earliest_tca = min(t.tca_seconds for t in threats)
         
         # 🚀 24-HOUR LEVERAGE: Execute burn ASAP to maximize drift time
@@ -224,7 +227,7 @@ class AutonomousBrain:
         use_transverse = mode == "transverse" or (mode == "auto" and absolute_future_apogee <= 9.0)
         if use_transverse and max_req_dv_trans > 0.0:
             # OPTION A: Transverse Tri-Shunt (Fuel efficient, safe inside the box)
-            req_dv = math.copysign(min(max_req_dv_trans, (CONFIG.maxDeltaV / 1000.0) / 2.0), max_req_dv_trans)
+            req_dv = direction * min(max_req_dv_trans, (CONFIG.maxDeltaV / 1000.0) / 2.0)
             
             v_post_1 = v_mag + req_dv
             a_post_1 = 1.0 / (2.0/r_mag - (v_post_1**2)/MU_EARTH)
@@ -256,7 +259,7 @@ class AutonomousBrain:
         else:
             # 🚀 OPTION B: RADIAL OVERRIDE (Survival at all costs)
             # If drifting backward pushes us past 9.0km, force an Up/Down dodge.
-            req_dv = math.copysign(min(max_req_dv_rad, CONFIG.maxDeltaV / 1000.0), max_req_dv_rad)
+            req_dv = direction * min(max_req_dv_rad, CONFIG.maxDeltaV / 1000.0)
             
             v_mag_post_radial = math.sqrt(v_mag**2 + req_dv**2)
             a_post = 1.0 / (2.0/r_mag - (v_mag_post_radial**2)/MU_EARTH)
