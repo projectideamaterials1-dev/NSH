@@ -156,3 +156,44 @@ def test_restore_refuses_to_clobber_and_verify_catches_tampering(clients, tmp_pa
     (backup_dir / "redis_state.json").write_text("{}")
     with pytest.raises(BackupError, match="Checksum mismatch"):
         verify(backup_dir)
+
+
+def _make_db(path):
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE t (x)")
+    conn.commit()
+    conn.close()
+
+
+def test_scheduled_cycle_verifies_prunes_and_reports_status(tmp_path, monkeypatch):
+    from satellite_api.backup import parse_interval, read_status, run_once
+    assert parse_interval("6h") == 21600 and parse_interval("30m") == 1800 and parse_interval("90") == 90
+    db = tmp_path / "acm_archive.db"
+    _make_db(db)
+    out = tmp_path / "backups"
+    names = []
+    for _ in range(4):                       # several cycles within one second: names must not collide
+        status = run_once(out, None, db, None, keep=2)
+        assert status["ok"], status
+        names.append(status["name"])
+    assert len(set(names)) == 4
+    kept = sorted(p.name for p in out.iterdir() if p.is_dir())
+    assert set(kept) == set(names[-2:])                # the two NEWEST survive pruning
+    assert read_status(out)["last_success"] == status["time"]
+
+    # A failing cycle is recorded but keeps the last success for the staleness alert.
+    db.unlink()
+    failed = run_once(out, None, db, None, keep=2)
+    assert failed["ok"] is False and "Nothing to back up" in failed["error"]
+    assert failed["last_success"] == status["time"]
+
+
+@pytest.mark.asyncio
+async def test_backup_status_is_exported_as_metrics(client, tmp_path, monkeypatch):
+    from satellite_api.backup import run_once
+    db = tmp_path / "acm_archive.db"
+    _make_db(db)
+    monkeypatch.setenv("BACKUP_DIR", str(tmp_path / "b"))
+    run_once(tmp_path / "b", None, db, None)
+    body = (await client.get("/metrics")).text
+    assert "acm_backup_last_ok 1.0" in body and "acm_backup_last_success_timestamp_seconds" in body

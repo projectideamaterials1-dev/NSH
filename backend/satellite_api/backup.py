@@ -166,3 +166,71 @@ def restore(backup_dir: Path, redis_client=None, db_path: Optional[Path] = None,
         shutil.copy2(backup_dir / CONFIG_FILE, config_path)
         restored.append(str(config_path))
     return {"restored": restored, "from": str(backup_dir), "created_at": manifest["created_at"]}
+
+
+# ── scheduled backups ───────────────────────────────────────────────────────────
+STATUS_FILE = "last_backup.json"
+NAME_PREFIX = "acm-"
+
+
+def parse_interval(text: str) -> float:
+    """'6h', '30m', '1d', '900' (seconds) -> seconds."""
+    text = str(text).strip().lower()
+    units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    if text[-1:] in units:
+        return float(text[:-1]) * units[text[-1]]
+    return float(text)
+
+
+def prune(out_dir: Path, keep: int) -> list:
+    """Deletes all but the newest `keep` scheduled backups (only directories this scheduler made)."""
+    out_dir = Path(out_dir)
+    def created(path: Path) -> str:
+        try:
+            return json.loads((path / "manifest.json").read_text())["created_at"]
+        except (OSError, ValueError, KeyError):
+            return ""
+    # Oldest first by the manifest's creation time - names are not a safe ordering.
+    ours = sorted((p for p in out_dir.glob(f"{NAME_PREFIX}*") if p.is_dir() and (p / "manifest.json").exists()),
+                  key=lambda p: (created(p), p.name))
+    doomed = ours[:-keep] if keep > 0 else []
+    for path in doomed:
+        shutil.rmtree(path, ignore_errors=True)
+    return [p.name for p in doomed]
+
+
+def run_once(out_dir: Path, redis_client=None, db_path: Optional[Path] = None, config_path: Optional[Path] = None,
+             keep: int = 28) -> dict:
+    """One scheduled cycle: back up, verify the result, prune, and record the outcome in
+    <out_dir>/last_backup.json (read by the backend for the acm_backup_* metrics)."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    stamp = now.strftime("%Y%m%dT%H%M%S") + f"{now.microsecond // 1000:03d}Z"
+    target = out_dir / f"{NAME_PREFIX}{stamp}"
+    n = 1
+    while target.exists():                      # never reuse (and never clean up) an existing backup
+        target = out_dir / f"{NAME_PREFIX}{stamp}-{n}"
+        n += 1
+    status = {"time": datetime.now(timezone.utc).isoformat(), "name": target.name, "ok": False}
+    previous = read_status(out_dir) or {}
+    try:
+        manifest = backup(target, redis_client, db_path, config_path)
+        verify(target)
+        status.update(ok=True, files=sorted(manifest["files"]),
+                      bytes=sum(f["bytes"] for f in manifest["files"].values()),
+                      pruned=prune(out_dir, keep))
+        status["last_success"] = status["time"]
+    except Exception as e:                      # recorded, alerted on, and retried next cycle
+        shutil.rmtree(target, ignore_errors=True)   # only this cycle's own, freshly created directory
+        status["error"] = str(e)
+        status["last_success"] = previous.get("last_success")
+    (out_dir / STATUS_FILE).write_text(json.dumps(status, indent=2))
+    return status
+
+
+def read_status(out_dir: Path) -> Optional[dict]:
+    try:
+        return json.loads((Path(out_dir) / STATUS_FILE).read_text())
+    except (OSError, ValueError):
+        return None

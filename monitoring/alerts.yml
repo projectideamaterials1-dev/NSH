@@ -88,6 +88,23 @@ groups:
         annotations:
           summary: "A satellite is below 5 kg of propellant"
 
+  - name: acm-backups
+    rules:
+      - alert: BackupFailing
+        expr: max(acm_backup_last_ok) == 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "The most recent scheduled backup failed"
+          runbook: "docs/RUNBOOKS.md#backup-and-restore"
+      - alert: BackupStale
+        expr: time() - max(acm_backup_last_success_timestamp_seconds) > 13 * 3600
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "No successful scheduled backup for over 13 hours"
+          runbook: "docs/RUNBOOKS.md#backup-and-restore"
+
   - name: acm-data-feeds
     rules:
       - alert: DataFeedStale

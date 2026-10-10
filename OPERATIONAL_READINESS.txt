@@ -105,6 +105,8 @@ DONE (cont.) — 2026-10-10, second pass
   fail-back exercised on the compose stack
 - Proposals, decisions and rationales persisted in the Redis snapshot (survive failover) and the
   decision log in the archive
+- Scheduled, verified, pruned backups with off-site copies via rclone (`backup` profile);
+  freshness metrics and BackupFailing / BackupStale alerts
 
 TO DO — TRACK A: production decision-support tool
 ---------------------------------------------------
@@ -114,7 +116,6 @@ TO DO — TRACK A: production decision-support tool
   .gitleaksignore); it is not accepted by the code - never configure it as a real key
 
 [Reliability]
-- Backups are written to the host volume; ship them off-host (object storage) on a schedule
 
 [Data trust]
 - Measured covariance is used only when an operator supplies full CDMs (Space-Track `cdm`

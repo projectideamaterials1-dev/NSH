@@ -93,3 +93,4 @@ monitoring/metrics_token
 # Frontend test artifacts
 frontend/test-results/
 frontend/playwright-report/
+backup.env

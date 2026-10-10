@@ -185,8 +185,13 @@ $COMPOSE exec -T backend python3 scripts/backup.py backup --out /app/data/backup
 $COMPOSE exec -T backend python3 scripts/backup.py verify --from /app/data/backups/<name>
 ```
 
-Copy `backend/data/backups/` off the host (object storage, another machine). A backup on the same
-disk is not a backup. `scripts/deploy.sh` takes one automatically before every release.
+**Scheduled and off-site:** `cp backup.env.example backup.env`, fill in the off-site target (any
+rclone remote: S3, GCS, Azure, B2, SFTP...), then `$COMPOSE --profile backup up -d`. The `backup`
+service backs up, verifies and prunes every `BACKUP_INTERVAL` (6 h), keeping the newest
+`BACKUP_KEEP` (28) locally. `backup-offsite` copies new backups off the host every 15 minutes. It
+uses `copy`, not `sync`, so local pruning never deletes off-site copies; expire those with the
+bucket's lifecycle rules. `BackupFailing` and `BackupStale` (no success for 13 h) alert from the
+`acm_backup_*` metrics. `scripts/deploy.sh` also takes a backup before every release.
 
 **Restore** (the backend must be stopped, or its next autosave overwrites the restored snapshot):
 

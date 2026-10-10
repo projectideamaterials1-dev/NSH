@@ -115,6 +115,51 @@ services:
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD in your .env file}
 
+  # ── Scheduled + off-site backups (opt-in): docker compose -f docker-compose.prod.yml --profile backup up -d ──
+  # `backup` snapshots Redis + the SQLite archive + config every BACKUP_INTERVAL, verifies each
+  # backup and keeps the newest BACKUP_KEEP locally; `backup-offsite` copies them to any rclone
+  # remote (S3, GCS, Azure, B2, SFTP...) configured in backup.env (see backup.env.example).
+  backup:
+    image: ${BACKEND_IMAGE:-nsh-backend:latest}
+    profiles: [backup]
+    restart: unless-stopped
+    command: ["python3", "scripts/backup.py", "schedule", "--out-dir", "/app/data/backups",
+              "--every", "${BACKUP_INTERVAL:-6h}", "--keep", "${BACKUP_KEEP:-28}"]
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - REDIS_SENTINELS=${REDIS_SENTINELS:-}
+      - REDIS_SENTINEL_MASTER=${REDIS_SENTINEL_MASTER:-acm}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    volumes:
+      - ./backend/data:/app/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
+    depends_on:
+      - redis
+
+  backup-offsite:
+    image: rclone/rclone:1.68
+    profiles: [backup]
+    restart: unless-stopped
+    env_file: [backup.env]
+    entrypoint: ["sh", "-c"]
+    # `copy`, not `sync`: deleting a local backup never deletes the off-site copy - expire
+    # old objects with the bucket's lifecycle policy instead.
+    command:
+      - 'while true; do rclone copy /backups "$$RCLONE_REMOTE" --exclude "*.tmp" --log-level INFO || echo "off-site copy failed"; sleep "$${BACKUP_SYNC_S:-900}"; done'
+    volumes:
+      - ./backend/data/backups:/backups:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128m
+    depends_on:
+      - backup
+
   # ── High availability (opt-in): docker compose -f docker-compose.prod.yml --profile ha up -d ──
   # One replica + three sentinels (quorum 2). Set REDIS_SENTINELS in .env so the backend asks the
   # sentinels for the current master. Failover takes ~SENTINEL_DOWN_AFTER_MS + a few seconds.

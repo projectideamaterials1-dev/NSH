@@ -18,6 +18,7 @@ also refuses /metrics from outside the compose network.
 import hmac
 import os
 import time
+from pathlib import Path
 from typing import Iterable
 
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Histogram, generate_latest
@@ -56,6 +57,13 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             if route != "/metrics":
                 HTTP_REQUESTS.labels(request.method, route, f"{status // 100}xx").inc()
                 HTTP_LATENCY.labels(request.method, route).observe(time.perf_counter() - start)
+
+
+def _backup_status():
+    """Status written by the scheduled backup service (scripts/backup.py schedule) on the shared volume."""
+    from satellite_api.backup import read_status
+    from satellite_api.timeutils import data_dir
+    return read_status(Path(os.environ.get("BACKUP_DIR") or data_dir() / "backups"))
 
 
 class MissionCollector:
@@ -121,6 +129,14 @@ class MissionCollector:
                 age.add_metric([name], info["age_s"])
         yield status
         yield age
+        backup = _backup_status()
+        if backup is not None:
+            yield gauge("acm_backup_last_ok", "1 if the most recent scheduled backup succeeded", float(bool(backup.get("ok"))))
+            last = backup.get("last_success")
+            if last:
+                from datetime import datetime
+                yield gauge("acm_backup_last_success_timestamp_seconds", "When the last good scheduled backup finished",
+                            datetime.fromisoformat(last).timestamp())
         yield gauge("acm_unreconciled_maneuvers", "Pending maneuvers without a recorded outcome after a crash",
                     len(getattr(self.app.state, "unreconciled_maneuvers", [])))
 
