@@ -5,7 +5,7 @@ Mission-state backup / restore / verify (see satellite_api/backup.py and docs/RU
     python scripts/backup.py verify  --from /backups/acm-20260101T000000
     python scripts/backup.py restore --from /backups/acm-20260101T000000 [--force]
 
-Connection settings default to the backend's own: REDIS_URL, ACM_DB_PATH (or DATA_DIR/acm_archive.db)
+Connection settings default to the backend's own: REDIS_URL or REDIS_SENTINELS, ACM_DB_PATH (or DATA_DIR/acm_archive.db)
 and DATA_DIR/config.json. Inside the compose stack:
 
     docker compose -f docker-compose.prod.yml exec backend python scripts/backup.py backup --out /app/data/backups/now
@@ -23,11 +23,8 @@ from satellite_api.timeutils import data_dir  # noqa: E402
 
 
 def _redis():
-    url = os.environ.get("REDIS_URL")
-    if not url:
-        return None
-    import redis
-    return redis.Redis.from_url(url, decode_responses=False)
+    from satellite_api import redis_conn
+    return redis_conn.sync_client() if redis_conn.configured() else None
 
 
 def main() -> int:

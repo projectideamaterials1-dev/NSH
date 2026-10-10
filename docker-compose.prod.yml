@@ -49,6 +49,11 @@ services:
       # REDIS_PASSWORD must be set in your .env (see .env.example) - compose fails fast below
       # rather than silently starting Redis unauthenticated.
       - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in your .env file}@redis:6379/0
+      # High availability (`ha` profile): set REDIS_SENTINELS=sentinel-1:26379,sentinel-2:26379,sentinel-3:26379
+      # in .env - the backend then follows whichever node the sentinels promote (redis_conn.py).
+      - REDIS_SENTINELS=${REDIS_SENTINELS:-}
+      - REDIS_SENTINEL_MASTER=${REDIS_SENTINEL_MASTER:-acm}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_SAVE_INTERVAL_S=10
       - REQUIRE_DURABLE_STATE=${REQUIRE_DURABLE_STATE:-0}
       - LEADER_LOCK_TTL_S=${LEADER_LOCK_TTL_S:-15}
@@ -88,9 +93,15 @@ services:
     # network - but still requires a password so a compromised/misconfigured neighbor
     # container (or a later change that does publish the port) can't read/write mission
     # state or the leader-election lock unauthenticated.
-    command: redis-server --appendonly yes --maxmemory ${REDIS_MAXMEMORY:-384mb} --maxmemory-policy noeviction --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in your .env file}
+    # --masterauth lets this node rejoin as a replica after a Sentinel failover (`ha` profile).
+    command: redis-server --appendonly yes --maxmemory ${REDIS_MAXMEMORY:-384mb} --maxmemory-policy noeviction --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in your .env file} --masterauth ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
+    # Fixed address: Sentinel monitors the master by IP - a stopped container's hostname stops
+    # resolving, which would leave the sentinels unable to fail over.
+    networks:
+      default:
+        ipv4_address: ${ACM_SUBNET_PREFIX:-172.28.0}.10
     deploy:
       resources:
         limits:
@@ -103,6 +114,54 @@ services:
       retries: 5
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD in your .env file}
+
+  # ── High availability (opt-in): docker compose -f docker-compose.prod.yml --profile ha up -d ──
+  # One replica + three sentinels (quorum 2). Set REDIS_SENTINELS in .env so the backend asks the
+  # sentinels for the current master. Failover takes ~SENTINEL_DOWN_AFTER_MS + a few seconds.
+  redis-replica:
+    image: redis:7-alpine
+    profiles: [ha]
+    restart: unless-stopped
+    command: redis-server --appendonly yes --replicaof redis 6379 --masterauth ${REDIS_PASSWORD} --requirepass ${REDIS_PASSWORD} --maxmemory ${REDIS_MAXMEMORY:-384mb} --maxmemory-policy noeviction
+    volumes:
+      - redis_replica_data:/data
+    networks:
+      default:
+        ipv4_address: ${ACM_SUBNET_PREFIX:-172.28.0}.11
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
+    depends_on:
+      - redis
+
+  sentinel-1: &sentinel
+    image: redis:7-alpine
+    profiles: [ha]
+    restart: unless-stopped
+    entrypoint: ["sh", "/sentinel-entrypoint.sh"]
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - SENTINEL_MASTER=${REDIS_SENTINEL_MASTER:-acm}
+      - SENTINEL_DOWN_AFTER_MS=${SENTINEL_DOWN_AFTER_MS:-5000}
+      - REDIS_MASTER_IP=${ACM_SUBNET_PREFIX:-172.28.0}.10
+      - REDIS_NODE_IPS=${ACM_SUBNET_PREFIX:-172.28.0}.10 ${ACM_SUBNET_PREFIX:-172.28.0}.11
+      - SENTINEL_FAILOVER_TIMEOUT_MS=${SENTINEL_FAILOVER_TIMEOUT_MS:-10000}
+    volumes:
+      - ./monitoring/sentinel-entrypoint.sh:/sentinel-entrypoint.sh:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64m
+    depends_on:
+      - redis
+      - redis-replica
+
+  sentinel-2: *sentinel
+
+  sentinel-3: *sentinel
 
   # Optional edge proxy in front of the backend (which already serves the UI on its own).
   # nginx.conf terminates TLS on 443 and redirects plain :80 to it - run
@@ -185,7 +244,15 @@ services:
     depends_on:
       - prometheus
 
+networks:
+  default:
+    ipam:
+      config:
+        # Change ACM_SUBNET_PREFIX if 172.28.0.0/24 collides with a network on your host.
+        - subnet: ${ACM_SUBNET_PREFIX:-172.28.0}.0/24
+
 volumes:
   redis_data:
+  redis_replica_data:
   prometheus_data:
   grafana_data:

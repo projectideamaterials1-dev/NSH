@@ -39,8 +39,32 @@ to start when `REQUIRE_DURABLE_STATE=1`.
    Restore the old password, or restart both services together.
 4. While Redis is down, state lives only in the leader's memory. Restore Redis **before**
    restarting the backend, or that in-memory state is lost.
-5. Redis is a single container, so it is a single point of failure. For real HA use Sentinel or a
-   managed Redis with failover (open item in `OPERATIONAL_READINESS.txt`).
+5. Run the `ha` profile so a single Redis failure is survivable (next section).
+
+### Redis high availability (Sentinel)
+
+```bash
+# .env
+REDIS_SENTINELS=sentinel-1:26379,sentinel-2:26379,sentinel-3:26379
+# start: primary + replica + three sentinels (quorum 2)
+$COMPOSE --profile ha up -d
+curl -sk https://localhost/health      # "redis": "sentinel:acm@sentinel-1:26379,..."
+```
+
+How it behaves (measured on this stack): the primary is marked down after
+`SENTINEL_DOWN_AFTER_MS` (5 s) and the replica is promoted within a few seconds. A split sentinel
+vote retries after 2 × `SENTINEL_FAILOVER_TIMEOUT_MS` (20 s). The backend follows the new primary
+on its next reconnect, and writes resume after the leader-lock TTL (about 30 s end to end). A
+returning former primary rejoins as a replica, and restarted sentinels discover the current
+primary by asking each data node for its role.
+
+- The data nodes have fixed IPs (`ACM_SUBNET_PREFIX`, default `172.28.0`). Sentinel monitors by IP
+  because a stopped container's hostname stops resolving. Change the prefix if it collides with a
+  network on the host.
+- Replication is asynchronous. A write acknowledged in the instant before a failover can be lost,
+  and the next autosave (every 10 s) rewrites the snapshot.
+- Check the topology:
+  `$COMPOSE exec sentinel-1 redis-cli -p 26379 -a "$REDIS_PASSWORD" sentinel get-master-addr-by-name acm`.
 
 ## No leader / leader stuck
 

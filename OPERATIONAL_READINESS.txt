@@ -94,25 +94,31 @@ DONE (cont.) — 2026-10-10
   gate releases. Upgraded orjson (2 HIGH DoS CVEs) and maplibre-gl (CRITICAL XSS) to fixed versions
 - Frontend unit-coverage gate (vitest thresholds)
 
+DONE (cont.) — 2026-10-10, second pass
+--------------------------------------
+- Per-object ballistic coefficients (from element-set B*), in both engines
+- External CDM ingestion (CCSDS KVN/JSON upload, Space-Track cdm_public polling); measured
+  covariance replaces the model for Pc when supplied; their-vs-our comparison in the UI
+- Named users with hashed, expiring, revocable keys + rotation CLI; audit trail of every write
+  and rejected key, persisted in the archive (GET /api/audit)
+- Redis HA: replica + 3 sentinels (`ha` profile), Sentinel-aware clients; failover and
+  fail-back exercised on the compose stack
+- Proposals, decisions and rationales persisted in the Redis snapshot (survive failover) and the
+  decision log in the archive
+
 TO DO — TRACK A: production decision-support tool
 ---------------------------------------------------
 [Security]
-- API key rotation process/tooling (currently manual env var rotation only)
-- Real per-user identity/audit trail (today: shared operator/readonly secrets,
-  audit trail is just "key:<8-char prefix>"); approvals are attributed to that same key prefix
+- SSO / OIDC instead of API keys for interactive operators (named keys + audit exist today)
 - The historical demo key CRIMSON_NEBULA_2026 is in public git history (baselined in
   .gitleaksignore); it is not accepted by the code - never configure it as a real key
 
 [Reliability]
-- Redis is a single container / single point of failure - needs Sentinel or
-  cluster (or managed Redis with failover) for real HA
 - Backups are written to the host volume; ship them off-host (object storage) on a schedule
-- Proposals and decisions are in memory only (lost on restart; open threats are re-proposed)
 
 [Data trust]
-- Pc uses a modelled covariance, not OD covariance - ingest CDM covariances (Space-Track /
-  commercial SSA) to make Pc operationally meaningful
-- One ballistic coefficient for all objects; per-object B from element-set B* would improve decay
+- Measured covariance is used only when an operator supplies full CDMs (Space-Track `cdm`
+  class or a commercial SSA provider); otherwise Pc still relies on the covariance model
 
 TO DO — TRACK B: actually commanding a real spacecraft
 ---------------------------------------------------------

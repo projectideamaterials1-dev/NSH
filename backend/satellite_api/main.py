@@ -56,16 +56,19 @@ def _require_durable_state() -> bool:
 
 
 def _create_state():
-    """Redis-backed state when REDIS_URL is set, otherwise the in-memory StateManager.
+    """Redis-backed state when REDIS_URL or REDIS_SENTINELS is set, otherwise the in-memory StateManager.
 
     REQUIRE_DURABLE_STATE=1 makes an unavailable/misconfigured Redis a hard startup failure
     instead of a silent fallback to in-memory state - for a system that can command real
     maneuvers, losing durability unnoticed is worse than refusing to start.
     """
+    from satellite_api import redis_conn
     redis_url = os.environ.get("REDIS_URL", "").strip()
-    if redis_url:
+    if redis_conn.configured():
         try:
-            return RedisStateManager(redis_url=redis_url)
+            # REDIS_SENTINELS (HA) takes precedence over REDIS_URL - see redis_conn.py.
+            client = redis_conn.async_client() if redis_conn.sentinel_hosts() else None
+            return RedisStateManager(redis_url=redis_url or redis_conn.describe(), client=client)
         except RuntimeError as e:
             if _require_durable_state():
                 raise RuntimeError(f"REQUIRE_DURABLE_STATE is set but Redis state init failed: {e}") from e
@@ -213,6 +216,11 @@ observability.install(app)
 # ============================================================================
 # HEALTH PROBE
 # ============================================================================
+def _redis_mode():
+    from satellite_api import redis_conn
+    return redis_conn.describe() if isinstance(app.state.orbital_state, RedisStateManager) else None
+
+
 def _status():
     return {
         "status": "online",
@@ -221,6 +229,7 @@ def _status():
         "engine_ready": app.state.orbital_state.is_ready(),
         "autopilot": CONFIG.autopilotEnabled,
         "persistence": "redis" if isinstance(app.state.orbital_state, RedisStateManager) else "memory",
+        "redis": _redis_mode(),
         "is_leader": (app.state.orbital_state.is_leader if isinstance(app.state.orbital_state, RedisStateManager)
                      else True),
         "archive": app.state.archive is not None,
