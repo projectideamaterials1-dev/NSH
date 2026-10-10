@@ -4,12 +4,14 @@ middleware/auth.py
 Optional role-scoped API-key authentication and per-client rate limiting.
 
 Both are disabled by default so the grader, the dashboard and test.py work out of
-the box. Enable auth with one or both of:
+the box. Preferred: named users with hashed, expiring keys (middleware/identity.py, managed with
+scripts/apikeys.py) - the audit trail then names the person. Shared keys are still accepted:
     API_KEYS_OPERATOR=<key1,key2,...>   -> full access: can command maneuvers, change config,
                                             toggle the autopilot, (re)load the catalog, etc.
     API_KEYS_READONLY=<key1,key2,...>   -> GET-only access (telemetry/snapshot/metrics/archive reads)
     API_KEY=<secret>                     -> legacy single-secret form, treated as an operator key
-Any configured key is checked with a constant-time comparison against `X-API-Key`. Enable the
+Any configured key is checked with a constant-time comparison against `X-API-Key`. Every
+mutating request and every rejected key is written to the audit trail (audit.py). Enable the
 rate limiter with RATE_LIMIT_PER_MINUTE=<n> (per-client, on /api/* only).
 """
 import os
@@ -21,6 +23,9 @@ from typing import Callable, Optional
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+
+from satellite_api.audit import AUDIT
+from satellite_api.middleware.identity import USERS
 
 _MUTATING_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 _DOC_PATHS = ("/docs", "/redoc", "/openapi.json")
@@ -67,36 +72,61 @@ def client_ip(request: Request) -> str:
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, operator_keys: frozenset = API_KEYS_OPERATOR, readonly_keys: frozenset = API_KEYS_READONLY):
+    def __init__(self, app, operator_keys: frozenset = API_KEYS_OPERATOR, readonly_keys: frozenset = API_KEYS_READONLY,
+                 users=USERS):
         super().__init__(app)
         self.operator_keys = operator_keys
         self.readonly_keys = readonly_keys
+        self.users = users
 
-    def _resolve_role(self, provided: str) -> Optional[str]:
+    def _resolve(self, provided: str) -> Optional[tuple]:
+        """(role, actor, key_id) for a valid key, else None."""
         if not provided:
             return None
+        identity = self.users.authenticate(provided)
+        if identity is not None:
+            return identity.role, identity.actor, identity.key_id
+        # Shared keys: first 8 chars only, enough to tell them apart without storing the secret.
         if _match_any(provided, self.operator_keys):
-            return "operator"
+            return "operator", f"key:{provided[:8]}", None
         if _match_any(provided, self.readonly_keys):
-            return "readonly"
+            return "readonly", f"key:{provided[:8]}", None
         return None
 
+    def _audit(self, request: Request, actor: str, role, key_id, status: int, started: float, outcome: str):
+        AUDIT.record(actor=actor, role=role, key_id=key_id, method=request.method, path=request.url.path,
+                     status=status, client_ip=client_ip(request), duration_ms=(time.monotonic() - started) * 1000,
+                     outcome=outcome)
+
     async def dispatch(self, request: Request, call_next):
-        if (self.operator_keys or self.readonly_keys) and _is_protected(request):
+        started = time.monotonic()
+        auth_on = bool(self.operator_keys or self.readonly_keys) or self.users.enabled()
+        mutating = request.method in _MUTATING_METHODS
+        if auth_on and _is_protected(request):
             provided = request.headers.get("X-API-Key", "")
-            role = self._resolve_role(provided)
-            if role is None:
+            resolved = self._resolve(provided)
+            if resolved is None:
+                self._audit(request, "unauthenticated", None, None, 401, started,
+                            "missing key" if not provided else "rejected key")
                 return JSONResponse(status_code=401, content={"detail": "Invalid or missing API Key"})
-            if role != "operator" and request.method in _MUTATING_METHODS:
+            role, actor, key_id = resolved
+            if role != "operator" and mutating:
+                self._audit(request, actor, role, key_id, 403, started, "read-only key")
                 return JSONResponse(status_code=403, content={"detail": "This API key is read-only"})
-            request.state.role = role
-            # First 8 chars only: enough to distinguish operators in the audit trail
-            # (see state.py's actor field) without logging/storing the actual secret.
-            request.state.actor = f"key:{provided[:8]}"
         else:
-            request.state.role = "operator"
-            request.state.actor = "anonymous"
-        return await call_next(request)
+            role, actor, key_id = "operator", "anonymous", None
+        request.state.role = role
+        request.state.actor = actor
+        request.state.key_id = key_id
+        if not (mutating and _is_protected(request)):
+            return await call_next(request)
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            self._audit(request, actor, role, key_id, status, started, "ok" if status < 400 else "error")
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):

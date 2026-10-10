@@ -1,9 +1,11 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -23,6 +25,7 @@ from satellite_api.config import CONFIG, save_config
 from satellite_api.db import MissionArchive, archive_enabled
 from satellite_api.realworld.live import get_service as get_realworld_service
 from satellite_api import observability
+from satellite_api.audit import AUDIT
 from satellite_api.feed_health import FeedMonitor, assess as assess_feeds
 
 logger = logging.getLogger(__name__)
@@ -189,6 +192,7 @@ app.state.unreconciled_maneuvers = []
 if archive_enabled():
     try:
         app.state.archive = MissionArchive().attach(app.state.orbital_state)
+        AUDIT.sinks.append(lambda entry: app.state.archive.handle("audit", entry))
         app.state.unreconciled_maneuvers = app.state.archive.reconcile_on_startup()
     except Exception as e:  # read-only filesystem etc.
         logger.warning(f"Mission archive disabled: {e}")
@@ -224,6 +228,19 @@ def _status():
         "unreconciled_maneuvers": len(getattr(app.state, "unreconciled_maneuvers", [])),
         "feeds": {name: info["status"] for name, info in assess_feeds(getattr(app.state, "realworld", None)).items()},
     }
+
+
+@app.get("/api/audit", tags=["Admin"])
+async def audit_trail(request: Request, actor: Optional[str] = None, limit: int = 200):
+    """Who changed what: mutating requests and rejected keys (operator role only)."""
+    if getattr(request.state, "role", "operator") != "operator":
+        return ORJSONResponse(status_code=403, content={"detail": "The audit trail requires an operator key"})
+    limit = max(1, min(limit, 2000))
+    archive = app.state.archive
+    if archive is not None:
+        archive.flush(timeout=2.0)
+        return {"source": "archive", "entries": await asyncio.to_thread(archive.audit, actor, limit)}
+    return {"source": "memory", "entries": AUDIT.recent(limit, actor)}
 
 
 @app.get("/api/feeds", tags=["Health"])

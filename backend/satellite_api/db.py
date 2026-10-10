@@ -68,6 +68,38 @@ SCHEMA = [
         PRIMARY KEY (session, id)
     )
     ''',
+    '''
+    CREATE TABLE IF NOT EXISTS audit_log (
+        session TEXT,
+        seq INTEGER,
+        time TEXT,
+        actor TEXT,
+        role TEXT,
+        key_id TEXT,
+        method TEXT,
+        path TEXT,
+        status INTEGER,
+        client_ip TEXT,
+        duration_ms REAL,
+        outcome TEXT,
+        PRIMARY KEY (session, seq)
+    )
+    ''',
+    '''
+    CREATE TABLE IF NOT EXISTS decisions (
+        decision_id TEXT,
+        session TEXT,
+        sim_time TEXT,
+        satellite_id TEXT,
+        kind TEXT,
+        outcome TEXT,
+        actor TEXT,
+        rationale TEXT,
+        data TEXT,
+        PRIMARY KEY (session, decision_id)
+    )
+    ''',
+    "CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log (actor)",
     "CREATE INDEX IF NOT EXISTS idx_history_sat ON maneuver_history (satellite_id)",
     "CREATE INDEX IF NOT EXISTS idx_events_level ON events (level)",
 ]
@@ -167,6 +199,10 @@ class MissionArchive:
                         self._write_event(conn, payload)
                     elif kind == "pending_maneuver":
                         self._write_pending(conn, payload)
+                    elif kind == "audit":
+                        self._write_audit(conn, payload)
+                    elif kind == "decision":
+                        self._write_decision(conn, payload)
                     conn.commit()
             except Exception:
                 # A single malformed payload must never kill this thread: doing so
@@ -206,6 +242,28 @@ class MissionArchive:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (e["id"], self.session, e.get("sim_time"), e.get("wall_time"), e.get("level"), e.get("category"),
               e.get("satellite_id"), e.get("message"), json.dumps(e.get("data") or {}, default=str)))
+
+    def _write_audit(self, conn, a: dict):
+        conn.execute('''
+            INSERT OR REPLACE INTO audit_log (session, seq, time, actor, role, key_id, method, path, status, client_ip,
+                                              duration_ms, outcome)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (self.session, a["seq"], a["time"], a["actor"], a.get("role"), a.get("key_id"), a["method"], a["path"],
+              a["status"], a.get("client_ip"), a.get("duration_ms"), a.get("outcome")))
+
+    def _write_decision(self, conn, d: dict):
+        conn.execute('''
+            INSERT OR REPLACE INTO decisions (decision_id, session, sim_time, satellite_id, kind, outcome, actor, rationale, data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (d["decision_id"], self.session, d.get("sim_time"), d.get("satellite_id"), d.get("kind"), d.get("outcome"),
+              d.get("actor"), d.get("rationale"), json.dumps(d, default=str)))
+
+    def audit(self, actor: Optional[str] = None, limit: int = 200) -> List[dict]:
+        sql = "SELECT * FROM audit_log" + (" WHERE actor = ?" if actor else "") + " ORDER BY time DESC LIMIT ?"
+        with self._read_lock:
+            cur = self._reader().execute(sql, ((actor, limit) if actor else (limit,)))
+            cols = [c[0] for c in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
 
     # ── queries ───────────────────────────────────────────────────────────────
     def _reader(self) -> sqlite3.Connection:

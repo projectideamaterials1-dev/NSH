@@ -169,6 +169,7 @@ class StateManager:
         decision = {"decision_id": f"DEC-{self.decision_seq:05d}", "sim_time": iso_z(self.now_ts)
                     if self.current_time else None, **entry}
         self.decisions.append(decision)
+        self._notify("decision", decision)       # persisted by the mission archive (db.py)
         return decision
 
     def is_attached(self, id_a: str, id_b: str) -> bool:
