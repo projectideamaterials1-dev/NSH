@@ -8,3 +8,5 @@
 9232481407242e3e23f94fbedde7d9811fe702df:tests/integration/test_simulation.py:generic-api-key:5
 9232481407242e3e23f94fbedde7d9811fe702df:tests/integration/test_telemetry.py:generic-api-key:5
 9232481407242e3e23f94fbedde7d9811fe702df:tests/integration/test_visualization.py:generic-api-key:5
+# False positive (commit 888f845): an empty GRAFANA_ADMIN_PASSWORD= placeholder read together with the next line.
+888f84572a134d5bbf8ee8ac7ea375c6ac140ec4:.env.example:generic-api-key:45
