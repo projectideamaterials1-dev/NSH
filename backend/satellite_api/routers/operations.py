@@ -156,7 +156,8 @@ async def conjunction_tradespace(
         fuel = float(state.sat_fuel[sat_idx])
         sat_b = float(state.sat_ballistic[sat_idx])
         obj_b = float(state.debris_ballistic[obj_idx] if cdm["object_type"] == "DEBRIS" else state.sat_ballistic[obj_idx])
-        planned = [m for m in state.maneuver_queue if m[5] in cdm["mitigation_burn_ids"]]
+        # Only burns still ahead of the encounter can change it (recoveries after TCA cannot).
+        planned = [m for m in state.maneuver_queue if m[5] in cdm["mitigation_burn_ids"] and m[0] < cdm["tca_ts"]]
     result = await asyncio.to_thread(trade_space, sat_state, obj_state, cdm["tca_ts"] - now_ts,
                                      cdm["object_type"] == "SATELLITE", axis, n_times, n_dv, None, fuel, sat_b, obj_b)
     planned_first = min(planned, key=lambda m: m[0]) if planned else None

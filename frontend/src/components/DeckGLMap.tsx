@@ -9,8 +9,7 @@ import { MapView } from '@deck.gl/core';
 import type { MapViewState, PickingInfo, Position } from '@deck.gl/core';
 import { LineLayer, PathLayer, PolygonLayer, ScatterplotLayer } from '@deck.gl/layers';
 import { PathStyleExtension } from '@deck.gl/extensions';
-import { Map as MapGL } from 'react-map-gl/maplibre';
-import 'maplibre-gl/dist/maplibre-gl.css';
+import { Basemap } from './Basemap';
 import { Box, Cloud, CloudDownload, Crosshair, Globe2, History, Loader2, Map as MapIcon, Maximize2, Satellite as SatelliteIcon, Terminal } from 'lucide-react';
 
 import useOrbitalStore, { DEFAULT_CATALOG_REQUEST, selectReplayFrame } from '../store/useOrbitalStore';
@@ -407,6 +406,8 @@ export const DeckGLMap: React.FC = () => {
           tooltip={globeTooltip}
         />
       ) : (
+        <>
+        <Basemap styleUrl={MAP_STYLE} view={mapState} />
         <DeckGL
           views={MAP_VIEW}
           viewState={mapState}
@@ -422,9 +423,8 @@ export const DeckGLMap: React.FC = () => {
           onClick={onClick}
           getTooltip={getTooltip}
           getCursor={({ isHovering, isDragging }) => (isDragging ? 'grabbing' : isHovering ? 'pointer' : 'grab')}
-        >
-          <MapGL mapStyle={MAP_STYLE} reuseMaps attributionControl={false} />
-        </DeckGL>
+        />
+        </>
       )}
 
       {/* Map tools */}

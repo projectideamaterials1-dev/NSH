@@ -92,6 +92,10 @@ test.describe.serial('mission control dashboard', () => {
     await expect(page.getByRole('button', { name: 'Reset' })).toBeVisible();
     await page.getByRole('radio', { name: /2D map/ }).click();
     await expect(page.getByRole('button', { name: 'World', exact: true })).toBeVisible();
+    // The MapLibre basemap must actually render under the deck.gl layers (no error boundary).
+    await expect(page.getByText('Map failed to render')).toHaveCount(0);
+    await expect(page.locator('.maplibregl-canvas')).toBeVisible();
+    expect((await page.locator('.maplibregl-canvas').boundingBox())!.height).toBeGreaterThan(400);
 
     await page.getByRole('button', { name: 'Settings' }).click();
     const dialog = page.getByRole('dialog');
