@@ -72,8 +72,74 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm test
+      - name: Unit tests with coverage gate (thresholds in vitest.config.ts)
+        run: npm run test:coverage
       - run: npm run build
+
+  backup-restore:
+    # Proves the documented backup/restore procedure against a real Redis server:
+    # back up -> wipe -> restore -> the state manager reloads the snapshot.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install .
+      - name: Backup/restore round trip against Redis
+        env:
+          REDIS_TEST_URL: redis://localhost:6379/0
+        run: pytest tests/integration/test_backup_restore.py -v
+      - name: Backup CLI smoke test
+        env:
+          REDIS_URL: redis://localhost:6379/0
+          DATA_DIR: ${{ runner.temp }}/acm-data
+        run: |
+          python - <<'PY'
+          import redis, json
+          r = redis.Redis.from_url("redis://localhost:6379/0")
+          r.hset("acm:state", mapping={"meta": json.dumps({"sat_ids": ["S"], "debris_ids": []}), "sat": b"x",
+                                       "nominal": b"x", "fuel": b"x", "cooldown": b"x", "debris": b""})
+          PY
+          python scripts/backup.py backup --out "$RUNNER_TEMP/bk"
+          python scripts/backup.py verify --from "$RUNNER_TEMP/bk"
+          python -c "import redis; redis.Redis().delete('acm:state')"
+          python scripts/backup.py restore --from "$RUNNER_TEMP/bk"
+          python -c "import redis; assert redis.Redis().hexists('acm:state', 'meta')"
+
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # scan the full history for committed secrets
+      - name: Secret scan (gitleaks)
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.21.2 detect --source /repo --redact --verbose --exit-code 1
+      - name: Dependency vulnerability scan (Trivy, Python + npm lockfiles)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
 
   e2e:
     runs-on: ubuntu-latest
@@ -109,12 +175,14 @@ jobs:
           path: frontend/playwright-report
 
   build-docker:
-    needs: [test, frontend, e2e]
+    needs: [test, frontend, e2e, backup-restore, security]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     permissions:
       contents: read
       packages: write
+    outputs:
+      image: ${{ steps.image.outputs.name }}
     steps:
       - uses: actions/checkout@v4
       - name: Log in to GitHub Container Registry
@@ -126,7 +194,20 @@ jobs:
       - name: Compute image name
         id: image
         run: echo "name=${REGISTRY}/${IMAGE_NAME,,}" >> "$GITHUB_OUTPUT"
-      - name: Build and push Docker image
+      - name: Build image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: ${{ steps.image.outputs.name }}:${{ github.sha }}
+      - name: Scan image (Trivy) before publishing
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.image.outputs.name }}:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Push image
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -137,11 +218,50 @@ jobs:
             ${{ steps.image.outputs.name }}:${{ github.ref_name }}
 
   deploy:
+    # Release tags (v*) roll the production host to the new image via scripts/deploy.sh:
+    # pre-deploy backup, health-gated rollout, automatic rollback. Configure in the repository's
+    # `production` environment: DEPLOY_HOST, DEPLOY_USER, DEPLOY_PATH (repo checkout on the host),
+    # DEPLOY_SSH_KEY and DEPLOY_KNOWN_HOSTS (output of `ssh-keyscan <host>`). Without them the job
+    # reports that deployment is not configured instead of failing the release.
     needs: build-docker
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    environment: production
+    concurrency: production-deploy
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
     steps:
-      - name: Deploy to production
+      - name: Check deployment configuration
+        id: cfg
         run: |
-          echo "Deploying version ${{ github.ref_name }}..."
-          # Example: ssh to production and run docker compose pull && docker compose up -d
+          if [ -z "$DEPLOY_HOST" ]; then
+            echo "::notice::Deployment not configured (no DEPLOY_HOST secret in the production environment); image was published only."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Configure SSH
+        if: steps.cfg.outputs.enabled == 'true'
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Roll out ${{ github.ref_name }}
+        if: steps.cfg.outputs.enabled == 'true'
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          IMAGE: ${{ needs.build-docker.outputs.image }}:${{ github.ref_name }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- "$DEPLOY_PATH" "$IMAGE" "${{ github.ref_name }}" "${{ github.actor }}" "$GHCR_TOKEN" <<'REMOTE'
+          set -euo pipefail
+          cd "$1"
+          echo "$5" | docker login ghcr.io -u "$4" --password-stdin >/dev/null
+          git fetch --tags --quiet && git checkout --quiet "$3"
+          scripts/deploy.sh "$2"
+          docker logout ghcr.io >/dev/null
+          REMOTE

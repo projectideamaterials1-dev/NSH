@@ -85,6 +85,9 @@ coverage.xml
 backend/data/config.json
 backend/data/catalog/
 backend/data/imagery/
+backend/data/backups/
+monitoring/metrics_token
+.deployed-image
 .venv/
 
 # Frontend test artifacts

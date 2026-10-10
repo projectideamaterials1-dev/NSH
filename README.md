@@ -29,6 +29,26 @@
 
 ---
 
+## 🔭 Decision support & operations
+
+| Area | What it does | Docs |
+|------|--------------|------|
+| **Probability of collision** | 2-D short-encounter Pc with a time-scaled covariance model; risk and evasion triggers use Pc | [docs/VALIDATION.md](docs/VALIDATION.md) |
+| **Atmospheric drag** | Exponential atmosphere scaled by live NOAA F10.7/Kp, in both C++ and NumPy engines; validated against SGP4 | [docs/VALIDATION.md](docs/VALIDATION.md) |
+| **Verified evasions** | Each plan is re-screened along its post-burn path; alternatives replace plans that create secondary conjunctions | `acm/decision_support.py` |
+| **Explainability** | Every autopilot decision is logged with a plain-language rationale and the options considered | `GET /api/decisions` |
+| **Human in the loop** | APPROVAL mode turns plans into proposals an operator approves or rejects, with a timeout policy | `GET/POST /api/proposals` |
+| **Trade space** | Miss distance, Pc and propellant over burn time × Δv for any conjunction | `GET /api/conjunctions/{id}/tradespace` |
+| **Look-ahead** | Predicted satellite frames (queued burns applied) for the dashboard's time scrubber | `GET /api/predict` |
+| **Observability** | Prometheus metrics, Grafana dashboard, alert rules, feed-health monitoring | [docs/RUNBOOKS.md](docs/RUNBOOKS.md) |
+| **Backups & deploys** | Checksummed backup/restore CLI (CI-tested), health-gated deploys with rollback | [docs/RUNBOOKS.md](docs/RUNBOOKS.md#backup-and-restore) |
+
+> **Not certified SSA.** Conjunction assessments are simulation-grade. Confirm against authoritative CDMs before acting on a real spacecraft.
+
+Keyboard: press <kbd>?</kbd> in the dashboard for shortcuts (scrub with ←/→ into predictions, <kbd>P</kbd> for the performance overlay).
+
+---
+
 ## 🏗️ Technology Stack
 
 | Layer | Technologies |

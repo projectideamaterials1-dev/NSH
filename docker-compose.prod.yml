@@ -6,10 +6,22 @@ services:
   # losing the write. Each replica should still get its own ACM_DB_PATH/data volume - the SQLite
   # archive is not a shared multi-writer store, only Redis is.
   backend:
+    # Deployments pull a released image (BACKEND_IMAGE=ghcr.io/<owner>/<repo>:<tag>, see
+    # scripts/deploy.sh); without it, compose builds from source and tags the result locally.
+    image: ${BACKEND_IMAGE:-nsh-backend:latest}
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    # Resource ceilings: the C++ screening engine is multi-threaded (OpenMP) and the catalog/
+    # snapshot buffers dominate memory. Raise both for 20k+ objects or several hundred satellites.
+    deploy:
+      resources:
+        limits:
+          cpus: "${BACKEND_CPUS:-2.0}"
+          memory: ${BACKEND_MEMORY:-2g}
+        reservations:
+          memory: 512m
     # No host port mapping: nginx is the only ingress (TLS on :443), so plain HTTP on :8000
     # can't be reached directly from outside the compose network, bypassing TLS. Add back
     # "8000:8000" temporarily if you need to hit the backend directly for local debugging.
@@ -51,6 +63,8 @@ services:
       # later; a restart restored from Redis keeps the dashboard's choice)
       - REALWORLD_MAX_SATELLITES=${REALWORLD_MAX_SATELLITES:-60}
       - REALWORLD_MAX_OBJECTS=${REALWORLD_MAX_OBJECTS:-5000}
+      # Optional bearer token required by GET /metrics (Prometheus `authorization:` setting).
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
     # Runs as uid/gid 1000 (non-root, see Dockerfile) - the bind-mounted host directory must be
     # writable by that uid, e.g. `mkdir -p backend/data && chown -R 1000:1000 backend/data` (or
     # `chmod -R o+rwX backend/data` if you can't chown on your host) before first start.
@@ -71,9 +85,21 @@ services:
     # network - but still requires a password so a compromised/misconfigured neighbor
     # container (or a later change that does publish the port) can't read/write mission
     # state or the leader-election lock unauthenticated.
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in your .env file}
+    command: redis-server --appendonly yes --maxmemory ${REDIS_MAXMEMORY:-384mb} --maxmemory-policy noeviction --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in your .env file}
     volumes:
       - redis_data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD in your .env file}
 
   # Optional edge proxy in front of the backend (which already serves the UI on its own).
   # nginx.conf terminates TLS on 443 and redirects plain :80 to it - run
@@ -88,8 +114,75 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certs:/etc/nginx/certs:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128m
     depends_on:
       - backend
 
+  # ── Monitoring (opt-in): docker compose -f docker-compose.prod.yml --profile monitoring up -d ──
+  # Ports bind to 127.0.0.1 only; reach them over an SSH tunnel or put them behind your SSO proxy.
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: [monitoring]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
+    depends_on:
+      - backend
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    profiles: [monitoring]
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "127.0.0.1:9093:9093"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128m
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    profiles: [monitoring]
+    restart: unless-stopped
+    environment:
+      # Left unset, Grafana starts with admin/admin and forces a new password at first login.
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/acm-overview.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3001:3000"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+    depends_on:
+      - prometheus
+
 volumes:
   redis_data:
+  prometheus_data:
+  grafana_data:

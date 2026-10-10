@@ -39,6 +39,7 @@ from satellite_api.acm.plugins import get_plugin
 from satellite_api.acm.scheduler import BurnRequest, evaluate_sequence, queue_burns
 from satellite_api.config import CONFIG
 from satellite_api.ground_stations import brain_stations, has_los
+from satellite_api.observability import SCREEN_DURATION
 from satellite_api.physics_engine import ENGINE_NAME, process_conjunctions
 from satellite_api.timeutils import iso_z
 
@@ -530,6 +531,7 @@ class ConjunctionService:
                 predictions = await asyncio.to_thread(refiner.refine, predictions, refine_snapshot, CONFIG.cdmWarningKm)
             elapsed = time.perf_counter() - t0
             self._duration_history.append(elapsed)
+            SCREEN_DURATION.observe(elapsed)
             if state.attached_pairs:
                 predictions = [p for p in predictions if not state.is_attached(p["satellite_id"], p["object_id"])]
             predictions = await asyncio.to_thread(annotate_pc, predictions, start_ts)

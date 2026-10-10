@@ -1,0 +1,10 @@
+# Historical findings (commit 9232481): a hardcoded demo API key that was removed from the code.
+# It is not accepted by the current auth middleware (keys come only from API_KEYS_* env vars).
+# Baselined so CI fails on any NEW secret; never reuse that value as a real key.
+9232481407242e3e23f94fbedde7d9811fe702df:frontend/src/components/Header.tsx:generic-api-key:381
+9232481407242e3e23f94fbedde7d9811fe702df:satellite_api/middleware/auth.py:generic-api-key:5
+9232481407242e3e23f94fbedde7d9811fe702df:tests/benchmark/test_snapshot_performance.py:generic-api-key:6
+9232481407242e3e23f94fbedde7d9811fe702df:tests/integration/test_maneuvers.py:generic-api-key:5
+9232481407242e3e23f94fbedde7d9811fe702df:tests/integration/test_simulation.py:generic-api-key:5
+9232481407242e3e23f94fbedde7d9811fe702df:tests/integration/test_telemetry.py:generic-api-key:5
+9232481407242e3e23f94fbedde7d9811fe702df:tests/integration/test_visualization.py:generic-api-key:5

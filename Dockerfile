@@ -43,11 +43,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH="/opt/venv/bin:$PATH"
 
 # python3 to run the venv's interpreter, libgomp1 for the OpenMP runtime the compiled
-# extension links against, curl for the HEALTHCHECK - no compiler or dev headers here.
+# extension links against, curl for the HEALTHCHECK, ca-certificates so HTTPS to CelesTrak and
+# NOAA verifies (without it every live-data fetch fails TLS and the engine silently runs on cached
+# element sets) - no compiler or dev headers here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     libgomp1 \
     curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 1000 acm \
     && useradd --system --uid 1000 --gid acm --home-dir /app --shell /usr/sbin/nologin acm
@@ -56,6 +59,8 @@ COPY --from=backend-builder /opt/venv /opt/venv
 
 WORKDIR /app
 COPY backend/data ./data
+# Operational CLIs (backup/restore, propagation validation) run inside the container.
+COPY backend/scripts ./scripts
 COPY --from=frontend-builder /app/frontend/dist /app/frontend_dist
 
 RUN mkdir -p /app/data && chown -R acm:acm /app

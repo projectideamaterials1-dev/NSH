@@ -22,6 +22,8 @@ from satellite_api.physics_engine import ENGINE_NAME
 from satellite_api.config import CONFIG, save_config
 from satellite_api.db import MissionArchive, archive_enabled
 from satellite_api.realworld.live import get_service as get_realworld_service
+from satellite_api import observability
+from satellite_api.feed_health import FeedMonitor, assess as assess_feeds
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,8 @@ async def lifespan(app: FastAPI):
     operations_service = None
     live_service = None
     background_enabled = os.environ.get("ACM_BACKGROUND", "1") != "0"
+    feed_monitor = FeedMonitor(app) if background_enabled else None
+    app.state.feed_monitor = feed_monitor
     if background_enabled:
         # Created before restore() so the autopilot's planner-lock snapshot hook (registered
         # below) is in place in time to be populated by the restore itself.
@@ -101,11 +105,13 @@ async def lifespan(app: FastAPI):
             async def _on_gain():
                 operations_service.start()
                 live_service.start()
+                feed_monitor.start()
                 await _autoload_catalog(live_service, operations_service)
 
             async def _on_lose():
                 await operations_service.stop()
                 await live_service.stop()
+                await feed_monitor.stop()
 
             state.start_leader_election(
                 ttl_s=float(os.environ.get("LEADER_LOCK_TTL_S", "15")),
@@ -117,8 +123,11 @@ async def lifespan(app: FastAPI):
         # instance is always safe to run its own loops directly (no leader election needed).
         operations_service.start()
         live_service.start()
+        feed_monitor.start()
         await _autoload_catalog(live_service, operations_service)
     yield
+    if feed_monitor:
+        await feed_monitor.stop()
     service = getattr(app.state, "conjunction_service", None)
     if service:
         await service.stop()
@@ -195,6 +204,7 @@ app.include_router(maneuver_history.router, tags=["Maneuvers"])
 app.include_router(export.router, tags=["Export"])
 app.include_router(operations.router)
 app.include_router(realworld.router)
+observability.install(app)
 
 # ============================================================================
 # HEALTH PROBE
@@ -212,7 +222,14 @@ def _status():
         "archive": app.state.archive is not None,
         "live": bool(getattr(getattr(app.state, "realworld", None), "live", False)),
         "unreconciled_maneuvers": len(getattr(app.state, "unreconciled_maneuvers", [])),
+        "feeds": {name: info["status"] for name, info in assess_feeds(getattr(app.state, "realworld", None)).items()},
     }
+
+
+@app.get("/api/feeds", tags=["Health"])
+async def data_feeds():
+    """Status of the external data feeds (CelesTrak element sets, NOAA space weather)."""
+    return assess_feeds(getattr(app.state, "realworld", None))
 
 
 @app.get("/health", tags=["Health"])

@@ -60,36 +60,59 @@ DONE (cont.)
   on startup per the orphan-detection feature - needs operator review before
   reuse, or wipe backend/data for a clean slate.
 
+DONE (cont.) — 2026-10-10
+-------------------------
+[Physics / data trust]
+- Probability of collision (2-D short-encounter Pc, modelled covariance) on every CDM; risk tiers
+  and the autopilot trigger use Pc (acm/collision_probability.py)
+- Atmospheric drag in both engines, scaled by NOAA F10.7/Kp; propagator validated against SGP4 and
+  J2 theory in CI (docs/VALIDATION.md)
+- "Not certified SSA" notice in the UI, the API (/api/physics) and the docs
+- Feed-health monitoring for CelesTrak and NOAA: stale/corrupt detection, rejection of corrupt
+  downloads (cached copy kept), events on status change, /api/feeds, metrics + alerts
+- Fixed: the runtime image had no CA bundle, so every HTTPS fetch from the container failed and
+  the engine ran on cached element sets without saying so (found by the feed monitor)
+
+[Autonomy]
+- Post-maneuver verification against secondary conjunctions, with alternative selection
+- Decision log with plain-language rationale (/api/decisions)
+- Human-in-the-loop APPROVAL mode with timeout policy (/api/proposals)
+
+[Observability]
+- Prometheus /metrics (request, mission, screening, feed series; optional METRICS_TOKEN),
+  Grafana dashboard, 14 alert rules, Alertmanager - compose profile `monitoring`
+- Runbooks for every alert (docs/RUNBOOKS.md)
+
+[Reliability / delivery]
+- Backup / verify / restore CLI (scripts/backup.py); round trip tested against a real Redis in CI;
+  automatic pre-deploy backup
+- CPU/memory limits on every container; Redis maxmemory with noeviction; Redis healthcheck
+- Real deploy job: SSH to the host, health-gated rollout with automatic rollback (scripts/deploy.sh)
+
+[Security / supply chain]
+- Dependabot (pip, npm, actions, docker); gitleaks secret scan; Trivy dependency + image scans
+  gate releases. Upgraded orjson (2 HIGH DoS CVEs) and maplibre-gl (CRITICAL XSS) to fixed versions
+- Frontend unit-coverage gate (vitest thresholds)
+
 TO DO — TRACK A: production decision-support tool
 ---------------------------------------------------
 [Security]
 - API key rotation process/tooling (currently manual env var rotation only)
 - Real per-user identity/audit trail (today: shared operator/readonly secrets,
-  audit trail is just "key:<8-char prefix>")
-- Container/dependency vulnerability scanning (Trivy/Grype) in CI
-- Dependabot or equivalent for dependency updates
-- Secrets-scanning in CI (catch committed keys/tokens)
+  audit trail is just "key:<8-char prefix>"); approvals are attributed to that same key prefix
+- The historical demo key CRIMSON_NEBULA_2026 is in public git history (baselined in
+  .gitleaksignore); it is not accepted by the code - never configure it as a real key
 
 [Reliability]
 - Redis is a single container / single point of failure - needs Sentinel or
   cluster (or managed Redis with failover) for real HA
-- No tested backup/restore procedure for the SQLite archive or Redis snapshots -
-  "the volume exists" is not a backup strategy until restored from once
-- CI/CD `deploy` job is a placeholder (echo only) - no real deployment automation
-- No CPU/memory resource limits on containers in docker-compose.prod.yml
+- Backups are written to the host volume; ship them off-host (object storage) on a schedule
+- Proposals and decisions are in memory only (lost on restart; open threats are re-proposed)
 
-[Observability]
-- No metrics export (Prometheus/OpenTelemetry), dashboards, or alerting
-- No on-call runbooks for: Redis unreachable, non-leader replica stuck, orphaned
-  pending maneuvers found on startup, screening-loop latency regressions
-
-[Data trust — important for a decision-support tool specifically]
-- This engine's own CDM screening (RK4+J2, SGP4 refinement) is demo/simulation
-  fidelity, not certified SSA - cross-validate against an authoritative source
-  (Space-Track / 18th SDS, or a commercial SSA provider) before anyone makes a
-  real decision off this tool's output; say so explicitly in the UI/docs
-- CelesTrak/NOAA feeds have no SLA - no fallback/alerting yet if they go stale or
-  return corrupted data that silently degrades screening accuracy
+[Data trust]
+- Pc uses a modelled covariance, not OD covariance - ingest CDM covariances (Space-Track /
+  commercial SSA) to make Pc operationally meaningful
+- One ballistic coefficient for all objects; per-object B from element-set B* would improve decay
 
 TO DO — TRACK B: actually commanding a real spacecraft
 ---------------------------------------------------------

@@ -1,0 +1,6 @@
+# Each entry needs a reason and should be revisited when the upstream dependency updates.
+
+# image-size 0.7.5 (ICNS parsing DoS) - pulled in only by texture-compressor, a Node CLI listed
+# as a dependency of @loaders.gl/textures (via @deck.gl/geo-layers). It is never imported by the
+# browser bundle (verified: not present in frontend/dist) and never runs in the backend image.
+CVE-2025-71330

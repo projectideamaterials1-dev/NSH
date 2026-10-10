@@ -132,6 +132,46 @@ class CatalogObject:
 # ============================================================================
 _last_failure: Dict[str, float] = {}
 
+# Feed health, read by satellite_api/feed_health.py: wall times of the last successful download,
+# the last failure and the last download rejected as corrupt (cached copy kept instead).
+FEED: Dict[str, object] = {"last_success": None, "last_error": None, "last_error_at": None,
+                           "last_rejected": None, "last_rejected_at": None}
+MAX_INVALID_FRACTION = 0.2      # reject a download if more than this share of records fail sanity checks
+MIN_KEEP_FRACTION = 0.5         # ...or if it shrank below this share of the cached copy (truncated response)
+
+
+def record_problem(rec: dict) -> Optional[str]:
+    """Why an OMM record is physically implausible (None if it looks sane)."""
+    try:
+        n = float(rec["MEAN_MOTION"])
+        e = float(rec["ECCENTRICITY"])
+        i = float(rec["INCLINATION"])
+        int(rec["NORAD_CAT_ID"])
+        datetime.fromisoformat(str(rec["EPOCH"]))
+    except (KeyError, ValueError, TypeError):
+        return "missing or unparsable fields"
+    if not 0.05 < n < 17.5:
+        return f"mean motion {n} rev/day"
+    if not 0.0 <= e < 1.0:
+        return f"eccentricity {e}"
+    if not 0.0 <= i <= 180.0:
+        return f"inclination {i}"
+    return None
+
+
+def validate_download(records: list, cached: Optional[dict]) -> Optional[str]:
+    """Reason to distrust a fresh download (None to accept it)."""
+    if not records:
+        return None
+    bad = sum(record_problem(r) is not None for r in records if isinstance(r, dict)) + \
+        sum(not isinstance(r, dict) for r in records)
+    if bad / len(records) > MAX_INVALID_FRACTION:
+        return f"{bad} of {len(records)} records failed sanity checks"
+    previous = len(cached.get("records", [])) if cached else 0
+    if previous >= 20 and len(records) < MIN_KEEP_FRACTION * previous:
+        return f"only {len(records)} records vs {previous} cached (truncated response?)"
+    return None
+
 
 def _cache_path(cache_key: str):
     return data_dir() / "catalog" / f"{re.sub(r'[^A-Za-z0-9_.-]', '_', cache_key)}.json"
@@ -193,13 +233,20 @@ def fetch_query(cache_key: str, queries: Iterable[str], force: bool = False) -> 
         records: list = []
         for q in queries:
             records.extend(_http_query(q))
-    except CatalogError:
+        problem = validate_download(records, cached)
+        if problem:
+            FEED.update(last_rejected=f"{cache_key}: {problem}", last_rejected_at=now)
+            logger.warning(f"Rejected CelesTrak download for {cache_key}: {problem}")
+            raise CatalogError(f"Rejected corrupt download for {cache_key}: {problem}")
+    except CatalogError as e:
         _last_failure[cache_key] = now
+        FEED.update(last_error=str(e), last_error_at=now)
         if cached is not None:
             logger.warning(f"Using cached {cache_key} after CelesTrak failure")
             return cached["records"], {"fetched_at": iso_z(cached["fetched_at"]), "cached": True, "stale": True}
         raise
     _last_failure.pop(cache_key, None)
+    FEED["last_success"] = now
     _write_cache(cache_key, records)
     return records, {"fetched_at": iso_z(now), "cached": False, "stale": False}
 
@@ -257,6 +304,8 @@ def fetch_norad_ids(ids: Iterable[int], force: bool = False) -> Tuple[List[Catal
 def parse_records(records: list, source: str) -> List[CatalogObject]:
     out = []
     for rec in records:
+        if not isinstance(rec, dict) or record_problem(rec):
+            continue
         try:
             sat = Satrec()
             omm.initialize(sat, rec)

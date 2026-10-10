@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit --project tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -31,7 +32,7 @@
     "date-fns": "^4.1.0",
     "deck.gl": "^9.2.11",
     "lucide-react": "^0.546.0",
-    "maplibre-gl": "^5.21.1",
+    "maplibre-gl": "^6.13.0",
     "motion": "^12.23.24",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -54,6 +55,7 @@
     "@types/topojson-client": "^3.1.5",
     "@types/wicg-file-system-access": "^2023.10.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^3.2.4",
     "autoprefixer": "^10.4.21",
     "tailwindcss": "4.1.14",
     "tsx": "^4.21.0",

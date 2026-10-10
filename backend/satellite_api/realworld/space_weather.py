@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 SWPC_URL = os.environ.get("SWPC_URL", "https://services.swpc.noaa.gov")
 CACHE_TTL_S = 600
 _cache: dict = {"at": 0.0, "data": None}
+# Feed health for satellite_api/feed_health.py (wall times).
+FEED: dict = {"last_success": None, "last_error": None, "last_error_at": None}
 
 
 def cached() -> Optional[dict]:
@@ -36,6 +38,19 @@ def _float(value) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+KP_RANGE = (0.0, 9.0)
+F107_RANGE = (50.0, 500.0)     # sfu; observed solar-cycle extremes sit well inside this
+
+
+def _in_range(value: Optional[float], bounds) -> Optional[float]:
+    """The value if physically plausible; raises ValueError otherwise (treated as a feed error)."""
+    if value is None:
+        return None
+    if not bounds[0] <= value <= bounds[1]:
+        raise ValueError(f"value {value} outside {bounds[0]}-{bounds[1]}")
+    return value
 
 
 def _kp_level(kp: Optional[float]) -> str:
@@ -65,7 +80,7 @@ def fetch_space_weather(force: bool = False) -> dict:
         if rows and isinstance(rows[0], list):          # legacy format: header row + value rows
             rows = [dict(zip(rows[0], r)) for r in rows[1:]]
         latest = rows[-1]
-        data["kp"] = _float(latest.get("Kp", latest.get("kp_index")))
+        data["kp"] = _in_range(_float(latest.get("Kp", latest.get("kp_index"))), KP_RANGE)
         data["kp_time"] = str(latest.get("time_tag")) + "Z"
         data["kp_level"] = _kp_level(data["kp"])
     except Exception as e:
@@ -73,7 +88,7 @@ def fetch_space_weather(force: bool = False) -> dict:
     try:
         flux = _get("/json/f107_cm_flux.json")
         latest = max(flux, key=lambda r: r.get("time_tag", ""))
-        data["f107_sfu"] = _float(latest.get("flux"))
+        data["f107_sfu"] = _in_range(_float(latest.get("flux")), F107_RANGE)
         data["f107_time"] = str(latest.get("time_tag")) + "Z"
     except Exception as e:
         errors.append(f"F10.7: {e}")
@@ -83,6 +98,8 @@ def fetch_space_weather(force: bool = False) -> dict:
     except Exception as e:
         errors.append(f"scales: {e}")
 
+    if errors:
+        FEED.update(last_error="; ".join(errors), last_error_at=now)
     if len(errors) == 3:
         if _cache["data"] is not None:
             return {**_cache["data"], "stale": True}
@@ -97,5 +114,6 @@ def fetch_space_weather(force: bool = False) -> dict:
         data["stale"] = True
     data["errors"] = errors or None
     data["fetched_at"] = now
+    FEED["last_success"] = now
     _cache.update(at=now, data=data)
     return data

@@ -1,0 +1,106 @@
+# Alert rules. Each alert names its runbook section in docs/RUNBOOKS.md.
+groups:
+  - name: acm-availability
+    rules:
+      - alert: BackendDown
+        expr: up{job="acm-backend"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "ACM backend replica {{ $labels.instance }} is not answering /metrics"
+          runbook: "docs/RUNBOOKS.md#backend-down"
+      - alert: NoLeader
+        expr: sum(acm_is_leader) == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "No replica holds the leader lock: the autopilot and screening loops are not running"
+          runbook: "docs/RUNBOOKS.md#no-leader--leader-stuck"
+      - alert: MultipleLeaders
+        expr: sum(acm_is_leader) > 1
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "More than one replica believes it is leader"
+          runbook: "docs/RUNBOOKS.md#no-leader--leader-stuck"
+      - alert: HighErrorRate
+        expr: sum(rate(acm_http_requests_total{status="5xx"}[5m])) / clamp_min(sum(rate(acm_http_requests_total[5m])), 1e-9) > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "More than 5% of API requests are failing"
+          runbook: "docs/RUNBOOKS.md#api-errors-or-latency"
+      - alert: SlowAPI
+        expr: histogram_quantile(0.95, sum by (le) (rate(acm_http_request_duration_seconds_bucket{route!~"/api/stream.*"}[5m]))) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "API p95 latency above 1 s"
+          runbook: "docs/RUNBOOKS.md#api-errors-or-latency"
+
+  - name: acm-mission
+    rules:
+      - alert: ScreeningFallingBehind
+        expr: max(acm_screen_falling_behind) == 1
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Conjunction screening takes longer than its cadence; refinement is being bounded"
+          runbook: "docs/RUNBOOKS.md#screening-latency-regression"
+      - alert: ScreeningSlow
+        expr: histogram_quantile(0.9, sum by (le) (rate(acm_screen_duration_seconds_bucket[30m]))) > 60
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "p90 screening cycle above 60 s"
+          runbook: "docs/RUNBOOKS.md#screening-latency-regression"
+      - alert: CriticalConjunctionOpen
+        expr: max(acm_conjunctions_open{risk="CRITICAL"}) > 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "A CRITICAL conjunction has been open for 10 minutes"
+          runbook: "docs/RUNBOOKS.md#critical-conjunction-not-mitigated"
+      - alert: ProposalAwaitingApproval
+        expr: max(acm_proposals_pending) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "A maneuver proposal has waited 5 minutes for an operator (approval mode)"
+          runbook: "docs/RUNBOOKS.md#proposal-awaiting-approval"
+      - alert: CollisionDetected
+        expr: increase(acm_collisions_total[10m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "The engine recorded a collision"
+          runbook: "docs/RUNBOOKS.md#collision-detected"
+      - alert: UnreconciledManeuvers
+        expr: max(acm_unreconciled_maneuvers) > 0
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "Pending maneuvers without a recorded outcome were found after an unclean shutdown"
+          runbook: "docs/RUNBOOKS.md#orphaned-pending-maneuvers"
+      - alert: LowFleetPropellant
+        expr: min(acm_fuel_min_kg) < 5
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "A satellite is below 5 kg of propellant"
+
+  - name: acm-data-feeds
+    rules:
+      - alert: DataFeedStale
+        expr: max by (feed) (acm_feed_status) >= 2
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Data feed {{ $labels.feed }} is stale or unavailable"
+          runbook: "docs/RUNBOOKS.md#data-feed-stale-or-corrupt"
+      - alert: DataFeedDegraded
+        expr: max by (feed) (acm_feed_status) == 1
+        for: 1h
+        labels: { severity: info }
+        annotations:
+          summary: "Data feed {{ $labels.feed }} has been serving cached data for an hour"
+          runbook: "docs/RUNBOOKS.md#data-feed-stale-or-corrupt"
