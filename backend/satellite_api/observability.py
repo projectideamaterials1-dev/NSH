@@ -74,7 +74,7 @@ class MissionCollector:
 
     def collect(self) -> Iterable:
         from satellite_api.feed_health import STATUS_RANK, assess
-        from satellite_api.physics_engine import ENGINE_NAME, drag_settings
+        from satellite_api.physics_engine import ENGINE_NAME, drag_settings, engine_info
 
         state = self.app.state.orbital_state
 
@@ -83,7 +83,7 @@ class MissionCollector:
             g.add_metric(list((labels or {}).values()), float(value))
             return g
 
-        yield gauge("acm_info", "Engine build info", 1, {"engine": ENGINE_NAME})
+        yield gauge("acm_info", "Engine build info", 1, {"engine": ENGINE_NAME, "gpu": engine_info()["gpu"] or "none"})
         yield gauge("acm_is_leader", "1 if this replica runs the autopilot loops", float(getattr(state, "is_leader", True)))
         yield gauge("acm_satellites", "Tracked satellites", state.sat_count)
         yield gauge("acm_debris_objects", "Tracked debris / other objects", state.debris_count)

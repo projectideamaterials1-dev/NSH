@@ -1,0 +1,21 @@
+# NVIDIA GPU acceleration for the backend (satellite_api/gpu_engine.py). Layer it on the main file:
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.gpu.yml up -d --build
+#
+# Needs an NVIDIA driver on the host and GPU support in Docker (Docker Desktop with the WSL 2 backend
+# on Windows, or the NVIDIA Container Toolkit on Linux). /health then reports the GPU under "gpu".
+services:
+  backend:
+    image: ${BACKEND_IMAGE:-nsh-backend:gpu}
+    build:
+      args:
+        ENABLE_GPU: "1"
+    environment:
+      - ACM_ENGINE=${ACM_ENGINE:-auto}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

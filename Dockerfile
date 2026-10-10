@@ -26,8 +26,12 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir --upgrade pip "setuptools>=78.1.1"
 
 WORKDIR /app
-COPY backend/requirements.txt .
+COPY backend/requirements.txt backend/requirements-gpu.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+# Optional NVIDIA acceleration (docker-compose.gpu.yml builds with ENABLE_GPU=1): CuPy plus the
+# NVRTC / CUDA runtime wheels. The host needs an NVIDIA driver and GPU support in Docker.
+ARG ENABLE_GPU=0
+RUN if [ "$ENABLE_GPU" = "1" ]; then pip install --no-cache-dir -r requirements-gpu.txt; fi
 
 COPY backend/ .
 

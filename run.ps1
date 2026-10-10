@@ -2,6 +2,7 @@ param(
     [switch]$Demo,
     [switch]$Live,
     [ValidateRange(1, 500)][int]$Satellites = 0,
+    [switch]$NoGpu,
     [switch]$Help
 )
 
@@ -12,6 +13,7 @@ if ($Help) {
     Write-Host "  .\run.ps1 -Demo    Seed demo mission (50 sats, 10k debris, planted threats)"
     Write-Host "  .\run.ps1 -Live    Track real satellites & debris in real time via CelesTrak"
     Write-Host "  .\run.ps1 -Live -Satellites 120   ...starting with 120 satellites (default 150; resizable in the dashboard)"
+    Write-Host "  .\run.ps1 -NoGpu   Keep all physics on the CPU even if an NVIDIA GPU is present"
     exit 0
 }
 
@@ -32,11 +34,51 @@ if (-not (Test-Path $PythonExe)) {
 
 # 2. Check dependencies
 Write-Host "🔍 Verifying Python dependencies..." -ForegroundColor DarkGray
-& $PythonExe -c "import fastapi, uvicorn, numpy, pydantic, pythonjsonlogger, orjson, sgp4" 2>$null
+# Every runtime dependency, so an older venv picks up packages added since it was created.
+& $PythonExe -c "import fastapi, uvicorn, numpy, pydantic, pythonjsonlogger, orjson, sgp4, redis, prometheus_client, pybind11" 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "📦 Installing required Python dependencies into backend/.venv..." -ForegroundColor Yellow
     & $PythonExe -m pip install --upgrade pip
     & $PythonExe -m pip install -r (Join-Path $BackendDir "requirements.txt")
+}
+
+# 2b. Native C++ physics engine (OpenMP). Rebuilt when missing or older than the current source
+#     (a stale build lacks drag / per-object ballistic support). Needs the MSVC C++ build tools.
+Push-Location $BackendDir
+try {
+    & $PythonExe -c "import acm_engine as e; assert hasattr(e, 'set_drag') and 'sat_ballistic' in (e.process_conjunctions.__doc__ or '')" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "⚙️  Building native C++ physics engine (acm_engine)..." -ForegroundColor Yellow
+        & $PythonExe setup.py build_ext --inplace 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "⚠️ C++ build failed (install 'Desktop development with C++' from Visual Studio Build Tools); using the NumPy engine." -ForegroundColor Yellow
+        }
+    }
+} finally {
+    Pop-Location
+}
+
+# 2c. NVIDIA GPU acceleration (CuPy): installed automatically when an NVIDIA GPU is present.
+$HasNvidia = $false
+if (-not $NoGpu) {
+    try { & nvidia-smi -L 2>$null | Out-Null; $HasNvidia = ($LASTEXITCODE -eq 0) } catch { $HasNvidia = $false }
+}
+if ($NoGpu) {
+    $env:ACM_ENGINE = "cpp"
+} elseif ($HasNvidia) {
+    Push-Location $BackendDir
+    try {
+        & $PythonExe -c "from satellite_api import gpu_engine as g; assert g.available()" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "🎮 NVIDIA GPU detected - installing CUDA acceleration (CuPy, one time)..." -ForegroundColor Yellow
+            & $PythonExe -m pip install -r requirements-gpu.txt
+        }
+        $Gpu = & $PythonExe -c "from satellite_api import gpu_engine as g; print(g.device_name() or '')" 2>$null
+        if ($Gpu) { Write-Host "🎮 GPU acceleration: $Gpu" -ForegroundColor Green }
+        else { Write-Host "⚠️ GPU present but the CUDA engine is unavailable; using the CPU engine." -ForegroundColor Yellow }
+    } finally {
+        Pop-Location
+    }
 }
 
 if ($Demo) {

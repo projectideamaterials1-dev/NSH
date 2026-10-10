@@ -22,6 +22,7 @@ the global value set by configure_drag.
 """
 import logging
 import math
+import os
 
 import numpy as np
 
@@ -209,6 +210,34 @@ except ImportError:
     _native_set_drag = None
 
 ENGINE_NAME = "cpp" if _native is not None else "numpy"
+
+# GPU offload (gpu_engine.py): ACM_ENGINE=auto (default) uses CUDA for calls with at least
+# ACM_GPU_MIN_OBJECTS objects and ACM_GPU_MIN_WORK object-seconds of propagation. Below that, kernel
+# launches (two per 5 s chunk) cost more than the C++ engine saves. Measured on an RTX 3070 Ti vs a
+# 6-core i5-10600K: 520 objects x 3600 s 0.12 s CPU / 0.38 s GPU; 1,550 x 10,800 s 0.86 / 0.53;
+# 20,200 x 300 s 0.24 / 0.17; 20,500 x 10,800 s 11.0 / 1.2. ACM_ENGINE=cuda forces the GPU for every
+# call; cpp / numpy keep everything on the CPU.
+_ENGINE_MODE = os.environ.get("ACM_ENGINE", "auto").strip().lower()
+GPU_MIN_WORK = float(os.environ.get("ACM_GPU_MIN_WORK", "5e6"))
+GPU_MIN_OBJECTS = int(os.environ.get("ACM_GPU_MIN_OBJECTS", "1000"))
+
+
+def _gpu_for(n_objects: int, dt_seconds: float) -> bool:
+    if _ENGINE_MODE in ("cpp", "numpy", "cpu"):
+        return False
+    from satellite_api import gpu_engine
+    if not gpu_engine.available():
+        return False
+    return _ENGINE_MODE == "cuda" or (n_objects >= GPU_MIN_OBJECTS and n_objects * dt_seconds >= GPU_MIN_WORK)
+
+
+def engine_info() -> dict:
+    """What runs where: CPU engine, and the GPU (if any) used for large calls."""
+    from satellite_api import gpu_engine
+    gpu = gpu_engine.available() and _ENGINE_MODE not in ("cpp", "numpy", "cpu")
+    return {"cpu": ENGINE_NAME, "gpu": gpu_engine.device_name() if gpu else None,
+            "mode": _ENGINE_MODE, "gpu_min_work_object_seconds": GPU_MIN_WORK, "gpu_min_objects": GPU_MIN_OBJECTS,
+            "gpu_unavailable_reason": None if gpu else gpu_engine.unavailable_reason()}
 if _native is None:
     logger.warning("acm_engine C++ extension not available; using NumPy fallback engine.")
 elif _native_set_drag is None:
@@ -230,6 +259,10 @@ def propagate_fast(states: np.ndarray, dt_seconds: float, ballistic=None) -> Non
     """In-place propagation through the C++ engine when it supports the active force model
     (no conjunction search), the NumPy integrator otherwise. For bulk look-ahead work."""
     if dt_seconds <= 0.0 or len(states) == 0:
+        return
+    if _gpu_for(len(states), dt_seconds):
+        from satellite_api import gpu_engine
+        gpu_engine.propagate(states, dt_seconds, _drag, ballistic)
         return
     if _native is not None and (_native_set_drag is not None or not _drag["enabled"]):
         work = states if states.flags.c_contiguous and states.dtype == np.float64 else np.ascontiguousarray(states, dtype=np.float64)
@@ -253,6 +286,10 @@ def _native_ballistic(ballistic):
 def process_conjunctions(sat_states: np.ndarray, debris_states: np.ndarray,
                          threshold: float, dt_seconds: float, sat_ballistic=None, debris_ballistic=None):
     """Propagates both arrays in place (optionally with per-object Cd*A/m) and returns CCD hits."""
+    if _gpu_for(len(sat_states) + len(debris_states), dt_seconds):
+        from satellite_api import gpu_engine
+        return gpu_engine.process_conjunctions(sat_states, debris_states, threshold, dt_seconds, _drag,
+                                               sat_ballistic, debris_ballistic)
     # A native build without drag support would silently drop drag; use NumPy then.
     if _native is not None and (_native_set_drag is not None or not _drag["enabled"]):
         if sat_ballistic is None and debris_ballistic is None:

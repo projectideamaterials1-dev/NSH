@@ -268,10 +268,11 @@ async def update_autopilot(update: AutopilotUpdate, request: Request):
 @router.get("/api/physics", tags=["Operations"])
 async def physics_model():
     from satellite_api.acm import collision_probability as cp
-    from satellite_api.physics_engine import ENGINE_NAME, drag_settings
+    from satellite_api.physics_engine import ENGINE_NAME, drag_settings, engine_info
     from satellite_api.state import sync_drag_model
     return {
         "engine": ENGINE_NAME,
+        "compute": engine_info(),
         "force_model": "two-body + J2" + (" + atmospheric drag" if CONFIG.atmosphericDrag else ""),
         "integrator": "fixed-step RK4 (1 s)",
         "drag": {**sync_drag_model(), "native_support": drag_settings()["native_support"],

@@ -41,7 +41,12 @@ OBJ_SIGMA_RATE_KM_PER_DAY = np.array([0.050, 1.000, 0.080])
 DEFAULT_HBR_M = 20.0          # combined hard-body radius (satellite + object envelope)
 _GL_NODES, _GL_WEIGHTS = np.polynomial.legendre.leggauss(96)
 _SQRT2 = math.sqrt(2.0)
-erf = np.vectorize(math.erf, otypes=[float])
+_math_erf = math.erf
+
+
+def erf(x: np.ndarray) -> np.ndarray:
+    """Element-wise erf for the 96 quadrature nodes (math.erf over a list is ~10x faster than np.vectorize)."""
+    return np.fromiter(map(_math_erf, x.tolist()), dtype=float, count=len(x))
 
 
 def rtn_basis(r: np.ndarray, v: np.ndarray) -> np.ndarray:
@@ -87,32 +92,52 @@ def encounter_frame(state_a: np.ndarray, state_b: np.ndarray) -> Tuple[np.ndarra
     return x_hat, y_hat, z_hat
 
 
+_HALF_CHORD = np.sqrt(np.maximum(0.0, 1.0 - _GL_NODES ** 2))
+_SQRT_2PI = math.sqrt(2.0 * math.pi)
+
+
+def _principal(cov_2d: np.ndarray):
+    eigvals, eigvecs = np.linalg.eigh(cov_2d)
+    eigvals = np.maximum(eigvals, 1e-18)
+    return eigvecs, math.sqrt(eigvals[0]), math.sqrt(eigvals[1])
+
+
+def _pc_principal(m0: float, m1: float, sx: float, sy: float, hbr_km: float) -> float:
+    """Pc for a mean (m0, m1) expressed in the covariance principal axes (std devs sx, sy)."""
+    # x = R·u over u ∈ [-1, 1]; inner y-integral over the chord is analytic.
+    x = hbr_km * _GL_NODES
+    half_chord = hbr_km * _HALF_CHORD
+    gx = np.exp(-0.5 * ((x - m0) / sx) ** 2) / (sx * _SQRT_2PI)
+    inner = 0.5 * (erf((m1 + half_chord) / (_SQRT2 * sy)) - erf((m1 - half_chord) / (_SQRT2 * sy)))
+    return float(min(1.0, max(0.0, hbr_km * float(np.sum(_GL_WEIGHTS * gx * inner)))))
+
+
 def pc_2d(miss_xy: np.ndarray, cov_2d: np.ndarray, hbr_km: float) -> float:
     """2-D Gaussian probability mass inside a circle of radius `hbr_km` centred at the origin,
     for a distribution with mean `miss_xy` and covariance `cov_2d` (same units)."""
-    eigvals, eigvecs = np.linalg.eigh(cov_2d)
-    eigvals = np.maximum(eigvals, 1e-18)
-    m = eigvecs.T @ np.asarray(miss_xy, dtype=float)   # mean in principal axes
-    sx, sy = math.sqrt(eigvals[0]), math.sqrt(eigvals[1])
-    # x = R·u over u ∈ [-1, 1]; inner y-integral over the chord is analytic.
-    x = hbr_km * _GL_NODES
-    half_chord = hbr_km * np.sqrt(np.maximum(0.0, 1.0 - _GL_NODES ** 2))
-    gx = np.exp(-0.5 * ((x - m[0]) / sx) ** 2) / (sx * math.sqrt(2.0 * math.pi))
-    inner = 0.5 * (erf((m[1] + half_chord) / (_SQRT2 * sy)) - erf((m[1] - half_chord) / (_SQRT2 * sy)))
-    return float(np.clip(hbr_km * np.sum(_GL_WEIGHTS * gx * inner), 0.0, 1.0))
+    vecs, sx, sy = _principal(cov_2d)
+    m = vecs.T @ np.asarray(miss_xy, dtype=float)   # mean in principal axes
+    return _pc_principal(m[0], m[1], sx, sy, hbr_km)
 
 
 def required_miss_km(miss_dir_xy: np.ndarray, cov_2d: np.ndarray, hbr_km: float, pc_target: float,
                      max_km: float = 50.0) -> float:
-    """Smallest miss distance along `miss_dir_xy` at which Pc drops to `pc_target` (bisection)."""
+    """Smallest miss distance along `miss_dir_xy` at which Pc drops to `pc_target` (bisection; the
+    covariance is decomposed once)."""
     d = np.asarray(miss_dir_xy, dtype=float)
     d = d / max(np.linalg.norm(d), 1e-12)
-    if pc_2d(d * max_km, cov_2d, hbr_km) > pc_target:
+    vecs, sx, sy = _principal(cov_2d)
+    u0, u1 = vecs.T @ d                              # unit direction in principal axes
+
+    def pc_at(r):
+        return _pc_principal(u0 * r, u1 * r, sx, sy, hbr_km)
+
+    if pc_at(max_km) > pc_target:
         return max_km
     lo, hi = 0.0, max_km
-    for _ in range(40):
+    for _ in range(32):                      # 50 km / 2^32: far below a millimetre
         mid = 0.5 * (lo + hi)
-        if pc_2d(d * mid, cov_2d, hbr_km) > pc_target:
+        if pc_at(mid) > pc_target:
             lo = mid
         else:
             hi = mid

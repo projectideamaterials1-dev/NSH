@@ -14,8 +14,9 @@ the post-burn trajectory. It explains every decision in plain language and can h
 operator approval. Everything is visualised live on a photorealistic 3D Earth.
 
 The physics core is a C++20 engine (RK4, J2 and atmospheric drag; continuous collision detection
-with a spatial hash; OpenMP), called from a FastAPI backend that runs on real CelesTrak element
-sets, NOAA space weather and Space-Track conjunction messages.
+with a spatial hash; OpenMP) with an optional **CUDA engine for NVIDIA GPUs**. Both are called from
+a FastAPI backend that runs on real CelesTrak element sets, NOAA space weather and Space-Track
+conjunction messages.
 
 <p align="center">
   <img src="docs/images/tour.gif" alt="Scrubbing from live into predicted positions, then opening a conjunction close-up" width="960">
@@ -32,6 +33,7 @@ sets, NOAA space weather and Space-Track conjunction messages.
 - [Screenshots](#-screenshots)
 - [What it does](#-what-it-does)
 - [Architecture](#%EF%B8%8F-architecture)
+- [Performance and GPU acceleration](#-performance-and-gpu-acceleration)
 - [Design decisions](#-design-decisions)
 - [Physics and mathematics](#-physics-and-mathematics)
 - [Getting started](#-getting-started)
@@ -71,6 +73,7 @@ threat list ranks conjunctions by risk and probability of collision (Pc).
 
 | Area | Capability |
 |---|---|
+| **GPU acceleration** | Optional CUDA engine (CuPy): screening, refinement and bulk propagation run on an NVIDIA GPU when the workload is large enough to win, and on the C++ engine otherwise. It gives the same conjunctions as the CPU, and is ~14× faster for 500 satellites × 20k objects. |
 | **Propagation** | RK4 with J2 and atmospheric drag (exponential atmosphere scaled by live NOAA F10.7/Kp, per-object ballistic coefficients from B*). The C++ engine has a NumPy fallback, and both give identical results. |
 | **Screening** | Broad phase over the whole catalogue (spatial hash + continuous collision detection), then pair-wise refinement to the true TCA, refined again with SGP4 for catalog objects. |
 | **Collision probability** | 2-D short-encounter Pc in the encounter plane. It uses a time-scaled covariance model, or the **measured covariance** from an imported CCSDS CDM. |
@@ -171,12 +174,47 @@ sequenceDiagram
 
 ---
 
+## ⚡ Performance and GPU acceleration
+
+Full conjunction screen (broad phase + refinement), 3 h look-ahead, 5 km sphere, drag on.
+Measured on an RTX 3070 Ti and a 6-core i5-10600K:
+
+| Fleet × tracked objects | C++ / OpenMP | With CUDA | Speed-up | Results |
+|---|---|---|---|---|
+| 500 × 20,000 | 15.3 s | 1.1 s | ~14× | identical pairs; miss < 0.1 mm, TCA < 0.1 ms apart |
+| 150 × 5,000 | 5.9 s | 0.55 s | ~11× | identical |
+| 50 × 1,500 | 3.8 s | 0.48 s | ~8× | identical |
+| 20 × 500 | 0.98 s | 0.37 s | ~2.6× | identical |
+
+The CUDA engine (`satellite_api/gpu_engine.py`) runs:
+- one thread per object for RK4 propagation;
+- one thread per satellite–object pair for collision detection. A cheap FP32 test rejects pairs
+  that can't come close, and an exact FP64 test runs on the rest;
+- one thread per candidate pair to refine the time of closest approach.
+
+Gravity stays in FP64. The tiny drag term runs in FP32, because consumer GPUs run FP64 at 1/64
+rate, which costs ≤ 3 mm of position over 3 h against the C++ engine. The engine decides per call:
+small steps such as a 60 s simulation tick of a few hundred objects stay on the CPU, where a kernel
+round trip would be slower. `GET /api/physics` and `/health` report the GPU in use.
+
+- **Local:** `run.ps1` / `run.sh` detect an NVIDIA GPU and install `backend/requirements-gpu.txt`
+  automatically (CuPy plus the NVRTC/runtime wheels; no CUDA toolkit needed). Pass `-NoGpu` /
+  `--no-gpu` to keep everything on the CPU.
+- **Docker:** `docker compose -f docker-compose.prod.yml -f docker-compose.gpu.yml up -d --build`.
+- **Tuning:** `ACM_ENGINE=auto|cuda|cpp`, `ACM_GPU_MIN_OBJECTS` (1000), `ACM_GPU_MIN_WORK` (5e6
+  object-seconds). Reproduce the numbers with `python backend/tests/benchmark/gpu_vs_cpu.py`.
+
+The dashboard already renders on the GPU (WebGL through Three.js and deck.gl).
+
+---
+
 ## 🧭 Design decisions
 
 Each choice and the trade-off it makes:
 
 | Decision | Why | Trade-off |
 |---|---|---|
+| **Optional CUDA engine, chosen per call** | Screening is millions of independent pair checks and RK4 steps, which suits a GPU. Kernel launches have a fixed cost, so small calls stay on the CPU and large ones go to the GPU. Measured crossover points set the thresholds. | A third implementation of the force model. GPU parity tests pin it to the CPU engines and are skipped on machines without a GPU, including CI. |
 | **C++20 engine via pybind11, with a NumPy fallback** | Screening 20k objects over a 3 h horizon is millions of RK4 steps. OpenMP C++ runs about 10× faster than vectorised NumPy and mutates the NumPy buffers in place, so nothing is copied. | Two implementations of the force model. Tests assert the engines agree to < 1e-6 km, including with per-object drag. |
 | **Zero-copy contiguous state buffers** | Telemetry, physics, screening and snapshots all work on the same `(N, 6)` arrays. Row indices are stable and compacted on removal. | Anything indexed by row (planner locks, ballistic coefficients) must follow compaction. `remove_satellites` returns a remap for that. |
 | **Two-stage screening (CCD broad phase → refinement)** | A 5 km sphere with linear CCD over 5 s chunks catches every candidate cheaply. Refinement then spends effort only on pairs that matter. Under overload, refinement is bounded to the riskiest pairs, and the broad phase still covers everything. | Refinement accuracy is bounded by the 2 s CCD step (sub-metre at LEO speeds). |
@@ -343,6 +381,7 @@ All variables are documented in [`.env.example`](.env.example). The main ones:
 | `FEED_CELESTRAK_STALE_S` · `FEED_NOAA_STALE_S` | `21600` · `7200` | Feed staleness thresholds |
 | `BACKUP_INTERVAL` · `BACKUP_KEEP` | `6h` · `28` | Scheduled backups (`backup` profile) |
 | `AUTOPILOT` · `CDM_HORIZON_S` · `CDM_SCREEN_INTERVAL_S` | `1` · `10800` · `600` | Autonomy and screening cadence |
+| `ACM_ENGINE` · `ACM_GPU_MIN_OBJECTS` · `ACM_GPU_MIN_WORK` | `auto` · `1000` · `5e6` | CPU/GPU engine selection |
 
 Runtime settings can be changed from the dashboard's **Settings** (`POST /api/config`) and are
 persisted to `data/config.json`. They include spacecraft limits, screening, the Pc threshold,
@@ -400,6 +439,7 @@ Demo mission result (`scripts/demo.py`: 50 satellites, 10,000 debris, 6 planted 
 ```
 ├── Dockerfile                      # 3-stage build: frontend · C++ engine · slim non-root runtime
 ├── docker-compose.prod.yml         # backend, Redis, nginx + profiles: monitoring · ha · backup
+├── docker-compose.gpu.yml          # optional NVIDIA GPU override for the backend
 ├── run.sh · run.ps1                # local launchers (--demo / --live)
 ├── scripts/deploy.sh               # health-gated rollout with pre-deploy backup and rollback
 ├── monitoring/                     # Prometheus, alert rules, Alertmanager, Grafana, sentinel entrypoint
@@ -413,7 +453,8 @@ Demo mission result (`scripts/demo.py`: 50 satellites, 10,000 debris, 6 planted 
 │   ├── tests/                      # unit · integration · regression · benchmark
 │   └── satellite_api/
 │       ├── main.py                 # app, lifespan, health, audit/feeds endpoints
-│       ├── physics_engine.py       # engine loader, drag model, NumPy fallback
+│       ├── physics_engine.py       # engine dispatch (CUDA / C++ / NumPy), drag model
+│       ├── gpu_engine.py           # CUDA kernels via CuPy: propagation, CCD, pair refinement
 │       ├── state.py · state_redis.py · redis_conn.py · db.py
 │       ├── prediction.py · observability.py · feed_health.py · audit.py · backup.py
 │       ├── middleware/             # auth (named users, shared keys), identity, rate limiting, leader gate

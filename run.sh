@@ -3,6 +3,7 @@
 #   ./run.sh           start backend (:8000) and dashboard (:3000)
 #   ./run.sh --demo    also seed the demo mission and run the simulation (autopilot avoids planted threats)
 #   ./run.sh --live    load real satellites and debris from CelesTrak and track them in real time (needs internet)
+#   ./run.sh --no-gpu  keep all physics on the CPU even if an NVIDIA GPU is present
 set -e
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,12 +12,14 @@ VENV_DIR="$BACKEND_DIR/.venv"
 
 DEMO=0
 LIVE=0
+NO_GPU=0
 for arg in "$@"; do
     case "$arg" in
         --demo) DEMO=1 ;;
         --live) LIVE=1 ;;
-        -h|--help) sed -n '2,5p' "$0"; exit 0 ;;
-        *) echo "Unknown option: $arg (use --demo, --live or --help)"; exit 1 ;;
+        --no-gpu) NO_GPU=1 ;;
+        -h|--help) sed -n '2,6p' "$0"; exit 0 ;;
+        *) echo "Unknown option: $arg (use --demo, --live, --no-gpu or --help)"; exit 1 ;;
     esac
 done
 
@@ -39,17 +42,31 @@ else
 fi
 
 # Check Python dependencies (installed only into the venv, never globally)
-"$VENV_PY" -c "import fastapi, uvicorn, numpy, pydantic, pythonjsonlogger, orjson, sgp4" 2>/dev/null || {
+# (every runtime dependency, so an older venv picks up packages added since it was created)
+"$VENV_PY" -c "import fastapi, uvicorn, numpy, pydantic, pythonjsonlogger, orjson, sgp4, redis, prometheus_client, pybind11" 2>/dev/null || {
     echo "📦 Installing required Python dependencies into backend/.venv..."
     "$VENV_PY" -m pip install --upgrade pip
     "$VENV_PY" -m pip install -r "$BACKEND_DIR/requirements.txt"
 }
 
 # Check if C++ native engine is built, if not compile it
-(cd "$BACKEND_DIR" && "$VENV_PY" -c "import acm_engine; getattr(acm_engine, 'process_conjunctions')") 2>/dev/null || {
+# (rebuilt when missing or older than the source: a stale build lacks drag / per-object ballistic support)
+(cd "$BACKEND_DIR" && "$VENV_PY" -c "import acm_engine as e; assert hasattr(e, 'set_drag') and 'sat_ballistic' in (e.process_conjunctions.__doc__ or '')") 2>/dev/null || {
     echo "⚙️  Building native C++ physics engine (acm_engine)..."
     (cd "$BACKEND_DIR" && "$VENV_PY" setup.py build_ext --inplace) || echo "⚠️ C++ build skipped, will use high-speed NumPy fallback."
 }
+
+# NVIDIA GPU acceleration (CuPy): installed automatically when an NVIDIA GPU is present
+if [ "$NO_GPU" = "1" ]; then
+    export ACM_ENGINE=cpp
+elif command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    (cd "$BACKEND_DIR" && "$VENV_PY" -c "from satellite_api import gpu_engine as g; assert g.available()") 2>/dev/null || {
+        echo "🎮 NVIDIA GPU detected - installing CUDA acceleration (CuPy, one time)..."
+        "$VENV_PY" -m pip install -r "$BACKEND_DIR/requirements-gpu.txt" || echo "⚠️ GPU packages failed to install; using the CPU engine."
+    }
+    GPU_NAME=$(cd "$BACKEND_DIR" && "$VENV_PY" -c "from satellite_api import gpu_engine as g; print(g.device_name() or '')" 2>/dev/null || true)
+    [ -n "$GPU_NAME" ] && echo "🎮 GPU acceleration: $GPU_NAME" || echo "⚠️ GPU present but the CUDA engine is unavailable; using the CPU engine."
+fi
 
 # Demo mode needs `requests`; the dashboard needs node_modules
 if [ "$DEMO" = "1" ]; then

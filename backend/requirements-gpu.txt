@@ -1,0 +1,7 @@
+# Optional NVIDIA GPU acceleration (satellite_api/gpu_engine.py). Installed automatically by
+# run.ps1 / run.sh when an NVIDIA GPU is present; without it the C++ engine is used.
+# CuPy 13 keeps numpy 1.26 (pinned in requirements.txt); NVRTC compiles the kernels at runtime and
+# the runtime wheel provides the CUDA headers, so no CUDA toolkit install is needed.
+cupy-cuda12x>=13.3,<14
+nvidia-cuda-nvrtc-cu12==12.6.*
+nvidia-cuda-runtime-cu12>=12.6,<13

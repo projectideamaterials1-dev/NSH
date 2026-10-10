@@ -20,7 +20,7 @@ from satellite_api.routers import telemetry, simulation, visualization, maneuver
 # ─── Global State Manager ────────────────────────────────────────────────────
 from satellite_api.state import get_state
 from satellite_api.state_redis import RedisStateManager
-from satellite_api.physics_engine import ENGINE_NAME
+from satellite_api.physics_engine import ENGINE_NAME, engine_info
 from satellite_api.config import CONFIG, save_config
 from satellite_api.db import MissionArchive, archive_enabled
 from satellite_api.realworld.live import get_service as get_realworld_service
@@ -226,6 +226,7 @@ def _status():
         "status": "online",
         "system": "Autonomous Constellation Manager API v1.0",
         "engine": ENGINE_NAME,
+        "gpu": engine_info()["gpu"],
         "engine_ready": app.state.orbital_state.is_ready(),
         "autopilot": CONFIG.autopilotEnabled,
         "persistence": "redis" if isinstance(app.state.orbital_state, RedisStateManager) else "memory",
