@@ -20,6 +20,11 @@ CACHE_TTL_S = 600
 _cache: dict = {"at": 0.0, "data": None}
 
 
+def cached() -> Optional[dict]:
+    """Last fetched space weather without touching the network (None before the first fetch)."""
+    return _cache["data"]
+
+
 def _get(path: str):
     req = urllib.request.Request(f"{SWPC_URL}{path}", headers={"User-Agent": "CrimsonNebula-ACM/1.1"})
     with urllib.request.urlopen(req, timeout=20) as resp:

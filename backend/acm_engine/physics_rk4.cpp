@@ -39,23 +39,72 @@ constexpr double J2_CONST = 1.5 * J2 * MU_EARTH * R_EARTH * R_EARTH;
 // ============================================================================
 // J2 ACCELERATION & TWO-BODY KINEMATICS
 // ============================================================================
+// ============================================================================
+// ATMOSPHERIC DRAG (exponential atmosphere, Vallado Table 8-4, co-rotating)
+// Mirrors satellite_api/physics_engine.py; configured from Python via set_drag().
+// ============================================================================
+constexpr double OMEGA_EARTH = 7.292115e-5;
+constexpr double DRAG_CEILING_KM = 2500.0;
+constexpr int ATMO_ROWS = 19;
+constexpr double ATMO_H0[ATMO_ROWS]  = {100, 110, 120, 130, 140, 150, 180, 200, 250, 300, 350, 400,
+                                        450, 500, 600, 700, 800, 900, 1000};
+constexpr double ATMO_RHO[ATMO_ROWS] = {5.297e-7, 9.661e-8, 2.438e-8, 8.484e-9, 3.845e-9, 2.070e-9,
+                                        5.464e-10, 2.789e-10, 7.248e-11, 2.418e-11, 9.518e-12, 3.725e-12,
+                                        1.585e-12, 6.967e-13, 1.454e-13, 3.614e-14, 1.170e-14, 5.245e-15,
+                                        3.019e-15};
+constexpr double ATMO_H[ATMO_ROWS]   = {5.877, 7.263, 9.473, 12.636, 16.149, 22.523, 29.740, 37.105,
+                                        45.546, 53.628, 53.298, 58.515, 60.828, 63.822, 71.835, 88.667,
+                                        124.64, 181.05, 268.00};
+
+static bool g_drag_enabled = false;
+static double g_ballistic = 0.01;      // Cd*A/m [m^2/kg]
+static double g_density_scale = 1.0;   // solar/geomagnetic activity multiplier
+
+void set_drag(bool enabled, double ballistic_m2_per_kg, double density_scale) {
+    g_drag_enabled = enabled;
+    g_ballistic = ballistic_m2_per_kg;
+    g_density_scale = density_scale;
+}
+
+inline double atmospheric_density(const double alt_km) {
+    if (alt_km > DRAG_CEILING_KM) return 0.0;
+    int i = 0;
+    while (i + 1 < ATMO_ROWS && alt_km >= ATMO_H0[i + 1]) ++i;
+    return ATMO_RHO[i] * std::exp(-(alt_km - ATMO_H0[i]) / ATMO_H[i]);
+}
+
+// ============================================================================
+// J2 ACCELERATION & TWO-BODY KINEMATICS (+ DRAG)
+// ============================================================================
 inline void compute_acceleration(const double x, const double y, const double z,
+                                 const double vx, const double vy, const double vz,
                                  double& ax, double& ay, double& az) {
     const double r2 = x*x + y*y + z*z;
     if (r2 < 1e-20) { ax = ay = az = 0.0; return; }
-    
+
     const double r_inv = 1.0 / std::sqrt(r2);
     const double r2_inv = r_inv * r_inv;
     const double r3_inv = r2_inv * r_inv;
     const double r5_inv = r2_inv * r3_inv;
-    
+
     const double a_two_body = -MU_EARTH * r3_inv;
     const double j2_factor = J2_CONST * r5_inv;
     const double z2_r2 = z * z * r2_inv;
-    
+
     ax = x * (a_two_body + j2_factor * (5.0 * z2_r2 - 1.0));
     ay = y * (a_two_body + j2_factor * (5.0 * z2_r2 - 1.0));
     az = z * (a_two_body + j2_factor * (5.0 * z2_r2 - 3.0));
+
+    if (g_drag_enabled) {
+        const double rho = atmospheric_density(std::sqrt(r2) - R_EARTH) * g_density_scale;
+        if (rho > 0.0) {
+            const double vrx = vx + OMEGA_EARTH * y, vry = vy - OMEGA_EARTH * x, vrz = vz;
+            const double speed = std::sqrt(vrx*vrx + vry*vry + vrz*vrz);
+            // 0.5*rho*B*|v|v in m/s^2 for v in m/s; with v in km/s: x1e6, then /1e3 to km/s^2.
+            const double k = -0.5e3 * g_ballistic * rho * speed;
+            ax += k * vrx; ay += k * vry; az += k * vrz;
+        }
+    }
 }
 
 // ============================================================================
@@ -66,22 +115,22 @@ inline void rk4_step(double* state, const double dt) {
     const double vx = state[3], vy = state[4], vz = state[5];
     
     double ax1, ay1, az1;
-    compute_acceleration(x, y, z, ax1, ay1, az1);
+    compute_acceleration(x, y, z, vx, vy, vz, ax1, ay1, az1);
     
     const double x2 = x + 0.5*dt*vx, y2 = y + 0.5*dt*vy, z2 = z + 0.5*dt*vz;
     const double vx2 = vx + 0.5*dt*ax1, vy2 = vy + 0.5*dt*ay1, vz2 = vz + 0.5*dt*az1;
     double ax2, ay2, az2;
-    compute_acceleration(x2, y2, z2, ax2, ay2, az2);
+    compute_acceleration(x2, y2, z2, vx2, vy2, vz2, ax2, ay2, az2);
     
     const double x3 = x + 0.5*dt*vx2, y3 = y + 0.5*dt*vy2, z3 = z + 0.5*dt*vz2;
     const double vx3 = vx + 0.5*dt*ax2, vy3 = vy + 0.5*dt*ay2, vz3 = vz + 0.5*dt*az2;
     double ax3, ay3, az3;
-    compute_acceleration(x3, y3, z3, ax3, ay3, az3);
+    compute_acceleration(x3, y3, z3, vx3, vy3, vz3, ax3, ay3, az3);
     
     const double x4 = x + dt*vx3, y4 = y + dt*vy3, z4 = z + dt*vz3;
     const double vx4 = vx + dt*ax3, vy4 = vy + dt*ay3, vz4 = vz + dt*az3;
     double ax4, ay4, az4;
-    compute_acceleration(x4, y4, z4, ax4, ay4, az4);
+    compute_acceleration(x4, y4, z4, vx4, vy4, vz4, ax4, ay4, az4);
     
     const double dt_6 = dt / 6.0;
     state[0] += dt_6 * (vx + 2*vx2 + 2*vx3 + vx4);
@@ -327,4 +376,7 @@ PYBIND11_MODULE(acm_engine, m) {
           py::arg("debris_states").noconvert(),
           py::arg("threshold"),
           py::arg("dt_seconds"));
+    m.def("set_drag", &set_drag,
+          "Configures atmospheric drag: enabled, ballistic coefficient Cd*A/m [m^2/kg], density scale",
+          py::arg("enabled"), py::arg("ballistic_m2_per_kg"), py::arg("density_scale"));
 }

@@ -14,6 +14,7 @@ from httpx import AsyncClient, ASGITransport
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from satellite_api.config import CONFIG, SimConfig
+from satellite_api.physics_engine import configure_drag
 from satellite_api.main import app
 from satellite_api.state import StateManager, get_state
 
@@ -23,6 +24,7 @@ def reset_state(monkeypatch, tmp_path):
     """Give every test a fresh StateManager singleton and default configuration."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))       # config saves go to a temp dir
     CONFIG.__dict__.update(SimConfig().__dict__)
+    configure_drag(False)                                # unit tests start drag-free; steps re-sync it
     StateManager._instance = None
     app.state.orbital_state = get_state()
     app.state.conjunction_service = None

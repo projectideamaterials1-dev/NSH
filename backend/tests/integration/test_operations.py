@@ -42,7 +42,9 @@ async def test_autopilot_detects_and_avoids_conjunction(client):
     cdms = (await client.get("/api/conjunctions")).json()["conjunctions"]
     threat = next(c for c in cdms if c["object_id"] == "DEB-THREAT")
     assert threat["risk"] == "CRITICAL" and threat["status"] == "MITIGATED"
-    assert threat["tca"] == iso_z(T0 + 1800)
+    # Drag perturbs the planted (drag-free) geometry by milliseconds, so compare with a tolerance.
+    assert threat["tca_ts"] == pytest.approx(T0 + 1800, abs=0.05)
+    assert threat["pc"] > CONFIG.pcManeuverThreshold and threat["encounter_plane"]["sigma_major_km"] > 0
 
     queued = (await client.get("/api/maneuvers", params={"status": "pending", "satellite_id": "SAT-A"})).json()["maneuvers"]
     assert queued[0]["maneuver_type"] in ("PHASING_PROGRADE", "PHASING_RETROGRADE", "RADIAL_SHUNT")
@@ -313,7 +315,8 @@ async def test_fleet_coordinator_never_retimes_evasion(client):
     expected = AutonomousBrain().calculate_perfect_evasion_sequence(
         sat_idx=0, threats=[Conjunction(sat_idx=0, debris_idx=0, tca_seconds=cdm["tca_ts"] - T0,
                                         miss_distance_km=cdm["miss_distance_km"], relative_velocity_kms=7.5,
-                                        risk_score=1.0)],
+                                        risk_score=1.0,
+                                        target_clearance_km=min(cdm.get("safe_miss_km") or 0.2, 5.0))],
         current_fuel_kg=CONFIG.initialFuel, sat_state=sat_a, nominal_state=sat_a,
     )
     expected_offsets = sorted(p.burn_time_offset_s for p in expected)

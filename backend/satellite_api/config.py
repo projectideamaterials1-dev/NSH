@@ -30,6 +30,15 @@ class SimConfig:
     cdmHorizonSeconds: float = 10800.0   # look-ahead (3 h)
     cdmScreenIntervalSeconds: float = 600.0  # sim seconds between automatic screens
 
+    # Collision probability (acm/collision_probability.py)
+    pcManeuverThreshold: float = 1e-4     # Pc at/above which an encounter is CRITICAL and triggers evasion
+    hardBodyRadiusM: float = 20.0         # combined hard-body radius
+    covarianceScale: float = 1.0          # multiplier on the model position covariance
+
+    # Atmospheric drag (physics_engine.py): exponential atmosphere scaled by NOAA F10.7/Kp
+    atmosphericDrag: bool = True
+    ballisticCoefficient: float = 0.01    # Cd*A/m [m^2/kg], shared by all propagated objects
+
     # Fleet-wide coordination (acm/fleet_coordinator.py): staggers station-keeping burns
     # that would otherwise all fire at the same hardcoded offset, ordered by priority score.
     fleetStaggerEnabled: bool = True
@@ -46,6 +55,8 @@ class SimConfig:
         "maxDeltaV": (0.1, 100.0), "cooldownSeconds": (0.0, 7200.0), "eolFuelThreshold": (0.0, 100.0),
         "lowFuelWarning": (0.0, 500.0), "cdmWarningKm": (0.1, 50.0), "cdmHorizonSeconds": (600.0, 172800.0),
         "cdmScreenIntervalSeconds": (60.0, 86400.0),
+        "pcManeuverThreshold": (1e-7, 1e-2), "hardBodyRadiusM": (1.0, 200.0), "covarianceScale": (0.1, 10.0),
+        "ballisticCoefficient": (0.001, 0.2),
         "fleetStaggerWindowS": (0.0, 600.0), "fleetStaggerGapS": (1.0, 600.0), "fleetStaggerMaxDelayS": (0.0, 3600.0),
         "fleetPriorityRiskWeight": (0.0, 1.0), "fleetPriorityFuelWeight": (0.0, 1.0),
         "fleetPriorityDriftWeight": (0.0, 1.0), "fleetPriorityTcaWeight": (0.0, 1.0),

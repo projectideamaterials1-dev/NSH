@@ -9,6 +9,9 @@ screen():  1. broad phase – propagate copies of every object over the look-ahe
               before first contact and sample a 10-minute window at 2 s with linear CCD
               to obtain the true TCA, miss distance, relative speed and approach angle.
 
+annotate_pc():  adds probability of collision (Pc) and encounter-plane geometry to each
+              prediction (acm/collision_probability.py); risk is then graded on Pc and miss.
+
 CDMRegistry tracks each predicted encounter from detection to resolution:
     ACTIVE -> MITIGATED (avoidance burns scheduled) -> CLEARED (no longer predicted)
            -> RESOLVED (TCA passed safely) | COLLIDED
@@ -19,6 +22,8 @@ from typing import Callable, Dict, List, Optional, Sequence
 import numpy as np
 
 from satellite_api.acm.brain import COLLISION_THRESHOLD_KM
+from satellite_api.acm.collision_probability import assess
+from satellite_api.config import CONFIG
 from satellite_api.physics_engine import process_conjunctions, propagate_states
 from satellite_api.timeutils import iso_z
 
@@ -34,15 +39,43 @@ MAX_CDMS = 2000
 EVASION_TRIGGER_KM = COLLISION_THRESHOLD_KM * 1.5
 
 
-def risk_level(miss_km: float) -> str:
-    if miss_km < CRITICAL_KM:
+# Pc grading (NASA CARA practice: maneuver consideration at ~1e-4, monitoring from ~1e-6).
+WARNING_PC = 1e-6
+
+
+def risk_level(miss_km: float, pc: Optional[float] = None) -> str:
+    """Risk tier from miss distance and, when available, probability of collision."""
+    if miss_km < CRITICAL_KM or (pc is not None and pc >= CONFIG.pcManeuverThreshold):
         return "CRITICAL"
-    if miss_km < WARNING_KM:
+    if miss_km < WARNING_KM or (pc is not None and pc >= WARNING_PC):
         return "WARNING"
     return "WATCH"
 
 
+def needs_action(cdm: dict) -> bool:
+    """Whether an encounter is inside the autopilot's evasion trigger (miss radius or Pc)."""
+    pc = cdm.get("pc")
+    return cdm["miss_distance_km"] <= EVASION_TRIGGER_KM or (pc is not None and pc >= CONFIG.pcManeuverThreshold)
+
+
+def annotate_pc(predictions: List[dict], now_ts: float) -> List[dict]:
+    """Adds Pc + encounter-plane geometry from the TCA states that screen()/the SGP4 refiner
+    attach as `_state_sat`/`_state_obj`, then drops those internal fields."""
+    for p in predictions:
+        a, b = p.pop("_state_sat", None), p.pop("_state_obj", None)
+        if a is None or b is None:
+            continue
+        p.update(assess(a, b, p["miss_distance_km"], p["tca_ts"] - now_ts,
+                        obj_is_owned=p["object_type"] == "SATELLITE", hbr_m=CONFIG.hardBodyRadiusM,
+                        covariance_scale=CONFIG.covarianceScale, pc_threshold=CONFIG.pcManeuverThreshold))
+    return predictions
+
+
 RISK_RANK = {"WATCH": 0, "WARNING": 1, "CRITICAL": 2}
+
+
+def _pc_text(p: dict) -> str:
+    return f", Pc {p['pc']:.1e}" if p.get("pc") is not None else ""
 
 
 def _approach_angle_deg(r_sat: np.ndarray, v_sat: np.ndarray, v_rel: np.ndarray) -> float:
@@ -153,6 +186,7 @@ def screen(sat_states: np.ndarray, debris_states: np.ndarray, sat_ids: Sequence[
             "miss_distance_km": float(best_d[i]),
             "relative_velocity_kms": float(np.linalg.norm(v_rel)),
             "approach_angle_deg": _approach_angle_deg(best_A[i, :3], best_A[i, 3:], v_rel),
+            "_state_sat": best_A[i].copy(), "_state_obj": best_B[i].copy(),
         })
     return results
 
@@ -190,13 +224,14 @@ class CDMRegistry:
             if p["tca_ts"] <= now_ts:
                 continue
             match = self._match(p)
-            risk = risk_level(p["miss_distance_km"])
+            risk = risk_level(p["miss_distance_km"], p.get("pc"))
             if match is None:
                 self._seq += 1
                 cdm = {
                     "cdm_id": f"CDM-{self._seq:05d}", **p, "tca": iso_z(p["tca_ts"]),
                     "risk": risk, "peak_risk": risk, "status": "ACTIVE",
                     "min_predicted_miss_km": p["miss_distance_km"], "initial_miss_km": p["miss_distance_km"],
+                    "peak_pc": p.get("pc"), "initial_pc": p.get("pc"),
                     "mitigation_burn_ids": [], "detected_at": iso_z(now_ts), "updated_at": iso_z(now_ts),
                     "final_status_at": None,
                 }
@@ -206,7 +241,7 @@ class CDMRegistry:
                 if risk != "WATCH":
                     emit("crit" if risk == "CRITICAL" else "warn", "conjunction",
                          f"{risk.title()} conjunction with {p['object_id']}: {p['miss_distance_km'] * 1000:.0f} m "
-                         f"miss at {iso_z(p['tca_ts'], millis=False)[11:19]} UTC",
+                         f"miss{_pc_text(p)} at {iso_z(p['tca_ts'], millis=False)[11:19]} UTC",
                          satellite_id=p["satellite_id"], cdm_id=cdm["cdm_id"])
                 continue
             seen.add(match["cdm_id"])
@@ -214,6 +249,8 @@ class CDMRegistry:
             previous_risk = match["risk"]
             match.update({**p, "tca": iso_z(p["tca_ts"]), "risk": risk, "updated_at": iso_z(now_ts)})
             match["min_predicted_miss_km"] = min(match["min_predicted_miss_km"], p["miss_distance_km"])
+            if p.get("pc") is not None:
+                match["peak_pc"] = max(match.get("peak_pc") or 0.0, p["pc"])
             if RISK_RANK[risk] > RISK_RANK[match["peak_risk"]]:
                 match["peak_risk"] = risk
             if match["status"] == "CLEARED":
@@ -268,9 +305,9 @@ class CDMRegistry:
             # Only credit/mitigate the conjunctions actually close enough to have been
             # part of the threat set the evasion burn was sized against (brain.py uses
             # the same EVASION_TRIGGER_KM radius) - not every other open threat for
-            # this satellite, which the burn was never computed to address.
-            if (cdm["satellite_id"] == sat_id and cdm["tca_ts"] > now_ts
-                    and cdm["miss_distance_km"] <= EVASION_TRIGGER_KM):
+            # this satellite, which the burn was never computed to address. Pc-triggered
+            # encounters count too: the planner sizes its burn for those as well.
+            if cdm["satellite_id"] == sat_id and cdm["tca_ts"] > now_ts and needs_action(cdm):
                 cdm["mitigation_burn_ids"] = list(dict.fromkeys(cdm["mitigation_burn_ids"] + burn_ids))
                 cdm["status"] = "MITIGATED"
                 linked.append(cdm["cdm_id"])

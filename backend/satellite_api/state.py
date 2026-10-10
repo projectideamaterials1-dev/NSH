@@ -19,7 +19,8 @@ import numpy as np
 from satellite_api.acm.conjunctions import CDMRegistry
 from satellite_api.config import CONFIG
 from satellite_api.coordinates import convert_states_to_lla
-from satellite_api.physics_engine import process_conjunctions, propagate_states
+from satellite_api.physics_engine import configure_drag, density_scale, process_conjunctions, propagate_states
+from satellite_api.realworld import space_weather
 from satellite_api.timeutils import iso_z, parse_iso_utc
 
 # ============================================================================
@@ -42,6 +43,15 @@ MAX_EVENTS = 1000
 EVASION_TYPES = {"PHASING_PROGRADE", "PHASING_RETROGRADE", "RADIAL_SHUNT"}
 
 logger = logging.getLogger(__name__)
+
+def sync_drag_model() -> dict:
+    """Pushes CONFIG's drag settings plus the latest cached NOAA F10.7/Kp into the engines."""
+    weather = space_weather.cached() or {}
+    scale = density_scale(weather.get("f107_sfu"), weather.get("kp"))
+    configure_drag(CONFIG.atmosphericDrag, CONFIG.ballisticCoefficient, scale)
+    return {"enabled": CONFIG.atmosphericDrag, "ballistic_m2_per_kg": CONFIG.ballisticCoefficient,
+            "density_scale": round(scale, 3), "f107_sfu": weather.get("f107_sfu"), "kp": weather.get("kp")}
+
 
 # Queue entry: (burn_ts, sat_id, dvx, dvy, dvz, burn_id, maneuver_type, actor)
 Maneuver = Tuple[float, str, float, float, float, str, str, str]
@@ -347,12 +357,13 @@ class StateManager:
     # SIMULATION STEP
     # ========================================================================
     def _advance_clock_and_ghosts(self, dt_seconds: float):
-        """Advances time, cooldowns and nominal ghost slots (same J2 model as the engine)."""
+        """Advances time, cooldowns and nominal ghost slots (J2, no drag: the slot is the
+        maintained reference orbit, so drag decay of the real satellite shows up as drift)."""
         n = self.sat_count
         if self.current_time is not None:
             self.current_time = datetime.fromtimestamp(self.current_time.timestamp() + dt_seconds, tz=timezone.utc)
         self.sat_cooldown_timers[:n] = np.maximum(0.0, self.sat_cooldown_timers[:n] - dt_seconds)
-        propagate_states(self.nominal_buffer[:n], dt_seconds)
+        propagate_states(self.nominal_buffer[:n], dt_seconds, drag=False)
         self.sim_seconds_elapsed += dt_seconds
 
     def drift_km(self) -> np.ndarray:
@@ -399,6 +410,7 @@ class StateManager:
             if not self.is_initialized or self.current_time is None:
                 return 0, 0
 
+            sync_drag_model()
             t = self.current_time.timestamp()
             target = t + step_seconds
             executed = self._execute_due_maneuvers(t)

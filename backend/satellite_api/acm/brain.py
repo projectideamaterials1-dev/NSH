@@ -45,6 +45,14 @@ class Conjunction:
     miss_distance_km: float     
     relative_velocity_kms: float 
     risk_score: float           
+    pc: Optional[float] = None              # probability of collision, when assessed
+    requires_action: Optional[bool] = None  # set by the caller from miss distance and Pc
+    target_clearance_km: float = 0.200      # miss distance the evasion should achieve
+
+    def is_threat(self) -> bool:
+        if self.requires_action is not None:
+            return self.requires_action
+        return self.miss_distance_km <= COLLISION_THRESHOLD_KM * 1.5
 
 @dataclass
 class ManeuverPlan:
@@ -185,13 +193,15 @@ class AutonomousBrain:
         j2_correction = 1.0 + (1.5 * J2 * (R_EARTH / a)**2 * (1.0 - 1.5 * math.sin(inc_rad)**2))
         t_orb_base = (2 * math.pi) / (n_mean * j2_correction)
 
-        target_clearance_km = 0.200 
         max_req_dv_trans = 0.0
         max_req_dv_rad = 0.0
         
         for conj in threats:
             drift_time_s = conj.tca_seconds - t1
             if drift_time_s <= 1.0: continue
+            # Displacement needed: enough to reach the clearance (Pc-driven encounters can
+            # need several km when the covariance is large) from the current miss.
+            target_clearance_km = max(conj.target_clearance_km, 0.200)
             
             # The longer the drift_time_s (e.g. 24 hours), the smaller these required dVs become!
             cw_y_factor = abs(4.0 * math.sin(n_mean * drift_time_s) - 3.0 * n_mean * drift_time_s)
@@ -312,7 +322,7 @@ class AutonomousBrain:
                 continue
 
             # Skip if there is an active emergency threat for this satellite
-            has_threat = any(c.sat_idx == sat_idx for c in conjunctions if c.miss_distance_km <= COLLISION_THRESHOLD_KM * 1.5)
+            has_threat = any(c.sat_idx == sat_idx for c in conjunctions if c.is_threat())
             if has_threat: continue
 
             # Evaluate distance to the Nominal Ghost Slot
@@ -392,7 +402,7 @@ class AutonomousBrain:
                 if curr_ts < lock_until and lock_reason == "EVASION":
                     continue
                     
-            if conj.miss_distance_km > COLLISION_THRESHOLD_KM * 1.5: continue
+            if not conj.is_threat(): continue
             
             if conj.sat_idx not in threats_by_sat:
                 threats_by_sat[conj.sat_idx] = []

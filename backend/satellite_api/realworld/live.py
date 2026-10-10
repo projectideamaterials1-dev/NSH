@@ -115,6 +115,8 @@ class Sgp4Refiner:
                 "relative_velocity_kms": float(np.linalg.norm(v_rel)),
                 "approach_angle_deg": _approach_angle_deg(r[0, j], v[0, j], v_rel),
                 "propagator": "SGP4",
+                # TEME states at the nearest sample, for the Pc encounter-plane projection
+                "_state_sat": np.concatenate([r[0, j], v[0, j]]), "_state_obj": np.concatenate([r[1, j], v[1, j]]),
             })
         return out
 

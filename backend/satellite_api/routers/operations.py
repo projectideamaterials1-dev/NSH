@@ -9,6 +9,7 @@ Operations API used by the dashboard (the PS endpoints are unchanged):
   GET  /api/metrics                      mission scorecard
   GET  /api/autopilot  | PUT /api/autopilot
   GET  /api/avoidance/strategies         available avoidance plugins
+  GET  /api/physics                      force model, drag/space-weather coupling and Pc model in use
   GET  /api/satellites                   per-satellite operational details (incl. altitude)
   GET  /api/satellites/{id}/track        predicted ground track
   GET  /api/satellites/{id}/passes       ground-station contact windows
@@ -156,6 +157,30 @@ async def update_autopilot(update: AutopilotUpdate, request: Request):
         state.emit("info", "autopilot", f"Autopilot {'enabled' if CONFIG.autopilotEnabled else 'disabled'} "
                    f"(strategy {CONFIG.avoidanceStrategy})")
     return await get_autopilot()
+
+
+@router.get("/api/physics", tags=["Operations"])
+async def physics_model():
+    from satellite_api.acm import collision_probability as cp
+    from satellite_api.physics_engine import ENGINE_NAME, drag_settings
+    from satellite_api.state import sync_drag_model
+    return {
+        "engine": ENGINE_NAME,
+        "force_model": "two-body + J2" + (" + atmospheric drag" if CONFIG.atmosphericDrag else ""),
+        "integrator": "fixed-step RK4 (1 s)",
+        "drag": {**sync_drag_model(), "native_support": drag_settings()["native_support"],
+                 "atmosphere": "exponential (Vallado Table 8-4), co-rotating, F10.7/Kp-scaled"},
+        "collision_probability": {
+            "method": "2-D short-encounter Pc (Foster/Alfano), Gauss-Legendre quadrature",
+            "covariance": "time-scaled RTN model (not orbit-determination covariance)",
+            "maneuver_threshold": CONFIG.pcManeuverThreshold, "hard_body_radius_m": CONFIG.hardBodyRadiusM,
+            "covariance_scale": CONFIG.covarianceScale,
+            "owned_sigma0_km": cp.SAT_SIGMA0_KM.tolist(), "owned_sigma_rate_km_per_day": cp.SAT_SIGMA_RATE_KM_PER_DAY.tolist(),
+            "tracked_sigma0_km": cp.OBJ_SIGMA0_KM.tolist(), "tracked_sigma_rate_km_per_day": cp.OBJ_SIGMA_RATE_KM_PER_DAY.tolist(),
+        },
+        "certification": "Simulation / decision-support fidelity only - not certified SSA. Cross-check "
+                         "against an authoritative source (e.g. Space-Track CDMs) before acting.",
+    }
 
 
 @router.get("/api/avoidance/strategies", tags=["Operations"])

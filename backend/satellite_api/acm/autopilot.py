@@ -24,7 +24,7 @@ from typing import Dict, Optional
 import numpy as np
 
 from satellite_api.acm.brain import AutonomousBrain, Conjunction
-from satellite_api.acm.conjunctions import screen
+from satellite_api.acm.conjunctions import annotate_pc, needs_action, screen
 from satellite_api.acm.fleet_coordinator import coordinate_fleet
 from satellite_api.acm.plugins import get_plugin
 from satellite_api.acm.scheduler import BurnRequest, evaluate_sequence, queue_burns
@@ -32,6 +32,11 @@ from satellite_api.config import CONFIG
 from satellite_api.ground_stations import brain_stations, has_los
 from satellite_api.physics_engine import ENGINE_NAME, process_conjunctions
 from satellite_api.timeutils import iso_z
+
+
+def sync_drag_model():
+    from satellite_api.state import sync_drag_model as _sync   # state imports this module's siblings
+    return _sync()
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +101,9 @@ class Autopilot:
                 sat_idx=idx, debris_idx=0, tca_seconds=cdm["tca_ts"] - now_ts,
                 miss_distance_km=cdm["miss_distance_km"], relative_velocity_kms=cdm["relative_velocity_kms"],
                 risk_score=1.0 if cdm["risk"] == "CRITICAL" else 0.5,
+                pc=cdm.get("pc"), requires_action=needs_action(cdm),
+                # Pc-sized clearance: the miss at which Pc falls a decade below the threshold.
+                target_clearance_km=min(cdm.get("safe_miss_km") or 0.2, 5.0),
             ))
 
         sat_states = state.sat_buffer[:n].copy()
@@ -231,6 +239,7 @@ class ConjunctionService:
                     priority_pairs = None
                     max_refine = None
 
+            sync_drag_model()
             t0 = time.perf_counter()
             coarse_km = CONFIG.cdmWarningKm + (refiner.margin_km(horizon) if refiner else 0.0)
             predictions = await asyncio.to_thread(
@@ -242,6 +251,7 @@ class ConjunctionService:
             self._duration_history.append(elapsed)
             if state.attached_pairs:
                 predictions = [p for p in predictions if not state.is_attached(p["satellite_id"], p["object_id"])]
+            predictions = await asyncio.to_thread(annotate_pc, predictions, start_ts)
 
             async with state.lock:
                 stats = state.cdms.apply(predictions, state.now_ts, state.emit)
