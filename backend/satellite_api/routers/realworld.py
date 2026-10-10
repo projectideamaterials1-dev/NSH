@@ -6,8 +6,10 @@ Real-world data API:
   GET  /api/catalog/sources              CelesTrak sources that can be loaded (fleet / tracked objects)
   POST /api/catalog/load                 fetch element sets, propagate with SGP4 and load them into the engine
   POST /api/catalog/refresh              re-fetch the loaded sources and re-anchor (fuel/burns are kept)
+  POST /api/catalog/resize               grow/shrink the loaded fleet in place (the rest keep fuel/burns)
   GET  /api/catalog/status               what is loaded, element-set ages, live-sync state
   GET  /api/catalog/objects/{object_id}  NORAD id, designator, element-set epoch and orbital elements
+  GET  /api/catalog/imagery[/{id}]       real photos of the loaded satellites (Wikimedia Commons)
   GET  /api/live | PUT /api/live         wall-clock live mode (simulation time = real UTC)
   GET  /api/space-weather                NOAA SWPC Kp, F10.7 and G/S/R scales
 """
@@ -17,7 +19,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from satellite_api.realworld import catalog
+from satellite_api.realworld import catalog, imagery
 from satellite_api.realworld.catalog import CatalogError
 from satellite_api.realworld.live import MAX_OBJECTS, MAX_SATELLITES, RealWorldService, get_service
 from satellite_api.realworld.space_weather import fetch_space_weather
@@ -85,6 +87,21 @@ async def refresh_catalog(request: Request, force: bool = Query(False, descripti
     return {**result, "status": service.status()}
 
 
+class FleetResize(BaseModel):
+    max_satellites: int = Field(..., ge=1, le=MAX_SATELLITES)
+
+
+@router.post("/api/catalog/resize")
+async def resize_fleet(body: FleetResize, request: Request):
+    """Add or remove satellites from the loaded fleet; the rest keep their fuel, burns and history."""
+    try:
+        return await _service(request).resize(body.max_satellites, conjunction_service=_conjunction_service(request))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except CatalogError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @router.get("/api/catalog/status")
 async def catalog_status(request: Request):
     return _service(request).status()
@@ -98,6 +115,31 @@ async def catalog_object(object_id: str, request: Request):
     if info is None:
         raise HTTPException(status_code=404, detail=f"{object_id} was not loaded from the catalog")
     return info
+
+
+@router.get("/api/catalog/imagery")
+async def fleet_imagery(request: Request):
+    """Wikimedia photos for every loaded real-world satellite, keyed by engine satellite id."""
+    state = request.app.state.orbital_state
+    async with state.lock:
+        fleet = {sid: (obj.norad_id, obj.name) for sid, obj in _service(request).fleet.items()}
+    photos = await asyncio.to_thread(imagery.lookup, fleet.values())
+    return {"provider": "Wikimedia Commons via Wikidata / Wikipedia",
+            "items": {sid: photos.get(norad) for sid, (norad, _) in fleet.items()}}
+
+
+@router.get("/api/catalog/imagery/{object_id:path}")
+async def object_imagery(object_id: str, request: Request):
+    state = request.app.state.orbital_state
+    async with state.lock:
+        service = _service(request)
+        obj = service.fleet.get(object_id) or service.objects.get(object_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail=f"{object_id} was not loaded from the catalog")
+    entry = (await asyncio.to_thread(imagery.lookup, [(obj.norad_id, obj.name)])).get(obj.norad_id)
+    if entry is None:
+        raise HTTPException(status_code=502, detail="Wikimedia unavailable")
+    return entry
 
 
 class LiveUpdate(BaseModel):

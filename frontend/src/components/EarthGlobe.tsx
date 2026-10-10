@@ -27,6 +27,8 @@ interface EarthGlobeProps {
   visibleStations: GlobePoint[];
   burns: GlobePoint[];
   clouds: boolean;
+  /** Draw satellites as 3D models. */
+  models: boolean;
   follow: boolean;
   onSelect: (id: string | null) => void;
   onUserMove: () => void;
@@ -36,7 +38,7 @@ interface EarthGlobeProps {
 const TEXTURE_BASE = `${import.meta.env.BASE_URL}textures/earth/`;
 
 export const EarthGlobe = forwardRef<EarthGlobeHandle, EarthGlobeProps>((props, ref) => {
-  const { timestamp, satellites, selectedId, debris, trails, predicted, stations, visibleStations, burns, clouds, follow } = props;
+  const { timestamp, satellites, selectedId, debris, trails, predicted, stations, visibleStations, burns, clouds, models, follow } = props;
   const hostRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const labelRef = useRef<HTMLDivElement>(null);
@@ -63,6 +65,7 @@ export const EarthGlobe = forwardRef<EarthGlobeHandle, EarthGlobeProps>((props, 
       return;
     }
     sceneRef.current = scene;
+    if (import.meta.env.DEV) (host as HTMLDivElement & { __scene?: EarthScene }).__scene = scene;   // inspection hook for dev / e2e
     const sun = subsolarPoint(propsRef.current.timestamp ?? new Date().toISOString());
     scene.resetView(sun.lon - 25, Math.max(-35, Math.min(35, sun.lat + 12)), false);
     scene.onUserInteract = () => propsRef.current.onUserMove();
@@ -71,7 +74,7 @@ export const EarthGlobe = forwardRef<EarthGlobeHandle, EarthGlobeProps>((props, 
       const label = labelRef.current;
       const sel = selectedRef.current;
       if (!label) return;
-      const screen = sel ? scene.projectPoint(sel) : null;
+      const screen = sel ? scene.selectedScreenPosition() : null;   // follows the smoothed motion
       if (!screen) { label.style.visibility = 'hidden'; return; }
       label.style.visibility = 'visible';
       label.style.transform = `translate(${Math.round(screen.x + 16)}px, ${Math.round(screen.y - 12)}px)`;
@@ -169,6 +172,8 @@ export const EarthGlobe = forwardRef<EarthGlobeHandle, EarthGlobeProps>((props, 
   useEffect(() => { sceneRef.current?.setVisibility(selected, visibleStations); }, [selected?.lon, selected?.lat, selected?.alt, visibleStations]);
   useEffect(() => { sceneRef.current?.setBurns(burns); }, [burns]);
   useEffect(() => { sceneRef.current?.setCloudsVisible(clouds); }, [clouds]);
+  useEffect(() => { sceneRef.current?.setModelsVisible(models); }, [models]);
+  const selectedModel = models && selectedId ? sceneRef.current?.modelInfo(selectedId) ?? null : null;
   useEffect(() => { sceneRef.current?.setFollow(follow ? selected : null); }, [follow, selected?.lon, selected?.lat, selected?.alt]);
 
   return (
@@ -196,6 +201,13 @@ export const EarthGlobe = forwardRef<EarthGlobeHandle, EarthGlobeProps>((props, 
         {quality === 'loading' && !failure && (
           <div className="flex items-center gap-2 bg-panel/90 border border-line rounded-md px-3 py-1.5 text-[12px] text-muted shadow-lg">
             <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading Earth imagery…
+          </div>
+        )}
+        {models && (
+          <div className="text-[10px] text-white/45 [text-shadow:0_1px_2px_#000] text-right">
+            {selectedModel
+              ? `3D model: ${selectedModel.title}${selectedModel.exact ? '' : ' (representative)'} · ${selectedModel.credit ?? 'illustrative model'}`
+              : '3D models: NASA 3D Resources · others illustrative · not to scale'}
           </div>
         )}
         <div className="text-[10px] text-white/45 [text-shadow:0_1px_2px_#000]">

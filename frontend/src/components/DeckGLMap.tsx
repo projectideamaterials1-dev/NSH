@@ -11,7 +11,7 @@ import { LineLayer, PathLayer, PolygonLayer, ScatterplotLayer } from '@deck.gl/l
 import { PathStyleExtension } from '@deck.gl/extensions';
 import { Map as MapGL } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { Cloud, CloudDownload, Crosshair, Globe2, History, Loader2, Map as MapIcon, Maximize2, Satellite as SatelliteIcon, Terminal } from 'lucide-react';
+import { Box, Cloud, CloudDownload, Crosshair, Globe2, History, Loader2, Map as MapIcon, Maximize2, Satellite as SatelliteIcon, Terminal } from 'lucide-react';
 
 import useOrbitalStore, { DEFAULT_CATALOG_REQUEST, selectReplayFrame } from '../store/useOrbitalStore';
 import { GROUND_STATIONS } from '../lib/constants';
@@ -83,6 +83,7 @@ export const DeckGLMap: React.FC = () => {
   const [mapState, setMapState] = useState<MapViewState>(() => fitWorld(1100, 700));
   const [follow, setFollow] = useState(false);
   const [clouds, setClouds] = useState(true);
+  const [models, setModels] = useState(true);
   const globeRef = useRef<EarthGlobeHandle>(null);
   const userMovedRef = useRef(false);
   const is3d = viewMode === '3d';
@@ -399,6 +400,7 @@ export const DeckGLMap: React.FC = () => {
           visibleStations={globeVisible}
           burns={globeBurns}
           clouds={clouds}
+          models={models}
           follow={follow}
           onSelect={selectSatellite}
           onUserMove={onGlobeMove}
@@ -445,6 +447,12 @@ export const DeckGLMap: React.FC = () => {
           <Button variant={clouds ? 'primary' : 'secondary'} onClick={() => setClouds(c => !c)} aria-pressed={clouds}
             icon={<Cloud className="w-4 h-4" />} className="shadow-lg" title={clouds ? 'Hide cloud layer' : 'Show cloud layer'}>
             Clouds
+          </Button>
+        )}
+        {is3d && (
+          <Button variant={models ? 'primary' : 'secondary'} onClick={() => setModels(m => !m)} aria-pressed={models}
+            icon={<Box className="w-4 h-4" />} className="shadow-lg" title={models ? 'Show satellites as dots' : 'Show satellites as 3D models'}>
+            3D models
           </Button>
         )}
         <Button onClick={fit} icon={<Maximize2 className="w-4 h-4" />} className="shadow-lg" title={is3d ? 'Reset globe' : 'Fit whole world'}>

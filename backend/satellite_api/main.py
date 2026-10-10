@@ -28,14 +28,17 @@ logger = logging.getLogger(__name__)
 
 async def _autoload_catalog(service, conjunction_service):
     """REALWORLD_FLEET / REALWORLD_OBJECTS (comma-separated source keys) load real data on startup;
-    REALWORLD_LIVE=0 keeps the clock paused afterwards. A mission restored from Redis is updated in place."""
+    REALWORLD_LIVE=0 keeps the clock paused afterwards. A mission restored from Redis is updated in place,
+    keeping the fleet size last chosen in the dashboard (POST /api/catalog/resize)."""
     fleet = [k.strip() for k in os.environ.get("REALWORLD_FLEET", "").split(",") if k.strip()]
     if not fleet:
         return
     objects = [k.strip() for k in os.environ.get("REALWORLD_OBJECTS", "").split(",") if k.strip()]
+    restored = service.state.is_ready()
+    max_satellites = (restored and service.restored_max_satellites) or int(os.environ.get("REALWORLD_MAX_SATELLITES", "60"))
     try:
-        await service.load(fleet=fleet, objects=objects, norad_ids=[], replace=not service.state.is_ready(),
-                           max_satellites=int(os.environ.get("REALWORLD_MAX_SATELLITES", "60")),
+        await service.load(fleet=fleet, objects=objects, norad_ids=[], replace=not restored,
+                           max_satellites=max_satellites,
                            max_objects=int(os.environ.get("REALWORLD_MAX_OBJECTS", "5000")),
                            live=os.environ.get("REALWORLD_LIVE", "1") != "0", conjunction_service=conjunction_service)
         logger.info(f"Loaded real-world catalog on startup: fleet={fleet} objects={objects}")
@@ -83,6 +86,7 @@ async def lifespan(app: FastAPI):
             state.register_snapshot_hook(
                 "autopilot_brain", operations_service.autopilot.snapshot_brain, operations_service.autopilot.restore_brain
             )
+            state.register_snapshot_hook("realworld_settings", live_service.snapshot_settings, live_service.restore_settings)
         try:
             await state.restore()
             state.start_autosave(float(os.environ.get("REDIS_SAVE_INTERVAL_S", "10")))

@@ -3,7 +3,7 @@
 // and nearby tracked objects.
 
 import React, { useMemo, useState } from 'react';
-import { BarChart3, CalendarClock, Crosshair, Database, MousePointerClick, Radio, Rocket, X } from 'lucide-react';
+import { BarChart3, Box, CalendarClock, Crosshair, Database, MousePointerClick, Radio, Rocket, X } from 'lucide-react';
 import useOrbitalStore, { selectSelectedSatellite } from '../store/useOrbitalStore';
 import type { Conjunction } from '../store/useOrbitalStore';
 import {
@@ -15,6 +15,8 @@ import { Button, EmptyState, Panel, StatusBadge } from './ui';
 import { ResourcesModal } from './ResourcesModal';
 import { ManeuverTimeline } from './ManeuverTimeline';
 import { ManualBurnModal } from './ManualBurnModal';
+import { SatellitePhotoCard } from './SatellitePhoto';
+import { ModelViewer } from './ModelViewer';
 
 const RADAR_RANGE_KM = 500;
 const BULLSEYE_RINGS_S = [900, 3600, 10800];   // 15 min, 1 h, 3 h
@@ -67,7 +69,7 @@ const SatelliteDetails: React.FC = () => {
   const timestamp = useOrbitalStore(s => s.timestamp);
   const selectSatellite = useOrbitalStore(s => s.selectSatellite);
   const cancelManeuver = useOrbitalStore(s => s.cancelManeuver);
-  const [modal, setModal] = useState<'resources' | 'timeline' | 'burn' | null>(null);
+  const [modal, setModal] = useState<'resources' | 'timeline' | 'burn' | 'model' | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
 
@@ -114,6 +116,8 @@ const SatelliteDetails: React.FC = () => {
         </div>
         <Button variant="ghost" onClick={() => selectSatellite(null)} aria-label="Clear selection" icon={<X className="w-4 h-4" />} />
       </div>
+
+      <SatellitePhotoCard key={sat.id} id={sat.id} />
 
       <div>
         <div className="flex items-baseline justify-between">
@@ -221,8 +225,9 @@ const SatelliteDetails: React.FC = () => {
         {cancelError && <p className="text-[12px] text-crit mt-1">{cancelError}</p>}
       </div>
 
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 gap-2">
         <Button variant="primary" onClick={() => setModal('burn')} icon={<Rocket className="w-4 h-4" />}>Burn</Button>
+        <Button onClick={() => setModal('model')} icon={<Box className="w-4 h-4" />}>3D model</Button>
         <Button onClick={() => setModal('resources')} icon={<BarChart3 className="w-4 h-4" />}>Fuel</Button>
         <Button onClick={() => setModal('timeline')} icon={<CalendarClock className="w-4 h-4" />}>Plan</Button>
       </div>
@@ -230,6 +235,7 @@ const SatelliteDetails: React.FC = () => {
       {modal === 'resources' && <ResourcesModal satelliteId={sat.id} onClose={() => setModal(null)} />}
       {modal === 'timeline' && <ManeuverTimeline satelliteId={sat.id} onClose={() => setModal(null)} />}
       {modal === 'burn' && <ManualBurnModal satelliteId={sat.id} onClose={() => setModal(null)} />}
+      {modal === 'model' && <ModelViewer satelliteId={sat.id} onClose={() => setModal(null)} />}
     </div>
   );
 };

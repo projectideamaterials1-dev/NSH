@@ -204,18 +204,29 @@ def fetch_query(cache_key: str, queries: Iterable[str], force: bool = False) -> 
     return records, {"fetched_at": iso_z(now), "cached": False, "stale": False}
 
 
+_cache_info_memo: Dict[str, Tuple[float, float, int]] = {}   # key -> (file mtime, fetched_at, count)
+
+
 def cache_info(cache_key: str) -> Optional[dict]:
-    cached = _read_cache(cache_key)
-    if cached is None:
+    """Age and size of a cached source. Memoised by file mtime: the Starlink cache is ~5 MB of JSON and
+    this runs on the event loop for every GET /api/catalog/sources."""
+    try:
+        mtime = _cache_path(cache_key).stat().st_mtime
+    except OSError:
         return None
-    age = time.time() - cached.get("fetched_at", 0)
-    records = cached.get("records", [])
-    source = SOURCES.get(cache_key)
-    if source and source.name_pattern:
-        pattern = re.compile(source.name_pattern)
-        records = [r for r in records if pattern.search(str(r.get("OBJECT_NAME", "")))]
-    return {"fetched_at": iso_z(cached["fetched_at"]), "count": len(records),
-            "stale": age >= CACHE_TTL_S}
+    memo = _cache_info_memo.get(cache_key)
+    if memo is None or memo[0] != mtime:
+        cached = _read_cache(cache_key)
+        if cached is None:
+            return None
+        records = cached.get("records", [])
+        source = SOURCES.get(cache_key)
+        if source and source.name_pattern:
+            pattern = re.compile(source.name_pattern)
+            records = [r for r in records if pattern.search(str(r.get("OBJECT_NAME", "")))]
+        memo = _cache_info_memo[cache_key] = (mtime, cached.get("fetched_at", 0), len(records))
+    _, fetched_at, count = memo
+    return {"fetched_at": iso_z(fetched_at), "count": count, "stale": time.time() - fetched_at >= CACHE_TTL_S}
 
 
 def fetch_source(key: str, force: bool = False) -> Tuple[List[CatalogObject], dict]:

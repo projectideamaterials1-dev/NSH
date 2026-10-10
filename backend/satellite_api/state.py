@@ -222,6 +222,46 @@ class StateManager:
         self.sat_outside_box = _grow(self.sat_outside_box, new_size, False)
         self.sat_fuel_alert = _grow(self.sat_fuel_alert, new_size, 0)
 
+    def remove_satellites(self, sat_ids, actor: str = "system") -> Dict[int, int]:
+        """Removes satellites and compacts the per-satellite buffers so rows stay contiguous.
+
+        Everything about the remaining satellites (state, slot, fuel, cooldown, burns, modes) is kept.
+        The removed satellites' pending burns are cancelled and their open conjunctions dropped (not
+        resolved, which would count them as avoided on the scorecard); closed ones stay in the history.
+        Returns {old row: new row} for the remaining satellites so callers holding row-indexed state
+        (the autopilot planner) can remap it. Caller holds the lock.
+        """
+        gone = {s for s in sat_ids if s in self.sat_id_to_idx}
+        if not gone:
+            return {i: i for i in range(self.sat_count)}
+        old_count = self.sat_count
+        keep = [i for i in range(old_count) if self.idx_to_sat_id[i] not in gone]
+        remap = {old: new for new, old in enumerate(keep)}
+        n = len(keep)
+        rows = np.array(keep, dtype=np.int64)
+        for name, fill in (("sat_buffer", 0.0), ("nominal_buffer", 0.0), ("sat_fuel", CONFIG.initialFuel),
+                           ("sat_cooldown_timers", 0.0), ("sat_outside_box", False), ("sat_fuel_alert", 0)):
+            arr = getattr(self, name)
+            arr[:n] = arr[rows]
+            arr[n:old_count] = fill
+        kept_ids = [self.idx_to_sat_id[i] for i in keep]
+        self.sat_id_to_idx = {sid: i for i, sid in enumerate(kept_ids)}
+        self.idx_to_sat_id = dict(enumerate(kept_ids))
+        self.sat_count = n
+
+        for m in [m for m in self.maneuver_queue if m[1] in gone]:
+            self._record(self._maneuver_dict(_unpack_maneuver(m), "cancelled", actor=actor))
+        self.maneuver_queue = [m for m in self.maneuver_queue if m[1] not in gone]
+        for sid in gone:
+            self.sat_modes.pop(sid, None)
+        self.eol_satellites -= gone
+        self.attached_pairs = {p for p in self.attached_pairs if not (p & gone)}
+        self.cdms.items = [c for c in self.cdms.items
+                           if not (c["satellite_id"] in gone and c["status"] in self.cdms.OPEN + ("CLEARED",))]
+        self.telemetry_version += 1
+        self.burn_version += 1
+        return remap
+
     def _ensure_debris_capacity(self, needed: int):
         cap = self.debris_buffer.shape[0]
         if needed <= cap:

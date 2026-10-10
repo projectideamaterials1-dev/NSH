@@ -165,7 +165,15 @@ export const DataSourcesModal: React.FC<{ onClose: () => void }> = ({ onClose })
         </section>
 
         <section>
-          <h4 className="section-title mb-1 flex items-center gap-2"><Satellite className="w-3.5 h-3.5" /> Operated fleet</h4>
+          <h4 className="section-title mb-1 flex items-center gap-2">
+            <Satellite className="w-3.5 h-3.5" /> Operated fleet
+            {fleetSources.length > 0 && (
+              <button type="button" className="ml-auto text-[12px] font-normal normal-case tracking-normal text-accent hover:underline"
+                onClick={() => setDraft(d => ({ ...d, fleet: d.fleet.length === fleetSources.length ? [] : fleetSources.map(s => s.key) }))}>
+                {draft.fleet.length === fleetSources.length ? 'Clear all' : 'Select all'}
+              </button>
+            )}
+          </h4>
           <p className="text-[12px] text-muted mb-3">
             These satellites get propellant, station-keeping slots, ground-station passes and autopilot avoidance burns.
           </p>
@@ -191,7 +199,7 @@ export const DataSourcesModal: React.FC<{ onClose: () => void }> = ({ onClose })
             <span className="block text-[13px] text-ink mb-1.5">Max satellites</span>
             <input type="number" min={1} max={500} value={draft.max_satellites} className={`${inputClass} w-full`}
               onChange={e => setDraft(d => ({ ...d, max_satellites: Math.max(1, Math.min(500, Number(e.target.value) || 1)) }))} />
-            <span className="block text-[11px] text-faint mt-1">Newest element sets are kept when a source has more</span>
+            <span className="block text-[11px] text-faint mt-1">Shared fairly across the selected sources (newest element sets first)</span>
           </label>
           <label className="block">
             <span className="block text-[13px] text-ink mb-1.5">Max tracked objects</span>

@@ -1,11 +1,13 @@
 // src/components/FleetPanel.tsx
-// Fleet list (search, sort, live mode/contact/threat indicators) and fuel heatmap.
+// Fleet list (search, sort, live mode/contact/threat indicators), fuel heatmap and photo gallery.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, LayoutGrid, List, Radio, Search } from 'lucide-react';
+import { AlertTriangle, Image, LayoutGrid, List, Radio, Search } from 'lucide-react';
 import useOrbitalStore from '../store/useOrbitalStore';
 import { fuelColor, fuelPercent, riskMeta, statusMeta, MODE_META, FUEL_INITIAL_KG } from '../lib/format';
 import { EmptyState, StatusDot } from './ui';
+import { FleetGallery, SatelliteThumb } from './SatellitePhoto';
+import { FleetSizeControl } from './FleetSizeControl';
 
 type SortKey = 'status' | 'fuel' | 'id' | 'threat';
 interface Row { id: string; fuel: number; status: string; mode?: string; contact?: boolean; threat?: string | null; drift?: number }
@@ -28,7 +30,8 @@ export const FleetPanel: React.FC = () => {
   const details = useOrbitalStore(s => s.satelliteDetails);
   const selectedId = useOrbitalStore(s => s.selectedSatelliteId);
   const selectSatellite = useOrbitalStore(s => s.selectSatellite);
-  const [view, setView] = useState<'list' | 'heatmap'>('list');
+  const realWorldLoaded = useOrbitalStore(s => s.realWorld?.loaded ?? false);
+  const [view, setView] = useState<'list' | 'heatmap' | 'gallery'>('list');
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortKey>('status');
   const selectedRowRef = useRef<HTMLButtonElement>(null);
@@ -85,7 +88,7 @@ export const FleetPanel: React.FC = () => {
           <option value="id">ID</option>
         </select>
         <div className="flex rounded-md border border-line overflow-hidden" role="tablist" aria-label="Fleet view">
-          {([['list', List, 'List'], ['heatmap', LayoutGrid, 'Fuel heatmap']] as const).map(([key, Icon, label]) => (
+          {([['list', List, 'List'], ['heatmap', LayoutGrid, 'Fuel heatmap'], ['gallery', Image, 'Photos']] as const).map(([key, Icon, label]) => (
             <button
               key={key}
               role="tab"
@@ -100,6 +103,7 @@ export const FleetPanel: React.FC = () => {
           ))}
         </div>
       </div>
+      <FleetSizeControl />
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         {total === 0 ? (
@@ -117,10 +121,11 @@ export const FleetPanel: React.FC = () => {
                   <button
                     ref={selected ? selectedRowRef : undefined}
                     onClick={() => toggle(r.id)}
-                    className={`w-full grid grid-cols-[auto_1fr_auto_72px_60px] items-center gap-3 px-4 h-12 text-left border-b border-line/60 transition-colors ${
+                    className={`w-full grid ${realWorldLoaded ? 'grid-cols-[auto_auto_1fr_auto_40px_auto] gap-2.5' : 'grid-cols-[auto_1fr_auto_72px_60px] gap-3'} items-center px-4 h-12 text-left border-b border-line/60 transition-colors ${
                       selected ? 'bg-accent/10 shadow-[inset_3px_0_0_var(--color-accent)]' : 'hover:bg-raised'
                     }`}
                   >
+                    {realWorldLoaded && <SatelliteThumb id={r.id} />}
                     <StatusDot status={r.status} />
                     <span className="min-w-0">
                       <span className="block tabular text-[13px] text-ink truncate">{r.id}</span>
@@ -138,12 +143,14 @@ export const FleetPanel: React.FC = () => {
                     <span className="h-1.5 rounded-full bg-raised border border-line overflow-hidden">
                       <span className="block h-full rounded-full" style={{ width: `${fuelPercent(r.fuel)}%`, background: color }} />
                     </span>
-                    <span className="tabular text-[13px] text-right" style={{ color }}>{r.fuel.toFixed(1)} kg</span>
+                    <span className="tabular text-[13px] text-right whitespace-nowrap" style={{ color }}>{r.fuel.toFixed(1)} kg</span>
                   </button>
                 </li>
               );
             })}
           </ul>
+        ) : view === 'gallery' ? (
+          <FleetGallery ids={rows.map(r => r.id)} selectedId={selectedId} onSelect={toggle} />
         ) : (
           <div className="p-4">
             <div className="grid grid-cols-5 gap-1.5">

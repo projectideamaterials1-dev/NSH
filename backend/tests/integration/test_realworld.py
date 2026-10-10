@@ -9,7 +9,7 @@ import pytest
 from sgp4.api import jday
 
 from satellite_api.main import app
-from satellite_api.realworld import catalog, live, space_weather
+from satellite_api.realworld import catalog, imagery, live, space_weather
 from satellite_api.realworld.catalog import CatalogError
 
 FIXTURE = json.loads((Path(__file__).resolve().parent.parent / "fixtures" / "celestrak_sample.json").read_text())
@@ -200,3 +200,194 @@ def test_space_weather_parses_noaa_products(monkeypatch):
     data = space_weather.fetch_space_weather(force=True)
     assert data["kp"] == 5.33 and data["kp_level"] == "storm"
     assert data["f107_sfu"] == 109.0 and data["scales"]["G"] == {"scale": 1, "text": "minor"}
+
+
+def _fake_wikimedia(calls):
+    """Offline Wikimedia: ISS has two Wikidata items (only one with a photo), Tianhe's item has no photo
+    but its article has a free lead image, POISK has no item but a name search finds its article."""
+    entities = {
+        "Q1": {"labels": {"en": {"value": "International Space Station"}}, "sitelinks": {"enwiki": {"title": "International Space Station"}},
+               "claims": {"P377": [{"mainsnak": {"datavalue": {"value": "25544"}}}],
+                          "P18": [{"mainsnak": {"datavalue": {"value": "ISS photo.jpg"}}}]}},
+        "Q2": {"labels": {"en": {"value": "Zarya"}}, "claims": {"P377": [{"mainsnak": {"datavalue": {"value": "25544"}}}]}},
+        "Q3": {"labels": {"en": {"value": "Tianhe"}}, "sitelinks": {"enwiki": {"title": "Tianhe core module"}},
+               "claims": {"P377": [{"mainsnak": {"datavalue": {"value": "48274"}}}]}},
+    }
+
+    def fake_get(url, params):
+        calls.append((url, params))
+        if params.get("list") == "search":
+            return {"query": {"search": [{"title": q} for q in ("Q2", "Q1", "Q3")]}}
+        if params.get("action") == "wbgetentities":
+            return {"entities": {q: entities[q] for q in params["ids"].split("|")}}
+        if url == imagery.WIKIPEDIA_API and "titles" in params:
+            return {"query": {"pages": [{"title": "Tianhe core module", "description": "Chinese space station module",
+                                         "pageimage": "Tianhe_lead.jpg"}]}}
+        if url == imagery.WIKIPEDIA_API:   # name search
+            if params["gsrsearch"] == "POISK":
+                return {"query": {"pages": [{"title": "Poisk (ISS module)", "description": "ISS docking module"}]}}
+            if params["gsrsearch"] == "FREGAT DEB":
+                return {"query": {"pages": [{"title": "Fregat", "description": "Russian rocket upper stage"}]}}
+            return {"query": {"pages": []}}
+        if url == imagery.COMMONS_API:
+            files = [t.removeprefix("File:") for t in params["titles"].split("|")]
+            return {"query": {"normalized": [{"from": f"File:{f}", "to": f"File:{f.replace('_', ' ')}"} for f in files],
+                              "pages": [{"title": f"File:{f}", "imageinfo": [{
+                                  "thumburl": f"https://thumb/{f}", "url": f"https://full/{f}", "descriptionurl": f"https://page/{f}",
+                                  "extmetadata": {"Artist": {"value": "<a href='x'>NASA</a>"}, "LicenseShortName": {"value": "Public domain"}},
+                              }]} for f in files]}}
+        raise AssertionError(f"unexpected request {url} {params}")
+    return fake_get
+
+
+@pytest.mark.asyncio
+async def test_fleet_imagery_from_wikimedia(client, celestrak, monkeypatch):
+    calls = []
+    monkeypatch.setattr(imagery, "_get", _fake_wikimedia(calls))
+    monkeypatch.setattr(imagery, "SEARCH_INTERVAL_S", 0)
+    monkeypatch.setattr(imagery, "_last_failure", 0.0)
+    await _load(client)
+
+    items = (await client.get("/api/catalog/imagery")).json()["items"]
+    assert len(items) == len(FIXTURE["stations"])
+    iss = items["ISS (ZARYA)"]
+    assert iss["match"] == "norad" and iss["title"] == "International Space Station"   # item with the photo wins
+    assert iss["photo"]["image_url"] == "https://thumb/ISS photo.jpg" and iss["photo"]["credit"] == "NASA"
+    assert iss["article_url"] == "https://en.wikipedia.org/wiki/International_Space_Station"
+    assert items["CSS (TIANHE)"]["photo"]["image_url"] == "https://thumb/Tianhe lead.jpg"   # article lead image
+    poisk = items["POISK"]
+    assert poisk["match"] == "name" and poisk["photo"] is None and poisk["article_url"].endswith("Poisk_%28ISS_module%29")
+    assert items["FREGAT DEB"]["match"] is None   # search hit isn't a spacecraft whose title has every word
+
+    # Second request is served from the disk cache, including the "no photo" answers.
+    n = len(calls)
+    assert (await client.get("/api/catalog/imagery/ISS (ZARYA)")).json()["photo"]["full_url"] == "https://full/ISS photo.jpg"
+    assert (await client.get("/api/catalog/imagery")).json()["items"] == items
+    assert len(calls) == n
+    assert (await client.get("/api/catalog/imagery/NOPE")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_imagery_outage_is_not_cached(client, celestrak, monkeypatch):
+    def down(url, params):
+        raise imagery.ImageryError("www.wikidata.org unreachable")
+    monkeypatch.setattr(imagery, "_get", down)
+    monkeypatch.setattr(imagery, "_last_failure", 0.0)
+    await _load(client)
+
+    items = (await client.get("/api/catalog/imagery")).json()["items"]
+    assert items and all(v is None for v in items.values())
+    assert (await client.get("/api/catalog/imagery/ISS (ZARYA)")).status_code == 502
+
+    calls = []
+    monkeypatch.setattr(imagery, "_get", _fake_wikimedia(calls))
+    monkeypatch.setattr(imagery, "SEARCH_INTERVAL_S", 0)
+    monkeypatch.setattr(imagery, "_last_failure", 0.0)   # retry window elapsed
+    assert (await client.get("/api/catalog/imagery")).json()["items"]["ISS (ZARYA)"]["photo"] is not None
+
+
+@pytest.mark.asyncio
+async def test_resize_fleet_keeps_everything_else(client, celestrak):
+    await _load(client, max_satellites=8)
+    state = app.state.orbital_state
+    first = list(app.state.realworld.fleet)
+    keeper, doomed = first[0], first[-1]
+    k = state.sat_id_to_idx[keeper]
+    state.sat_fuel[k] = 31.5
+    state.sat_cooldown_timers[k] = 120.0
+    keeper_state = state.sat_buffer[k].copy()
+    keeper_slot = state.nominal_buffer[k].copy()
+    t = state.now_ts + 3600
+    state.maneuver_queue += [(t, keeper, 0.0, 0.001, 0.0, "B-KEEP", "MANUAL", "test"),
+                             (t, doomed, 0.0, 0.001, 0.0, "B-GONE", "MANUAL", "test")]
+    state.cdms.items.append({"cdm_id": "CDM-X", "satellite_id": doomed, "object_id": "X", "status": "ACTIVE",
+                             "tca_ts": t, "risk": "WARNING", "mitigation_burn_ids": []})
+    clock = state.current_time
+
+    grown = (await client.post("/api/catalog/resize", json={"max_satellites": 14})).json()
+    assert grown["satellites"] == 14 and len(grown["added"]) == 6 and grown["removed"] == []
+    assert state.sat_count == 14 and state.current_time == clock
+    k = state.sat_id_to_idx[keeper]
+    assert state.sat_fuel[k] == 31.5 and state.sat_cooldown_timers[k] == 120.0
+    assert np.array_equal(state.sat_buffer[k], keeper_state) and np.array_equal(state.nominal_buffer[k], keeper_slot)
+    for sid in grown["added"]:   # new satellites start on their published orbit with a full tank
+        assert state.sat_fuel[state.sat_id_to_idx[sid]] == pytest.approx(50.0)
+
+    shrunk = (await client.post("/api/catalog/resize", json={"max_satellites": 5})).json()
+    assert shrunk["satellites"] == 5 and set(grown["added"]) <= set(shrunk["removed"]) and doomed in shrunk["removed"]
+    assert state.sat_count == 5 and set(state.sat_id_to_idx) == set(app.state.realworld.fleet) == set(first[:5])
+    assert sorted(state.sat_id_to_idx.values()) == list(range(5))
+    k = state.sat_id_to_idx[keeper]
+    assert state.sat_fuel[k] == 31.5 and np.array_equal(state.sat_buffer[k], keeper_state)
+    assert [m[5] for m in state.maneuver_queue] == ["B-KEEP"]
+    assert any(h["burn_id"] == "B-GONE" and h["status"] == "cancelled" for h in state.maneuver_history)
+    assert all(c["satellite_id"] != doomed for c in state.cdms.items)
+
+    status = (await client.get("/api/catalog/status")).json()
+    assert status["satellites"] == 5 and status["request"]["max_satellites"] == 5
+    sats = (await client.get("/api/satellites")).json()["satellites"]
+    assert {s["id"] for s in sats} == set(first[:5])
+
+    capped = (await client.post("/api/catalog/resize", json={"max_satellites": 400})).json()
+    assert capped["satellites"] < 400 and any("Only" in w for w in capped["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_resize_requires_loaded_catalog(client, celestrak):
+    resp = await client.post("/api/catalog/resize", json={"max_satellites": 10})
+    assert resp.status_code == 409
+
+
+def test_selection_takes_a_fair_share_of_every_source():
+    class Obj:
+        def __init__(self, source, n):
+            self.source, self.norad_id = source, n
+    chosen = [(Obj("starlink", i), None) for i in range(100)] + [(Obj("stations", 1000 + i), None) for i in range(3)] \
+        + [(Obj("gps-ops", 2000 + i), None) for i in range(5)]
+    picked = live.RealWorldService._round_robin(chosen, ["stations", "starlink", "gps-ops"])[:10]
+    assert [o.source for o, _ in picked[:3]] == ["stations", "starlink", "gps-ops"]
+    counts = {s: sum(o.source == s for o, _ in picked) for s in ("stations", "starlink", "gps-ops")}
+    assert counts == {"stations": 3, "starlink": 4, "gps-ops": 3}
+
+
+def test_constellation_members_share_one_family_search(monkeypatch):
+    calls = []
+
+    def fake_get(url, params):
+        calls.append(params)
+        if params.get("list") == "search":
+            return {"query": {"search": []}}            # no Wikidata items
+        if params.get("generator") == "search":
+            if params["gsrsearch"] == "GAOFEN satellite":
+                return {"query": {"pages": [{"index": 1, "title": "List of Gaofen launches", "description": "satellite list", "pageimage": "x.jpg"},
+                                            {"index": 2, "title": "Gaofen", "description": "Chinese earth imaging satellites", "pageimage": "Gaofen_logo.svg"},
+                                            {"index": 3, "title": "Gaofen", "description": "Chinese earth imaging satellites",
+                                             "pageimage": "Gaofen_stack.jpg"}]}}
+            return {"query": {"pages": []}}
+        if url == imagery.COMMONS_API:
+            return {"query": {"pages": [{"title": "File:Gaofen stack.jpg", "imageinfo": [{"thumburl": "https://thumb/gaofen", "url": "u", "descriptionurl": "d", "extmetadata": {}}]}],
+                              "normalized": [{"from": "File:Gaofen_stack.jpg", "to": "File:Gaofen stack.jpg"}]}}
+        raise AssertionError(params)
+
+    monkeypatch.setattr(imagery, "_get", fake_get)
+    monkeypatch.setattr(imagery, "SEARCH_INTERVAL_S", 0)
+    monkeypatch.setattr(imagery, "MAX_SEARCHES", 3)
+    monkeypatch.setattr(imagery, "_last_failure", 0.0)
+    objs = [(100 + i, f"GAOFEN-{3000 + i}") for i in range(50)] + [(900 + i, f"ODDSAT-{i}") for i in range(2)] \
+        + [(950 + i, f"LONER{i}") for i in range(4)]
+    res = imagery.lookup(objs)
+    gaofen = [res[100 + i] for i in range(50)]
+    assert all(e["match"] == "family" and e["family"] == "Gaofen" and e["photo"]["image_url"] == "https://thumb/gaofen" for e in gaofen)
+    assert sum(p.get("gsrsearch") == "GAOFEN satellite" for p in calls) == 1
+    # The logo hit was skipped for the real photo. Budget of 3 searches: Gaofen + 2 single-name searches; the rest wait for the next lookup.
+    resolved = [n for n in range(900, 954) if res.get(n) is not None]
+    assert len(resolved) == 2 and sum(res[n] is None for n in (*range(900, 902), *range(950, 954))) == 4
+    again = imagery.lookup(objs)   # LONER0..3 are a family of 4 too: one more search resolves them all
+    assert all(again[n] is not None for n in (*range(900, 902), *range(950, 954)))
+    assert again[950]["match"] is None
+
+
+def test_starlink_uses_pinned_photo_not_logo(monkeypatch):
+    assert imagery._wikipedia_family("STARLINK")["image"] == imagery.FAMILY_PHOTOS["STARLINK"][1]
+    assert imagery._photo("Starlink_Logo_2024.svg") is None and imagery._photo("Coverage_map.png") is None
+    assert imagery._photo("Render_of_Cartosat-3.png")

@@ -84,6 +84,7 @@ project_documentation.md
 coverage.xml
 backend/data/config.json
 backend/data/catalog/
+backend/data/imagery/
 .venv/
 
 # Frontend test artifacts

@@ -1,0 +1,30 @@
+{
+  "about": "3D models for the globe. Each satellite uses the first entry whose `match` (a case-insensitive regular expression on the catalog name) fits; satellites matching nothing get a built-in model of their type. To add your own (e.g. ISRO models), put the .glb in public/models/custom/ and add an entry above the NASA ones. `exact`: the model is this spacecraft (false: same family / bus, shown as representative). `hide`: node-name prefixes to drop (stray parts in the source file).",
+  "models": [
+    { "match": "^ISS\\b",                    "file": "nasa/iss.glb",       "title": "International Space Station", "exact": true,  "credit": "NASA 3D Resources", "hide": ["bendedtru", "pCylinder"] },
+    { "match": "^HST$",                      "file": "nasa/hubble.glb",    "title": "Hubble Space Telescope",      "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "^CXO$",                      "file": "nasa/chandra.glb",   "title": "Chandra X-ray Observatory",   "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "^SWAS$",                     "file": "nasa/swas.glb",      "title": "SWAS",                        "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "^POLAR$",                    "file": "nasa/polar.glb",     "title": "Polar",                       "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "^SORCE$",                    "file": "nasa/sorce.glb",     "title": "SORCE",                       "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "^SWIFT$",                    "file": "nasa/swift.glb",     "title": "Swift",                       "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "GLAST|FGRST|FERMI",          "file": "nasa/fermi.glb",     "title": "Fermi Gamma-ray Space Telescope", "exact": true, "credit": "NASA 3D Resources" },
+    { "match": "^SDO$",                      "file": "nasa/sdo.glb",       "title": "Solar Dynamics Observatory",  "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "^OCO[ -]?2",                 "file": "nasa/oco2.glb",      "title": "Orbiting Carbon Observatory-2", "exact": true, "credit": "NASA 3D Resources" },
+    { "match": "^MMS \\d",                   "file": "nasa/mms.glb",       "title": "Magnetospheric Multiscale",   "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "^TERRA$",                    "file": "nasa/terra.glb",     "title": "Terra",                       "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "^AQUA$",                     "file": "nasa/aqua.glb",      "title": "Aqua",                        "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "^AURA$",                     "file": "nasa/aura.glb",      "title": "Aura",                        "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "^LANDSAT 8",                 "file": "nasa/landsat8.glb",  "title": "Landsat 8",                   "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "^LANDSAT 9",                 "file": "nasa/landsat8.glb",  "title": "Landsat 8/9 bus",             "exact": false, "credit": "NASA 3D Resources" },
+    { "match": "^GPM",                       "file": "nasa/gpm.glb",       "title": "GPM Core Observatory",        "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "^ICESAT-2",                  "file": "nasa/icesat2.glb",   "title": "ICESat-2",                    "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "^SENTINEL-6",                "file": "nasa/sentinel6.glb", "title": "Sentinel-6 Michael Freilich", "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "^JASON",                     "file": "nasa/jason.glb",     "title": "Jason-2 (OSTM) bus",          "exact": false, "credit": "NASA 3D Resources" },
+    { "match": "^SUOMI NPP",                 "file": "nasa/suomi-npp.glb", "title": "Suomi NPP",                   "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "JPSS",                       "file": "nasa/suomi-npp.glb", "title": "Suomi NPP / JPSS bus",        "exact": false, "credit": "NASA 3D Resources" },
+    { "match": "^NOAA 1[5-9]\\b",            "file": "nasa/poes.glb",      "title": "NOAA POES",                   "exact": true,  "credit": "NASA 3D Resources" },
+    { "match": "GOES",                       "file": "nasa/goes.glb",      "title": "GOES",                        "exact": false, "credit": "NASA 3D Resources" },
+    { "match": "^TDRS",                      "file": "nasa/tdrs.glb",      "title": "TDRS",                        "exact": false, "credit": "NASA 3D Resources" }
+  ]
+}

@@ -10,6 +10,10 @@ import { apiFetch, apiJson } from '../api/http';
 import telemetryClient from '../api/telemetryClient';
 import { snapshotToBinaryBuffers } from './snapshotBuffers';
 
+/** Photos are fetched once per fleet: a new catalog or a resize (different size) triggers a new lookup. */
+const imageryKey = (rw: { loaded_at: string | null; satellites: number } | null): string | null =>
+  rw?.loaded_at ? `${rw.loaded_at}:${rw.satellites}` : null;
+
 // ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================
@@ -300,6 +304,28 @@ export interface CatalogObjectInfo {
   };
 }
 
+export interface SatellitePhoto {
+  image_url: string;
+  full_url: string | null;
+  page_url: string | null;
+  credit: string | null;
+  license: string | null;
+  caption: string | null;
+}
+
+/** Wikimedia imagery for a real satellite; `match` says how the Wikipedia page was found (null: not found).
+ * 'family' is a representative photo of the constellation (Starlink, Flock, ...), not of this satellite. */
+export interface SatelliteImagery {
+  norad_id: number;
+  match: 'norad' | 'name' | 'family' | null;
+  title: string;
+  description: string | null;
+  article_url: string | null;
+  /** Constellation article a representative photo came from (match 'family'). */
+  family?: string | null;
+  photo: SatellitePhoto | null;
+}
+
 export interface SpaceWeather {
   source: string;
   kp: number | null;
@@ -362,6 +388,10 @@ interface OrbitalState {
   spaceWeather: SpaceWeather | null;
   selectedCatalog: CatalogObjectInfo | null;
   dataSourcesOpen: boolean;
+  /** Satellite id -> photo info for the loaded real-world fleet (null entry: Wikimedia unreachable). */
+  imagery: Record<string, SatelliteImagery | null>;
+  _imageryFor: string | null;
+  _imageryRetryAt: number;
 
   // replay & view
   history: ReplayFrame[];
@@ -417,17 +447,19 @@ interface OrbitalState {
   fetchCatalogSources: () => Promise<CatalogSource[] | null>;
   loadCatalog: (request: CatalogLoadRequest) => Promise<RealWorldStatus>;
   refreshCatalog: () => Promise<void>;
+  resizeFleet: (maxSatellites: number) => Promise<{ added: string[]; removed: string[]; warnings: string[] }>;
   setLiveMode: (enabled: boolean) => Promise<void>;
   fetchSpaceWeather: () => Promise<void>;
+  fetchImagery: () => Promise<void>;
   setDataSourcesOpen: (open: boolean) => void;
 }
 
-/** Default real-world scenario: ISRO Earth-observation fleet + space stations against three major debris fields. */
+/** Default real-world scenario: every fleet source (shared fairly up to max_satellites) against three major debris fields. */
 export const DEFAULT_CATALOG_REQUEST: CatalogLoadRequest = {
-  fleet: ['isro-eo', 'stations'],
+  fleet: ['isro-eo', 'stations', 'planet', 'oneweb', 'starlink', 'gps-ops', 'weather', 'resource', 'science'],
   objects: ['fengyun-1c-debris', 'cosmos-2251-debris', 'iridium-33-debris'],
   norad_ids: [],
-  max_satellites: 60,
+  max_satellites: 150,
   max_objects: 5000,
   replace: true,
   live: true,
@@ -560,6 +592,9 @@ export const useOrbitalStore = create<OrbitalState>()(
     spaceWeather: null,
     selectedCatalog: null,
     dataSourcesOpen: false,
+    imagery: {},
+    _imageryFor: null,
+    _imageryRetryAt: 0,
     history: [],
     replayIndex: null,
     viewMode: '3d',
@@ -918,8 +953,26 @@ export const useOrbitalStore = create<OrbitalState>()(
         // The backend drives the clock in live mode: never step it from the browser at the same time.
         if (status.live && get().isSimulationRunning) get().setSimulationRunning(false);
         if (status.live && !wasLive) set({ replayIndex: null });
+        const { _imageryFor, _imageryRetryAt } = get();
+        if (status.loaded && (imageryKey(status) !== _imageryFor || (_imageryRetryAt && Date.now() > _imageryRetryAt))) {
+          get().fetchImagery();
+        }
       } catch {
         /* backend offline or older backend without the real-world API */
+      }
+    },
+
+    fetchImagery: async () => {
+      const key = imageryKey(get().realWorld);
+      // Claim this fleet up front so the periodic status poll doesn't start a second request.
+      set({ _imageryFor: key, _imageryRetryAt: 0 });
+      try {
+        const { items } = await apiJson<{ items: Record<string, SatelliteImagery | null> }>('/api/catalog/imagery');
+        if (imageryKey(get().realWorld) !== key) return;   // the fleet changed meanwhile
+        const unresolved = Object.values(items).some(v => v === null);
+        set({ imagery: items, _imageryRetryAt: unresolved ? Date.now() + 60_000 : 0 });
+      } catch {
+        set({ _imageryRetryAt: Date.now() + 60_000 });
       }
     },
 
@@ -939,12 +992,29 @@ export const useOrbitalStore = create<OrbitalState>()(
       if (request.replace) {
         // A new object set: drop trails, replay frames and the selection that belonged to the old one.
         set({ trails: {}, history: [], replayIndex: null, selectedSatelliteId: null, selectedTrack: null,
-              selectedPasses: null, selectedCatalog: null, satelliteDetails: {}, conjunctions: [] });
+              selectedPasses: null, selectedCatalog: null, satelliteDetails: {}, conjunctions: [], imagery: {} });
       }
       set({ realWorld: status });
+      get().fetchImagery();
       await telemetryClient.refresh();
       await Promise.all([get().fetchOps(), get().fetchManeuvers(), get().fetchCatalogSources()]);
       return status;
+    },
+
+    resizeFleet: async (maxSatellites) => {
+      const result = await apiJson<{ added: string[]; removed: string[]; warnings: string[]; status: RealWorldStatus }>(
+        '/api/catalog/resize', { method: 'POST', body: JSON.stringify({ max_satellites: maxSatellites }) });
+      const { selectedSatelliteId, trails } = get();
+      const removed = new Set(result.removed);
+      set({
+        realWorld: result.status,
+        trails: Object.fromEntries(Object.entries(trails).filter(([id]) => !removed.has(id))),
+        ...(selectedSatelliteId && removed.has(selectedSatelliteId)
+          ? { selectedSatelliteId: null, selectedTrack: null, selectedPasses: null, selectedCatalog: null } : {}),
+      });
+      await telemetryClient.refresh();
+      await Promise.all([get().fetchOps(), get().fetchManeuvers(), get().fetchImagery()]);
+      return result;
     },
 
     refreshCatalog: async () => {

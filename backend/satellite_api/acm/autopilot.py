@@ -56,6 +56,12 @@ class Autopilot:
     def reset(self):
         self.brain = AutonomousBrain()
 
+    def remap_satellites(self, remap: Dict[int, int]):
+        """Follows StateManager.remove_satellites: the planner's memory is keyed by buffer row."""
+        brain = self.brain
+        brain.locked_satellites = {remap[i]: v for i, v in brain.locked_satellites.items() if i in remap}
+        brain.eol_scheduled = {remap[i] for i in brain.eol_scheduled if i in remap}
+
     def snapshot_brain(self) -> dict:
         """JSON-serializable capture of in-memory planner state not held by StateManager,
         for RedisStateManager.register_snapshot_hook() - without it, a restart forgets which

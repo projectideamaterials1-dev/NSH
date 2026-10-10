@@ -16,6 +16,7 @@ Live mode loop (every TICK_S of wall time):
     switched on), objects are re-anchored at "now" instead of integrating the gap.
 """
 import asyncio
+import contextlib
 import logging
 import time
 from datetime import datetime, timezone
@@ -134,6 +135,7 @@ class RealWorldService:
         self.last_error: Optional[str] = None
         self.skipped = {"stale": 0, "propagation": 0, "duplicate": 0}
         self._anchor_fuel: Dict[str, float] = {}
+        self.restored_max_satellites: Optional[int] = None   # fleet size from a Redis snapshot
         self._task: Optional[asyncio.Task] = None
         self._load_lock: Optional[asyncio.Lock] = None
 
@@ -186,7 +188,21 @@ class RealWorldService:
         self.skipped["propagation"] += int((~ok).sum())
         chosen = [(o, s) for o, s, good in zip(fresh, states, ok) if good]
         chosen.sort(key=lambda pair: (-pair[0].epoch.timestamp(), pair[0].norad_id))
-        return chosen[:limit], max(0, len(chosen) - limit)
+        order = list(dict.fromkeys(o.source for o in candidates))
+        return self._round_robin(chosen, order)[:limit], max(0, len(chosen) - limit)
+
+    @staticmethod
+    def _round_robin(chosen: list, order: List[str]) -> list:
+        """Interleaves sources (in the order requested) so a limit takes a fair share of each: without it
+        11,000 Starlinks would crowd every other source out. Within a source, newest element sets first."""
+        by_source: Dict[str, list] = {}
+        for pair in chosen:
+            by_source.setdefault(pair[0].source, []).append(pair)
+        queues = [by_source[k] for k in order if k in by_source]
+        out = []
+        for i in range(max((len(q) for q in queues), default=0)):
+            out.extend(q[i] for q in queues if i < len(q))
+        return out
 
     async def load(self, fleet: List[str], objects: List[str], norad_ids: List[int], max_satellites: int = 60,
                    max_objects: int = 5000, replace: bool = True, live: Optional[bool] = None, force: bool = False,
@@ -262,6 +278,62 @@ class RealWorldService:
             if go_live != self.live:
                 await self.set_live(go_live)
             return self.status()
+
+    async def resize(self, max_satellites: int, conjunction_service=None) -> dict:
+        """Grows or shrinks the loaded fleet without reloading it. Satellites that stay keep their orbit,
+        fuel, burns and history. New ones come from the loaded sources (newest element sets first);
+        shrinking removes the most recently added satellites first."""
+        if not self.request:
+            raise ValueError("Load real satellites first (POST /api/catalog/load)")
+        target = max(1, min(int(max_satellites), MAX_SATELLITES))
+        state = self.state
+        added, removed, warnings = [], [], []
+        async with self._lock:
+            current = [sid for sid in self.fleet if sid in state.sat_id_to_idx]
+            if target > len(current):
+                fleet_objs, _, _, warnings = await asyncio.to_thread(self._fetch, {**self.request, "objects": []}, False)
+                when = state.current_time or _utcnow()
+                chosen, _ = self._select(fleet_objs, target - len(current), {o.norad_id for o in self.fleet.values()}, when)
+                if chosen:
+                    ids = catalog.assign_ids([o for o, _ in chosen], taken=state.sat_id_to_idx)
+                    await state.update_telemetry_raw([s.tolist() for _, s in chosen], [], ids, [], iso_z(when))
+                    async with state.lock:
+                        for sid, (obj, s) in zip(ids, chosen):
+                            self.fleet[sid] = obj
+                            idx = state.sat_id_to_idx[sid]
+                            state.nominal_buffer[idx] = s
+                            self._anchor_fuel[sid] = float(state.sat_fuel[idx])
+                        self._update_attached()
+                    added = ids
+                if len(current) + len(added) < target:
+                    warnings.append(f"Only {len(current) + len(added)} satellites available in the selected sources")
+            elif target < len(current):
+                removed = current[target:]
+                # Wait out any screening cycle in flight: it would re-open conjunctions for removed satellites.
+                cycle_lock = getattr(conjunction_service, "_cycle_lock", None)
+                async with (cycle_lock if cycle_lock is not None else contextlib.nullcontext()):
+                    async with state.lock:
+                        remap = state.remove_satellites(removed, actor="fleet resize")
+                        for sid in removed:
+                            self.fleet.pop(sid, None)
+                            self._anchor_fuel.pop(sid, None)
+                        if conjunction_service is not None:
+                            conjunction_service.autopilot.remap_satellites(remap)
+            self.request = {**self.request, "max_satellites": target}
+            if added or removed:
+                async with state.lock:
+                    state.emit("info", "catalog", f"Fleet resized to {len(self.fleet)} satellites "
+                               f"({len(added)} added, {len(removed)} removed); the others keep their fuel, burns and history")
+        return {"satellites": len(self.fleet), "added": added, "removed": removed, "warnings": warnings,
+                "status": self.status()}
+
+    def snapshot_settings(self) -> dict:
+        """For RedisStateManager.register_snapshot_hook(): a restart restores the fleet size chosen in the
+        dashboard instead of falling back to REALWORLD_MAX_SATELLITES."""
+        return {"max_satellites": self.request["max_satellites"] if self.request else None}
+
+    def restore_settings(self, payload: dict):
+        self.restored_max_satellites = payload.get("max_satellites")
 
     # ── live mode ──────────────────────────────────────────────────────────────
     async def set_live(self, enabled: bool):

@@ -8,10 +8,13 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { subsolarPoint } from './geo';
+import { SatelliteModelLayer, type ModelInfo } from './satelliteModels';
+import { MotionSmoother } from './motionSmoother';
 
 const R_EARTH_KM = 6371;
 const DEG = Math.PI / 180;
@@ -257,6 +260,14 @@ class PointLayer {
       pos.needsUpdate = col.needsUpdate = size.needsUpdate = true;
     }
     geometry.setDrawRange(0, count);
+  }
+
+  /** Rewrites only the positions of the first `count` points (per-frame motion; colours/sizes unchanged). */
+  setPositions(count: number, fill: (i: number, pos: Float32Array) => void) {
+    const pos = this.points.geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
+    if (!pos || count === 0) return;
+    for (let i = 0; i < count; i++) fill(i, pos.array as Float32Array);
+    pos.needsUpdate = true;
   }
 
   setPixelRatio(ratio: number) {
@@ -613,6 +624,9 @@ export class EarthScene {
   private readonly predicted = makeLine('#e6edf3', 1.6, 0.85, true);
 
   private satWorld = new Float32Array(0);
+  private readonly motion = new MotionSmoother();   // satellites glide between telemetry snapshots
+  private ringIndex: number[] = [];
+  private selectedSat = -1;
   private stationWorld = new Float32Array(0);
   private burnWorld = new Float32Array(0);
   private satCount = 0;
@@ -627,6 +641,9 @@ export class EarthScene {
   private cloudsEnabled = true;
   private zoomTarget: number | null = null;
   private readonly tileLayer: TileLayer;
+  private readonly models = new SatelliteModelLayer(`${import.meta.env.BASE_URL}models/`);
+  private readonly sunLight = new THREE.DirectionalLight(0xffffff, 2.6);
+  private readonly fillLight = new THREE.DirectionalLight(0xbcd2ff, 0.9);   // from the camera: night-side models stay readable
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -711,6 +728,15 @@ export class EarthScene {
     for (const obj of [this.trails, this.visibility]) { obj.frustumCulled = false; obj.renderOrder = 3; this.scene.add(obj); }
     for (const line of [this.selectedTrail, this.predicted]) { line.renderOrder = 3; this.lines.push(line); this.scene.add(line); }
 
+    // Satellite models are the only lit objects (the Earth uses its own shaders): sunlight + a little fill.
+    this.scene.add(this.sunLight, this.fillLight, new THREE.AmbientLight(0xffffff, 0.45), this.models.group);
+    // Reflections for the models' metal / foil (only PBR materials use scene.environment; the Earth's shaders don't).
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.scene.environmentIntensity = 0.55;
+    this.textures.add(this.scene.environment);
+    pmrem.dispose();
+
     this.pointLayers.push(this.stars, this.debris, this.stations, this.burns, this.threatRings, this.satellites, this.selectionRing);
     for (const layer of this.pointLayers) this.scene.add(layer.points);
     this.buildStars();
@@ -766,6 +792,17 @@ export class EarthScene {
   setSun(timestamp: string | null) {
     const sun = subsolarPoint(timestamp ?? new Date().toISOString());
     toVector(sun.lon, sun.lat, 0, this.earthMaterial.uniforms.sunDir.value).normalize();
+    this.sunLight.position.copy(this.earthMaterial.uniforms.sunDir.value).multiplyScalar(10);
+  }
+
+  /** Draw satellites as 3D models (nearest ones) instead of only dots. */
+  setModelsVisible(visible: boolean) {
+    this.models.enabled = visible;
+  }
+
+  /** Which 3D model a satellite is drawn with (for attribution). */
+  modelInfo(id: string): ModelInfo {
+    return this.models.modelFor(id);
   }
 
   setCloudsVisible(visible: boolean) {
@@ -774,35 +811,69 @@ export class EarthScene {
 
   // ── Data ───────────────────────────────────────────────────────────────────
 
-  setSatellites(sats: (GlobePoint & { color: string; ring: string | null })[], selectedIndex: number) {
-    if (this.satWorld.length < sats.length * 3) this.satWorld = new Float32Array(sats.length * 3);
+  setSatellites(sats: (GlobePoint & { id?: string; color: string; ring: string | null })[], selectedIndex: number) {
+    const n = sats.length;
+    const now = performance.now();
+    const ids = sats.map((s, i) => s.id ?? `#${i}`);
+    const reported = new Float64Array(n * 3);
     const v = new THREE.Vector3();
+    for (let i = 0; i < n; i++) toVector(sats[i].lon, sats[i].lat, sats[i].alt, v).toArray(reported, i * 3);
+    const headings = new Map<string, THREE.Vector3>();
+    for (const [id, h] of this.motion.update(ids, reported, now)) headings.set(id, new THREE.Vector3(...h));
+    this.selectedSat = selectedIndex;
+    if (this.satWorld.length < n * 3) this.satWorld = new Float32Array(n * 3);
+    this.writeSatWorld(now);
+
     const colors = new Map<string, [number, number, number, number]>();
     const rgba = (css: string) => colors.get(css) ?? (colors.set(css, linearRgba(css)), colors.get(css)!);
-
-    this.satellites.update(sats.length, (i, pos, col, size) => {
-      const s = sats[i];
-      toVector(s.lon, s.lat, s.alt, v).toArray(pos, i * 3);
-      v.toArray(this.satWorld, i * 3);
-      col.set(rgba(s.color), i * 4);
+    this.satellites.update(n, (i, pos, col, size) => {
+      pos.set(this.satWorld.subarray(i * 3, i * 3 + 3), i * 3);
+      col.set(rgba(sats[i].color), i * 4);
       size[i] = i === selectedIndex ? 17 : 13;
     });
-    this.satCount = sats.length;
+    this.satCount = n;
+    this.models.setSatellites(ids, ids[selectedIndex] ?? null, headings);
 
-    const ringed = sats.map((s, i) => [s, i] as const).filter(([s]) => s.ring);
-    this.threatRings.update(ringed.length, (i, pos, col, size) => {
-      const [s, idx] = ringed[i];
-      pos.set(this.satWorld.subarray(idx * 3, idx * 3 + 3), i * 3);
-      col.set(rgba(s.ring!), i * 4);
+    this.ringIndex = sats.map((s, i) => (s.ring ? i : -1)).filter(i => i >= 0);
+    this.threatRings.update(this.ringIndex.length, (i, pos, col, size) => {
+      pos.set(this.satWorld.subarray(this.ringIndex[i] * 3, this.ringIndex[i] * 3 + 3), i * 3);
+      col.set(rgba(sats[this.ringIndex[i]].ring!), i * 4);
       size[i] = 26;
     });
-
-    const selected = sats[selectedIndex];
-    this.selectionRing.update(selected ? 1 : 0, (_i, pos, col, size) => {
+    this.selectionRing.update(selectedIndex >= 0 && selectedIndex < n ? 1 : 0, (_i, pos, col, size) => {
       pos.set(this.satWorld.subarray(selectedIndex * 3, selectedIndex * 3 + 3), 0);
       col.set(linearRgba('#38d6f5'), 0);
       size[0] = 36;
     });
+  }
+
+  /** Smoothed positions at `now` into satWorld (what is drawn and picked). */
+  private writeSatWorld(now: number) {
+    this.motion.sample(now, this.satWorld);
+  }
+
+  /** Per frame while satellites are gliding: moves the dots, rings and selection marker with them. */
+  private animateSatellites(now: number) {
+    if (this.motion.settled(now)) return;   // nothing moves until the next snapshot
+    this.writeSatWorld(now);
+    const w = this.satWorld;
+    this.satellites.setPositions(this.satCount, (i, pos) => pos.set(w.subarray(i * 3, i * 3 + 3), i * 3));
+    this.threatRings.setPositions(this.ringIndex.length, (i, pos) => pos.set(w.subarray(this.ringIndex[i] * 3, this.ringIndex[i] * 3 + 3), i * 3));
+    if (this.selectedSat >= 0 && this.selectedSat < this.satCount) {
+      this.selectionRing.setPositions(1, (_i, pos) => pos.set(w.subarray(this.selectedSat * 3, this.selectedSat * 3 + 3), 0));
+    }
+  }
+
+  /** World position of the selected satellite as drawn (smoothed), or null. */
+  selectedWorldPosition(): THREE.Vector3 | null {
+    if (this.selectedSat < 0 || this.selectedSat >= this.satCount) return null;
+    return new THREE.Vector3().fromArray(this.satWorld, this.selectedSat * 3);
+  }
+
+  /** Screen position of the selected satellite as drawn (smoothed), for the HTML label. */
+  selectedScreenPosition(): { x: number; y: number } | null {
+    if (this.selectedSat < 0 || this.selectedSat >= this.satCount) return null;
+    return this.project(new THREE.Vector3().fromArray(this.satWorld, this.selectedSat * 3));
   }
 
   /** `positions` holds [lon, lat, alt m] triples. */
@@ -999,6 +1070,8 @@ export class EarthScene {
     if (this.disposed) return;
     this.frame = requestAnimationFrame(this.animate);
 
+    this.animateSatellites(performance.now());
+
     if (this.flight) {
       const t = Math.min(1, (performance.now() - this.flight.start) / this.flight.duration);
       const e = t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
@@ -1009,7 +1082,9 @@ export class EarthScene {
       if (t >= 1) this.flight = null;
     } else if (this.followTarget) {
       const dist = this.camera.position.length();
-      const dir = this.camera.position.clone().normalize().lerp(this.followTarget.clone().normalize(), 0.07);
+      const target = this.selectedSat >= 0 && this.selectedSat < this.satCount
+        ? new THREE.Vector3().fromArray(this.satWorld, this.selectedSat * 3) : this.followTarget;
+      const dir = this.camera.position.clone().normalize().lerp(target.clone().normalize(), 0.07);
       this.camera.position.copy(dir.normalize().multiplyScalar(dist));
     }
 
@@ -1030,6 +1105,8 @@ export class EarthScene {
     (this.cloudMesh.material as THREE.ShaderMaterial).uniforms.opacity.value = 0.85 * cloudFade;
     this.earthMaterial.uniforms.cloudShadow.value = cloudFade;
     this.tileLayer.update(this.camera, this.container.clientHeight, performance.now());
+    this.fillLight.position.copy(this.camera.position);
+    this.models.update(this.camera, this.container.clientHeight, p => this.isOccluded(p), this.satWorld);
     this.camera.near = Math.max(0.002, altitude * 0.3);
     this.camera.far = altitude + 3;
     this.camera.updateProjectionMatrix();
@@ -1044,6 +1121,7 @@ export class EarthScene {
     this.resizeObserver.disconnect();
     this.renderer.domElement.removeEventListener('wheel', this.onWheel);
     this.tileLayer.dispose();
+    this.models.dispose();
     this.controls.dispose();
     this.scene.traverse(obj => {
       const mesh = obj as THREE.Mesh;
