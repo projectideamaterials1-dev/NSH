@@ -7,7 +7,8 @@ import useOrbitalStore from '../store/useOrbitalStore';
 import type { SimConfigDto } from '../store/useOrbitalStore';
 import { Button, Modal } from './ui';
 
-type NumericKey = Exclude<keyof SimConfigDto, 'autopilotEnabled' | 'avoidanceStrategy'>;
+type NumericKey = { [K in keyof SimConfigDto]: SimConfigDto[K] extends number ? K : never }[keyof SimConfigDto];
+type ToggleKey = 'atmosphericDrag' | 'verifyManeuvers';
 
 const FIELDS: { section: string; items: { key: NumericKey; label: string; unit: string; min: number; max: number; step: number; hint: string }[] }[] = [
   {
@@ -35,6 +36,26 @@ const FIELDS: { section: string; items: { key: NumericKey; label: string; unit: 
       { key: 'cdmScreenIntervalSeconds', label: 'Screen every', unit: 'sim s', min: 60, max: 86400, step: 60, hint: 'Automatic screening cadence' },
     ],
   },
+  {
+    section: 'Collision probability',
+    items: [
+      { key: 'pcManeuverThreshold', label: 'Maneuver threshold (Pc)', unit: '', min: 1e-7, max: 1e-2, step: 1e-5, hint: 'Pc at or above this is CRITICAL and triggers evasion (1e-4 is common)' },
+      { key: 'hardBodyRadiusM', label: 'Hard-body radius', unit: 'm', min: 1, max: 200, step: 1, hint: 'Combined size of both objects' },
+      { key: 'covarianceScale', label: 'Covariance scale', unit: '×', min: 0.1, max: 10, step: 0.1, hint: 'Multiplier on the modelled position uncertainty' },
+    ],
+  },
+  {
+    section: 'Force model',
+    items: [
+      { key: 'ballisticCoefficient', label: 'Ballistic coefficient', unit: 'm²/kg', min: 0.001, max: 0.2, step: 0.001, hint: 'Cd·A/m for drag (0.01 ≈ a 500 kg smallsat)' },
+      { key: 'approvalTimeoutSeconds', label: 'Approval timeout', unit: 'sim s', min: 60, max: 86400, step: 60, hint: 'How long a proposal waits for an operator (approval mode)' },
+    ],
+  },
+];
+
+const TOGGLES: { key: ToggleKey; label: string; hint: string }[] = [
+  { key: 'atmosphericDrag', label: 'Atmospheric drag', hint: 'Exponential atmosphere scaled by live NOAA F10.7 / Kp' },
+  { key: 'verifyManeuvers', label: 'Verify maneuvers', hint: 'Re-screen post-burn trajectories for secondary conjunctions' },
 ];
 
 export const SettingsModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
@@ -78,7 +99,7 @@ export const SettingsModal: React.FC<{ onClose: () => void }> = ({ onClose }) =>
         <div className="space-y-6">
           <section>
             <h4 className="section-title mb-3">Autopilot</h4>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <label className="flex items-center justify-between bg-raised border border-line rounded-lg px-4 py-3">
                 <span>
                   <span className="block text-[13px] text-ink">Autonomous avoidance</span>
@@ -99,13 +120,43 @@ export const SettingsModal: React.FC<{ onClose: () => void }> = ({ onClose }) =>
                   {autopilot?.strategies.find(s => s.name === draft.avoidanceStrategy)?.description}
                 </span>
               </label>
+              <label className="bg-raised border border-line rounded-lg px-4 py-3">
+                <span className="block text-[13px] text-ink mb-1.5">Command authority</span>
+                <select value={draft.autopilotMode} onChange={e => update('autopilotMode', e.target.value as SimConfigDto['autopilotMode'])}
+                  className="w-full h-8 px-2 rounded-md bg-panel border border-line text-[13px] text-ink focus:outline-none focus:border-accent">
+                  <option value="AUTONOMOUS">Autonomous — queue validated burns</option>
+                  <option value="APPROVAL">Approval — operator approves each plan</option>
+                </select>
+                <span className="block text-[12px] text-muted mt-1.5">Approval mode keeps a human in the loop for every burn.</span>
+              </label>
+              <label className="bg-raised border border-line rounded-lg px-4 py-3">
+                <span className="block text-[13px] text-ink mb-1.5">If nobody answers in time</span>
+                <select value={draft.approvalTimeoutAction}
+                  onChange={e => update('approvalTimeoutAction', e.target.value as SimConfigDto['approvalTimeoutAction'])}
+                  disabled={draft.autopilotMode !== 'APPROVAL'}
+                  className="w-full h-8 px-2 rounded-md bg-panel border border-line text-[13px] text-ink focus:outline-none focus:border-accent disabled:opacity-50">
+                  <option value="DISCARD">Discard and re-plan</option>
+                  <option value="EXECUTE">Execute the plan</option>
+                </select>
+                <span className="block text-[12px] text-muted mt-1.5">Applies after the approval timeout below.</span>
+              </label>
+              {TOGGLES.map(t => (
+                <label key={t.key} className="flex items-center justify-between bg-raised border border-line rounded-lg px-4 py-3">
+                  <span>
+                    <span className="block text-[13px] text-ink">{t.label}</span>
+                    <span className="block text-[12px] text-muted">{t.hint}</span>
+                  </span>
+                  <input type="checkbox" className="w-4 h-4 accent-[var(--color-accent)]" checked={draft[t.key]}
+                    onChange={e => update(t.key, e.target.checked)} />
+                </label>
+              ))}
             </div>
           </section>
 
           {FIELDS.map(group => (
             <section key={group.section}>
               <h4 className="section-title mb-3">{group.section}</h4>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
                 {group.items.map(f => (
                   <label key={f.key} className="block" title={f.hint}>
                     <span className="block text-[13px] text-ink mb-1.5">{f.label}</span>

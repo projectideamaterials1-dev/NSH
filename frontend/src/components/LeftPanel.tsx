@@ -368,7 +368,7 @@ const NearbyObjects: React.FC = () => {
 export const LeftPanel: React.FC = () => {
   const hasSelection = useOrbitalStore(s => !!s.selectedSatelliteId);
   return (
-    <aside className="w-[320px] flex-shrink-0 bg-panel border-r border-line flex flex-col min-h-0 overflow-y-auto">
+    <aside className="w-full lg:w-[320px] flex-shrink-0 bg-panel lg:border-r border-line flex flex-col min-h-0 overflow-y-auto" aria-label="Selected satellite">
       <Panel title="Satellite">
         <SatelliteDetails />
       </Panel>

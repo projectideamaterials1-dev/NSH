@@ -66,8 +66,16 @@ export const selectLatestFuelMetric = (state: OrbitalState) =>
 export const selectSimulationState = (state: OrbitalState) => state.simulation;
 export const selectSimulationTime = (state: OrbitalState) => state.timestamp;
 export const selectTimestamp = (state: OrbitalState) => state.timestamp;
+/** The frame being shown instead of live data: a predicted (future) frame, a replayed one, or null. */
 export const selectReplayFrame = (state: OrbitalState) =>
-  state.replayIndex === null ? null : state.history[state.replayIndex] ?? null;
+  state.predictIndex !== null && state.prediction
+    ? state.prediction.frames[state.predictIndex] ?? null
+    : state.replayIndex === null ? null : state.history[state.replayIndex] ?? null;
+
+export const selectPendingProposals = createSelector(
+  [(state: OrbitalState) => state.proposals],
+  proposals => proposals.filter(p => p.status === 'PENDING'),
+);
 // Memoized: zustand v5 requires selectors to return a stable reference for unchanged input.
 export const selectOpenThreatCounts = createSelector(
   [(state: OrbitalState) => state.conjunctions],

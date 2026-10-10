@@ -43,6 +43,8 @@ from satellite_api.timeutils import iso_z, parse_iso_utc
 router = APIRouter()
 MU_EARTH = 398600.4418
 R_EARTH = 6378.137
+# RK4 step for sampled look-ahead (tracks, passes): sub-metre over hours at LEO, ~10x cheaper than 1 s.
+SAMPLING_RK4_STEP_S = 10.0
 
 
 # ============================================================================
@@ -318,17 +320,22 @@ async def predicted_track(
         start = state.current_time
     gravity = None if model == "J2" else GravityModel(preset=model)
     samples = int(minutes * 60 // step_s) + 1
-    points = []
-    for k in range(samples):
-        if k:
-            if gravity:
-                gravity.propagate(vec, step_s, max_step=min(step_s, 10.0))
-            else:
-                propagate_states(vec, step_s)
-        t = start + timedelta(seconds=k * step_s)
-        _, lat, lon, _ = convert_states_to_lla(vec, t)[0]
-        points.append({"t": iso_z(t), "offset_s": k * step_s, "lat": round(lat, 4), "lon": round(lon, 4),
-                       "alt_km": round(float(np.linalg.norm(vec[0, :3]) - R_EARTH), 3)})
+
+    def compute():
+        points = []
+        for k in range(samples):
+            if k:
+                if gravity:
+                    gravity.propagate(vec, step_s, max_step=min(step_s, 10.0))
+                else:
+                    propagate_states(vec, step_s, max_step=min(step_s, SAMPLING_RK4_STEP_S))
+            t = start + timedelta(seconds=k * step_s)
+            _, lat, lon, _ = convert_states_to_lla(vec, t)[0]
+            points.append({"t": iso_z(t), "offset_s": k * step_s, "lat": round(lat, 4), "lon": round(lon, 4),
+                           "alt_km": round(float(np.linalg.norm(vec[0, :3]) - R_EARTH), 3)})
+        return points
+
+    points = await asyncio.to_thread(compute)
     return {"satellite_id": sat_id, "model": model, "points": points}
 
 
@@ -345,23 +352,28 @@ async def ground_station_passes(
         vec = state.sat_buffer[idx:idx + 1].copy()
         start_ts = state.now_ts
     samples = int(hours * 3600 // step_s) + 1
-    open_pass = {}
-    passes = []
-    for k in range(samples):
-        if k:
-            propagate_states(vec, step_s)
-        ts = start_ts + k * step_s
-        visible = visible_mask(vec[:, :3], ts)[0]
-        elev = elevations_deg(vec[:, :3], ts)[0]
-        for g, st in enumerate(STATIONS):
-            if visible[g]:
-                p = open_pass.setdefault(g, {"station_id": st.id, "station_name": st.name, "start_ts": ts,
-                                             "max_elevation_deg": -90.0, "in_progress": k == 0})
-                p["max_elevation_deg"] = max(p["max_elevation_deg"], float(elev[g]))
-                p["end_ts"] = ts
-            elif g in open_pass:
-                passes.append(open_pass.pop(g))
-    passes.extend(open_pass.values())
+
+    def compute():
+        open_pass = {}
+        passes = []
+        for k in range(samples):
+            if k:
+                propagate_states(vec, step_s, max_step=min(step_s, SAMPLING_RK4_STEP_S))
+            ts = start_ts + k * step_s
+            visible = visible_mask(vec[:, :3], ts)[0]
+            elev = elevations_deg(vec[:, :3], ts)[0]
+            for g, st in enumerate(STATIONS):
+                if visible[g]:
+                    p = open_pass.setdefault(g, {"station_id": st.id, "station_name": st.name, "start_ts": ts,
+                                                 "max_elevation_deg": -90.0, "in_progress": k == 0})
+                    p["max_elevation_deg"] = max(p["max_elevation_deg"], float(elev[g]))
+                    p["end_ts"] = ts
+                elif g in open_pass:
+                    passes.append(open_pass.pop(g))
+        passes.extend(open_pass.values())
+        return passes
+
+    passes = await asyncio.to_thread(compute)
     out = sorted(({
         "station_id": p["station_id"], "station_name": p["station_name"],
         "start": iso_z(p["start_ts"]), "end": iso_z(p["end_ts"]),

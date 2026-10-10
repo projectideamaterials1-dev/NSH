@@ -2,10 +2,10 @@
 // Fleet-wide predicted conjunctions (CDMs) with risk, time to closest approach and response status.
 
 import React, { useMemo, useState } from 'react';
-import { RefreshCw, ShieldCheck } from 'lucide-react';
+import { Crosshair, RefreshCw, ShieldCheck } from 'lucide-react';
 import useOrbitalStore from '../store/useOrbitalStore';
 import type { Conjunction } from '../store/useOrbitalStore';
-import { CDM_STATUS_META, formatDuration, formatKm, formatUtcTime, riskMeta, secondsUntil } from '../lib/format';
+import { CDM_STATUS_META, formatDuration, formatKm, formatPc, formatUtcTime, needsAction, riskMeta, secondsUntil } from '../lib/format';
 import { Button, EmptyState } from './ui';
 
 const RISK_ORDER: Record<string, number> = { CRITICAL: 0, WARNING: 1, WATCH: 2 };
@@ -20,6 +20,8 @@ export const ThreatsPanel: React.FC = () => {
   const lastScreen = useOrbitalStore(s => s.metrics?.last_screen ?? null);
   const hasData = useOrbitalStore(s => !!s.satellites?.length);
   const [filter, setFilter] = useState<'actionable' | 'all'>('actionable');
+  const openConjunction = useOrbitalStore(s => s.openConjunction);
+  const pcThreshold = useOrbitalStore(s => s.config?.pcManeuverThreshold ?? 1e-4);
 
   const rows = useMemo(() => {
     const list = conjunctions.filter((c: Conjunction) => filter === 'all' || c.risk !== 'WATCH');
@@ -32,7 +34,7 @@ export const ThreatsPanel: React.FC = () => {
       <div className="flex items-center gap-2 px-4 py-3 border-b border-line">
         <div className="flex rounded-md border border-line overflow-hidden text-[12px]">
           <button onClick={() => setFilter('actionable')} className={`px-2.5 h-8 ${filter === 'actionable' ? 'bg-raised text-ink' : 'text-muted hover:text-ink'}`}>
-            Under 1 km
+            Warning+
           </button>
           <button onClick={() => setFilter('all')} className={`px-2.5 h-8 ${filter === 'all' ? 'bg-raised text-ink' : 'text-muted hover:text-ink'}`}>
             All ({conjunctions.length})
@@ -65,35 +67,39 @@ export const ThreatsPanel: React.FC = () => {
           <ul>
             {rows.map(c => {
               const risk = riskMeta(c.risk);
-              // Autopilot acts on predicted misses under 150 m; wider conjunctions are monitored, not flagged as open failures.
-              const status = c.status === 'ACTIVE' && c.miss_distance_km > 0.15
+              // Autopilot acts on misses under 150 m or Pc at/above the threshold; others are monitored, not open failures.
+              const status = c.status === 'ACTIVE' && !needsAction(c, pcThreshold)
                 ? { label: 'Monitoring', color: '#9aa8b6' }
                 : CDM_STATUS_META[c.status] ?? { label: c.status, color: '#9aa8b6' };
               const eta = secondsUntil(c.tca, timestamp);
               const selected = c.satellite_id === selectedId;
               return (
-                <li key={c.cdm_id}>
+                <li key={c.cdm_id} className={`flex items-stretch border-b border-line/60 transition-colors ${selected ? 'bg-accent/10' : 'hover:bg-raised'}`}>
                   <button
                     onClick={() => selectSatellite(c.satellite_id)}
-                    className={`w-full text-left px-4 py-2.5 border-b border-line/60 transition-colors ${selected ? 'bg-accent/10' : 'hover:bg-raised'}`}
+                    className="flex-1 min-w-0 text-left pl-4 pr-2 py-2.5"
+                    aria-label={`Select ${c.satellite_id}: ${risk.label} conjunction with ${c.object_id}`}
                   >
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded" style={{ color: risk.color, background: `${risk.color}1f` }}>
                         {risk.label}
                       </span>
-                      <span className="tabular text-[13px] text-ink">{c.satellite_id}</span>
-                      <span className="text-faint text-[12px]">↔</span>
+                      <span className="tabular text-[13px] text-ink whitespace-nowrap">{c.satellite_id}</span>
+                      <span className="text-faint text-[12px]" aria-hidden>↔</span>
                       <span className="tabular text-[13px] text-muted truncate">{c.object_id}</span>
-                      <span className="ml-auto tabular text-[13px] font-semibold" style={{ color: risk.color }}>{formatKm(c.miss_distance_km)}</span>
+                      <span className="ml-auto tabular text-[13px] font-semibold text-ink whitespace-nowrap">{formatKm(c.miss_distance_km)}</span>
                     </div>
-                    <div className="flex items-center gap-2 mt-1 text-[12px] text-muted tabular">
-                      <span>TCA {formatUtcTime(c.tca)}</span>
+                    <div className="flex items-center gap-1.5 mt-1 text-[12px] text-muted tabular whitespace-nowrap">
+                      <span className={eta < 600 ? 'text-warn' : ''} title={`TCA ${formatUtcTime(c.tca)} UTC`}>TCA in {formatDuration(eta)}</span>
                       <span className="text-faint">·</span>
-                      <span className={eta < 600 ? 'text-warn' : ''}>in {formatDuration(eta)}</span>
-                      <span className="text-faint">·</span>
-                      <span>{c.relative_velocity_kms.toFixed(1)} km/s</span>
-                      <span className="ml-auto" style={{ color: status.color }}>{status.label}</span>
+                      <span title="Probability of collision">Pc {formatPc(c.pc)}</span>
+                      <span className="ml-auto truncate min-w-0" style={{ color: status.color }}>{status.label}</span>
                     </div>
+                  </button>
+                  <button onClick={() => openConjunction(c.cdm_id)} title="Encounter geometry and maneuver trade space"
+                    aria-label={`Open details for ${c.cdm_id}`}
+                    className="px-3 text-faint hover:text-accent focus-visible:text-accent border-l border-line/60">
+                    <Crosshair className="w-4 h-4" />
                   </button>
                 </li>
               );

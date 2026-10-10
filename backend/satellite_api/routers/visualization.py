@@ -2,6 +2,7 @@
 routers/visualization.py
 -------------------------
 GET /api/visualization/snapshot
+GET /api/predict                 look-ahead satellite frames (queued burns applied) + timeline events
 Provides a highly compressed snapshot of all orbital objects.
 STRICTLY matches the NSH 2026 Problem Statement schema.
 Optimized for 100k+ objects using NumPy vectorization.
@@ -18,6 +19,7 @@ import orjson
 
 from satellite_api.models import VisualizationSnapshotResponse
 from satellite_api.coordinates import convert_states_to_lla
+from satellite_api.prediction import predict_frames
 from satellite_api.timeutils import iso_z
 
 router = APIRouter()
@@ -160,3 +162,32 @@ async def debug_state(request: Request):
                 "cooldown_s": float(state.sat_cooldown_timers[i]),
             }
     return debug_data
+
+
+@router.get("/api/predict", tags=["Visualization"])
+async def predict(request: Request, horizon_s: float = Query(10800.0, ge=300.0, le=86400.0),
+                  step_s: float = Query(300.0, ge=30.0, le=3600.0)):
+    """Satellite positions sampled every `step_s` over the next `horizon_s`, with every queued burn
+    applied at its epoch, plus the predicted conjunctions (TCAs) and burns as timeline events."""
+    if horizon_s / step_s > 400:
+        raise HTTPException(status_code=400, detail="At most 400 frames per request (raise step_s).")
+    state = request.app.state.orbital_state
+    if not state.is_ready() or state.current_time is None:
+        raise HTTPException(status_code=400, detail="State not initialized.")
+    async with state.lock:
+        n = state.sat_count
+        sats = state.sat_buffer[:n].copy()
+        ids = [state.idx_to_sat_id[i] for i in range(n)]
+        queue = list(state.maneuver_queue)
+        start_ts = state.now_ts
+        tcas = [{"kind": "TCA", "timestamp": c["tca"], "ts": c["tca_ts"], "satellite_id": c["satellite_id"],
+                 "label": f"{c['satellite_id']} / {c['object_id']}", "risk": c["risk"], "cdm_id": c["cdm_id"]}
+                for c in state.cdms.open() if start_ts < c["tca_ts"] <= start_ts + horizon_s]
+    result = await asyncio.to_thread(predict_frames, sats, ids, queue, start_ts, horizon_s, step_s)
+    burns = [{"kind": "BURN", "timestamp": iso_z(m[0]), "ts": m[0], "satellite_id": m[1], "label": m[5],
+              "risk": None} for m in queue if start_ts < m[0] <= start_ts + horizon_s]
+    return ORJSONResponse({
+        "start": iso_z(start_ts), "step_s": step_s, "horizon_s": horizon_s, "satellite_ids": ids,
+        "frames": result["frames"],
+        "events": sorted(tcas + burns, key=lambda e: e["ts"]),
+    })

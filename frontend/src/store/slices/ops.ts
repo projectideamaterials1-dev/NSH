@@ -7,6 +7,7 @@ import type {
   AutopilotInfo,
   CatalogObjectInfo,
   Conjunction,
+  Decision,
   GetState,
   GroundPass,
   ManeuverEvent,
@@ -16,10 +17,13 @@ import type {
   OpsActions,
   OpsEvent,
   OrbitalState,
+  PhysicsModel,
+  Proposal,
   SatelliteDetail,
   SetState,
   SimConfigDto,
   TrackPoint,
+  TradeSpace,
 } from '../types';
 
 export const createOpsActions = (set: SetState, get: GetState): OpsActions => ({
@@ -51,11 +55,12 @@ export const createOpsActions = (set: SetState, get: GetState): OpsActions => ({
 
   fetchOps: async () => {
     const after = get().lastEventId;
-    const [sats, cdms, events, metrics] = await Promise.allSettled([
+    const [sats, cdms, events, metrics, proposals] = await Promise.allSettled([
       apiJson<{ satellites: SatelliteDetail[] }>('/api/satellites'),
       apiJson<{ conjunctions: Conjunction[] }>('/api/conjunctions?status=open'),
       apiJson<{ events: OpsEvent[]; last_id: number }>(`/api/events?after_id=${after}&limit=200`),
       apiJson<MissionMetrics>('/api/metrics'),
+      apiJson<{ proposals: Proposal[] }>('/api/proposals?status=all'),
     ]);
     const patch: Partial<OrbitalState> = {};
     if (sats.status === 'fulfilled') {
@@ -75,8 +80,39 @@ export const createOpsActions = (set: SetState, get: GetState): OpsActions => ({
       patch.lastEventId = last_id;
     }
     if (metrics.status === 'fulfilled') patch.metrics = metrics.value;
+    if (proposals.status === 'fulfilled') patch.proposals = proposals.value.proposals.slice(0, 50);
     set(patch);
   },
+
+  fetchDecisions: async () => {
+    try {
+      const { decisions } = await apiJson<{ decisions: Decision[] }>('/api/decisions?limit=60');
+      set({ decisions });
+    } catch {
+      /* backend offline or older backend */
+    }
+  },
+
+  answerProposal: async (proposalId, approve, reason) => {
+    const proposal = await apiJson<Proposal>(
+      `/api/proposals/${encodeURIComponent(proposalId)}/${approve ? 'approve' : 'reject'}`,
+      { method: 'POST', body: JSON.stringify(approve ? {} : { reason: reason ?? null }) });
+    await Promise.all([get().fetchOps(), get().fetchManeuvers(), get().fetchDecisions()]);
+    return proposal;
+  },
+
+  fetchTradeSpace: (cdmId, axis) =>
+    apiJson<TradeSpace>(`/api/conjunctions/${encodeURIComponent(cdmId)}/tradespace?axis=${axis}&n_times=8&n_dv=11`),
+
+  fetchPhysics: async () => {
+    try {
+      set({ physics: await apiJson<PhysicsModel>('/api/physics') });
+    } catch {
+      /* older backend */
+    }
+  },
+
+  openConjunction: (cdmId) => set({ conjunctionDetailId: cdmId }),
 
   fetchAutopilot: async () => {
     try {

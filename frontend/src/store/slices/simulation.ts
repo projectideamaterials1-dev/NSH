@@ -55,6 +55,7 @@ export const createSimulationActions = (set: SetState, get: GetState): Simulatio
       _simInterval: interval,
       isSimulationRunning: isRunning,
       replayIndex: isRunning ? null : state.replayIndex,
+      predictIndex: isRunning ? null : state.predictIndex,
       simulation: {
         ...state.simulation,
         status: isRunning ? 'running' : state.simulation.status === 'error' ? 'error' : 'paused',

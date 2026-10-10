@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 import numpy as np
 
 from satellite_api.coordinates import convert_states_to_lla
-from satellite_api.physics_engine import propagate_states
+from satellite_api.physics_engine import propagate_fast
 from satellite_api.timeutils import iso_z, parse_iso_utc
 
 router = APIRouter()
@@ -98,12 +98,12 @@ async def export_czml(
         ids = [state.idx_to_sat_id[i] for i in range(n)]
         sim_now = state.current_time
 
-    propagate_states(states, (start_dt - sim_now).total_seconds())
+    propagate_fast(states, (start_dt - sim_now).total_seconds())
     tracks = [[] for _ in range(n)]
     for k in range(n_samples):
         t_offset = k * step_seconds
         if k > 0:
-            propagate_states(states, step_seconds)
+            propagate_fast(states, step_seconds)
         lla = np.asarray(convert_states_to_lla(states, start_dt + timedelta(seconds=t_offset))).reshape(-1, 4)
         for i, (_, lat, lon, alt_km) in enumerate(lla.tolist()):
             tracks[i].extend([t_offset, round(lon, 5), round(lat, 5), round(alt_km * 1000.0, 1)])

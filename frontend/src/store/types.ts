@@ -134,6 +134,138 @@ export interface Conjunction {
   mitigation_burn_ids: string[];
   detected_at: string;
   updated_at: string;
+  /** Probability of collision (2-D short-encounter model); absent when no TCA states were available. */
+  pc?: number;
+  peak_pc?: number | null;
+  initial_pc?: number | null;
+  hbr_m?: number;
+  /** Miss distance at which Pc falls a decade below the maneuver threshold. */
+  safe_miss_km?: number;
+  propagator?: string;
+  encounter_plane?: EncounterPlane;
+}
+
+export interface EncounterPlane {
+  miss_x_km: number;
+  miss_y_km: number;
+  sigma_major_km: number;
+  sigma_minor_km: number;
+  ellipse_angle_deg: number;
+  mahalanobis: number;
+}
+
+export interface TradeSpaceCell {
+  burn_offset_s: number;
+  dv_mps: number;
+  miss_km: number;
+  pc: number;
+  tca_offset_s: number;
+  fuel_kg: number;
+}
+
+export interface TradeSpace {
+  cdm_id: string;
+  satellite_id: string;
+  object_id: string;
+  computed_at: string;
+  tca: string;
+  axis: 'T' | 'R' | 'N';
+  burn_offsets_s: number[];
+  dv_mps: number[];
+  grid: TradeSpaceCell[];
+  pc_threshold: number;
+  baseline: { miss_km: number; pc: number | null };
+  planned_burn: { burn_id: string; burn_offset_s: number; dv_mps: number } | null;
+}
+
+export interface VerificationRow {
+  object_id: string;
+  object_type: 'DEBRIS' | 'SATELLITE';
+  tca_ts: number;
+  miss_distance_km: number;
+  pc: number | null;
+  needs_action: boolean;
+}
+
+export interface DecisionCandidate {
+  label: string;
+  n_burns: number;
+  total_dv_mps: number;
+  fuel_kg: number;
+  first_burn_s: number;
+  clean: boolean | null;
+  chosen: boolean;
+  verification?: { primary: VerificationRow[]; secondary: VerificationRow[]; clean: boolean; objects_screened: number };
+}
+
+export type DecisionKind = 'EVASION' | 'STATION_KEEPING' | 'EOL';
+
+export interface DecisionBurn { burn_id: string; burn_time: string; ts: number; delta_v_mps: number; maneuver_type: string }
+
+export interface Decision {
+  decision_id: string;
+  sim_time: string | null;
+  satellite_id: string;
+  kind: DecisionKind;
+  outcome: 'SCHEDULED' | 'PROPOSED' | 'REJECTED' | 'APPROVED' | 'FAILED' | 'EXPIRED' | 'REJECTED_BY_OPERATOR';
+  rationale: string;
+  reason?: string | null;
+  cdm_ids?: string[];
+  candidates?: DecisionCandidate[];
+  burns?: DecisionBurn[];
+  fuel_kg?: number;
+  proposal_id?: string;
+  actor: string;
+}
+
+export interface Proposal {
+  proposal_id: string;
+  satellite_id: string;
+  kind: DecisionKind;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED' | 'FAILED';
+  created_ts: number;
+  created_at: string;
+  expires_ts: number;
+  expires_at: string;
+  timeout_action: 'DISCARD' | 'EXECUTE';
+  rationale: string;
+  cdm_ids: string[];
+  candidates: DecisionCandidate[];
+  burns: DecisionBurn[];
+  fuel_kg: number;
+  answered_at?: string;
+  answered_by?: string;
+  reason?: string | null;
+}
+
+export interface PhysicsModel {
+  engine: string;
+  force_model: string;
+  integrator: string;
+  drag: { enabled: boolean; ballistic_m2_per_kg: number; density_scale: number; f107_sfu: number | null;
+          kp: number | null; native_support: boolean; atmosphere: string };
+  collision_probability: { method: string; covariance: string; maneuver_threshold: number; hard_body_radius_m: number;
+                           covariance_scale: number };
+  certification: string;
+}
+
+export interface PredictionEvent {
+  kind: 'TCA' | 'BURN';
+  timestamp: string;
+  ts: number;
+  satellite_id: string;
+  label: string;
+  risk: RiskLevel | null;
+  cdm_id?: string;
+}
+
+export interface Prediction {
+  start: string;
+  step_s: number;
+  frames: ReplayFrame[];
+  events: PredictionEvent[];
+  /** Wall-clock ms when fetched. */
+  fetchedAt: number;
 }
 
 export interface OpsEvent {
@@ -207,6 +339,15 @@ export interface SimConfigDto {
   cdmWarningKm: number;
   cdmHorizonSeconds: number;
   cdmScreenIntervalSeconds: number;
+  pcManeuverThreshold: number;
+  hardBodyRadiusM: number;
+  covarianceScale: number;
+  atmosphericDrag: boolean;
+  ballisticCoefficient: number;
+  autopilotMode: 'AUTONOMOUS' | 'APPROVAL';
+  approvalTimeoutSeconds: number;
+  approvalTimeoutAction: 'DISCARD' | 'EXECUTE';
+  verifyManeuvers: boolean;
 }
 
 export interface ManualBurnInput {
@@ -330,6 +471,8 @@ export interface ReplayFrame {
   satStatuses: string[];
   debrisPositions: Float32Array;
   debrisLength: number;
+  /** Look-ahead frame from /api/predict (satellites only, queued burns applied). */
+  predicted?: boolean;
 }
 
 export interface SimulationInfo {
@@ -380,6 +523,19 @@ export interface OrbitalData {
   // replay & view
   history: ReplayFrame[];
   replayIndex: number | null;
+  /** Look-ahead frames for the scrubber; predictIndex selects one (null: not previewing the future). */
+  prediction: Prediction | null;
+  predictIndex: number | null;
+  predicting: boolean;
+
+  // decision support
+  decisions: Decision[];
+  proposals: Proposal[];
+  physics: PhysicsModel | null;
+  conjunctionDetailId: string | null;
+  rightTab: 'fleet' | 'threats' | 'decisions' | 'alerts' | 'score';
+  showPerfHud: boolean;
+  showShortcuts: boolean;
   viewMode: '2d' | '3d';
 
   simulation: SimulationInfo;
@@ -401,6 +557,11 @@ export interface OrbitalData {
 
 /** Snapshot stream, selection, replay and view. */
 export interface TelemetryActions {
+  setRightTab: (tab: OrbitalData['rightTab']) => void;
+  togglePerfHud: () => void;
+  setShowShortcuts: (open: boolean) => void;
+  fetchPrediction: () => Promise<void>;
+  setPredictIndex: (index: number | null) => void;
   ingestFrame: (timestamp: string, satellites: SatelliteBinaryData, debris: DebrisBinaryData, parseTimeMs: number, latencyMs?: number) => void;
   syncVisualizationSnapshot: () => Promise<boolean>;
   startAutoSync: (intervalMs?: number) => void;
@@ -416,6 +577,11 @@ export interface TelemetryActions {
 
 /** Operations data and operator commands. */
 export interface OpsActions {
+  fetchDecisions: () => Promise<void>;
+  answerProposal: (proposalId: string, approve: boolean, reason?: string) => Promise<Proposal>;
+  fetchTradeSpace: (cdmId: string, axis: 'T' | 'R' | 'N') => Promise<TradeSpace>;
+  fetchPhysics: () => Promise<void>;
+  openConjunction: (cdmId: string | null) => void;
   fetchManeuvers: () => Promise<void>;
   fetchOps: () => Promise<void>;
   fetchAutopilot: () => Promise<void>;

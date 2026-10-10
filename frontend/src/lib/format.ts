@@ -64,8 +64,8 @@ export function formatCoord(value: number, pos: string, neg: string): string {
 }
 
 export const RISK_META = {
-  CRITICAL: { label: 'Critical', color: COLORS.crit, hint: 'Predicted miss under 100 m' },
-  WARNING: { label: 'Warning', color: COLORS.warn, hint: 'Predicted miss under 1 km' },
+  CRITICAL: { label: 'Critical', color: COLORS.crit, hint: 'Pc at or above the maneuver threshold, or a miss under 100 m' },
+  WARNING: { label: 'Warning', color: COLORS.warn, hint: 'Pc of 1e-6 or more, or a miss under 1 km' },
   WATCH: { label: 'Watch', color: '#9aa8b6', hint: 'Predicted miss under 5 km' },
 } as const;
 
@@ -133,4 +133,18 @@ export function secondsUntil(target: string | number, reference: string | null):
   const t = typeof target === 'number' ? target * 1000 : Date.parse(target);
   const r = reference ? Date.parse(reference) : Date.now();
   return (t - r) / 1000;
+}
+
+/** Probability of collision in compact scientific form: "3.2e-4", "<1e-10", "—". */
+export function formatPc(pc: number | null | undefined): string {
+  if (pc === null || pc === undefined || !Number.isFinite(pc)) return '—';
+  if (pc < 1e-10) return '<1e-10';
+  if (pc >= 0.01) return pc.toFixed(3);
+  const [mantissa, exp] = pc.toExponential(1).split('e');
+  return `${mantissa}e${Number(exp)}`;
+}
+
+/** Whether the autopilot acts on an encounter: predicted miss inside 150 m or Pc at/above the threshold. */
+export function needsAction(c: { miss_distance_km: number; pc?: number | null }, pcThreshold = 1e-4): boolean {
+  return c.miss_distance_km <= 0.15 || (c.pc != null && c.pc >= pcThreshold);
 }

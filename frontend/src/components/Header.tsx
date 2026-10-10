@@ -2,7 +2,7 @@
 // Top bar: product, simulation clock, mission KPIs, threat level, autopilot, settings and link status.
 
 import React, { useMemo, useState } from 'react';
-import { Bot, Orbit, Settings, ShieldAlert } from 'lucide-react';
+import { Bot, Keyboard, Orbit, Settings, ShieldAlert } from 'lucide-react';
 import useOrbitalStore, { selectOpenThreatCounts } from '../store/useOrbitalStore';
 import { formatCount, formatUtcDate, formatUtcTime, COLORS } from '../lib/format';
 import { SettingsModal } from './SettingsModal';
@@ -112,6 +112,7 @@ export const Header: React.FC = () => {
   const threats = useOrbitalStore(selectOpenThreatCounts);
   const live = useOrbitalStore(s => s.realWorld?.live ?? false);
   const spaceWeather = useOrbitalStore(s => s.spaceWeather);
+  const setShowShortcuts = useOrbitalStore(s => s.setShowShortcuts);
   const [showSettings, setShowSettings] = useState(false);
 
   const fleet = useMemo(() => {
@@ -125,7 +126,7 @@ export const Header: React.FC = () => {
   const openThreats = threats.CRITICAL + threats.WARNING;
 
   return (
-    <header className="h-14 flex items-stretch bg-panel border-b border-line flex-shrink-0">
+    <header className="h-14 flex items-stretch bg-panel border-b border-line flex-shrink-0 overflow-hidden">
       <div className="flex items-center gap-3 px-4">
         <div className="w-8 h-8 rounded-lg bg-accent/15 border border-accent/30 flex items-center justify-center flex-shrink-0">
           <Orbit className="w-[18px] h-[18px] text-accent" />
@@ -136,7 +137,7 @@ export const Header: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex items-center gap-3 px-4 border-l border-line">
+      <div className="flex items-center gap-3 px-3 sm:px-4 border-l border-line">
         <div className="leading-tight">
           <div className="text-[11px] whitespace-nowrap flex items-center gap-1.5">
             {live ? (
@@ -155,24 +156,25 @@ export const Header: React.FC = () => {
       <div className="flex-1" />
 
       <div className="flex items-stretch">
-        <Kpi label="Satellites" value={fleet ? formatCount(fleet.count) : '—'} />
+        <Kpi label="Satellites" value={fleet ? formatCount(fleet.count) : '—'} className="hidden sm:flex" />
         <Kpi label="Debris" value={debrisCount ? formatCount(debrisCount) : '—'} className="hidden min-[1440px]:flex" />
         <Kpi
           label="Threats"
           value={String(openThreats)}
           tone={threats.CRITICAL ? COLORS.crit : threats.WARNING ? COLORS.warn : undefined}
-          hint={`${threats.CRITICAL} critical (<100 m), ${threats.WARNING} warning (<1 km), ${threats.WATCH} watch (<5 km)`}
+          hint={`${threats.CRITICAL} critical (Pc above threshold or <100 m), ${threats.WARNING} warning (Pc ≥ 1e-6 or <1 km), ${threats.WATCH} watch (<5 km)`}
         />
         <Kpi label="Avg fuel" value={fleet ? `${fleet.avgFuel.toFixed(1)} kg` : '—'} className="hidden min-[1440px]:flex" hint="Fleet average propellant" />
         <Kpi
           label="SK uptime"
+          className="hidden md:flex"
           value={uptime === undefined ? '—' : `${uptime.toFixed(1)}%`}
           tone={uptime !== undefined && uptime < 95 ? COLORS.warn : undefined}
           hint="Time-weighted share of satellite-time spent inside the station-keeping box"
         />
-        <Kpi label="Avoided" value={String(metrics?.collisions_avoided ?? 0)} tone={metrics?.collisions_avoided ? COLORS.ok : undefined}
+        <Kpi label="Avoided" className="hidden lg:flex" value={String(metrics?.collisions_avoided ?? 0)} tone={metrics?.collisions_avoided ? COLORS.ok : undefined}
           hint="Critical/warning conjunctions that passed safely after autopilot action" />
-        <Kpi label="Collisions" value={String(metrics?.collisions_detected ?? 0)} tone={metrics?.collisions_detected ? COLORS.crit : undefined} />
+        <Kpi label="Collisions" className="hidden lg:flex" value={String(metrics?.collisions_detected ?? 0)} tone={metrics?.collisions_detected ? COLORS.crit : undefined} />
         {spaceWeather?.kp != null && (
           <Kpi
             label="Kp index"
@@ -182,13 +184,15 @@ export const Header: React.FC = () => {
             hint={`NOAA planetary Kp (${spaceWeather.kp_level}); F10.7 ${spaceWeather.f107_sfu ?? '—'} sfu. Geomagnetic storms raise LEO drag and prediction uncertainty.`}
           />
         )}
-        <ThreatLevel />
-        <AutopilotToggle />
+        <div className="hidden md:flex items-stretch"><ThreatLevel /></div>
+        <div className="hidden sm:flex items-stretch"><AutopilotToggle /></div>
         <div className="flex items-center px-2 border-l border-line">
+          <Button variant="ghost" onClick={() => setShowShortcuts(true)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"
+            icon={<Keyboard className="w-4 h-4" />} className="hidden md:inline-flex" />
           <Button variant="ghost" onClick={() => setShowSettings(true)} aria-label="Settings" title="Simulation settings"
             icon={<Settings className="w-4 h-4" />} />
         </div>
-        <LinkStatus />
+        <div className="hidden sm:flex items-stretch"><LinkStatus /></div>
       </div>
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}

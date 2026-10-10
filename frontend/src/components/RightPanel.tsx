@@ -1,19 +1,22 @@
 // src/components/RightPanel.tsx
-// Tabbed operations panel: Fleet · Threats · Alerts · Score.
+// Tabbed operations panel: Fleet · Threats · Decisions · Alerts · Score.
 
-import React, { useState } from 'react';
-import useOrbitalStore, { selectOpenThreatCounts } from '../store/useOrbitalStore';
+import React from 'react';
+import useOrbitalStore, { selectOpenThreatCounts, selectPendingProposals } from '../store/useOrbitalStore';
 import { COLORS } from '../lib/format';
 import { AlertsPanel } from './AlertsPanel';
+import { DecisionsPanel } from './DecisionsPanel';
 import { FleetPanel } from './FleetPanel';
 import { ScorecardPanel } from './ScorecardPanel';
 import { ThreatsPanel } from './ThreatsPanel';
 import { ErrorBoundary } from './ui';
 
-type Tab = 'fleet' | 'threats' | 'alerts' | 'score';
+export type Tab = 'fleet' | 'threats' | 'decisions' | 'alerts' | 'score';
 
-export const RightPanel: React.FC = () => {
-  const [tab, setTab] = useState<Tab>('fleet');
+export const RightPanel: React.FC<{ className?: string }> = ({ className = '' }) => {
+  const tab = useOrbitalStore(s => s.rightTab);
+  const setTab = useOrbitalStore(s => s.setRightTab);
+  const pending = useOrbitalStore(selectPendingProposals).length;
   const threats = useOrbitalStore(selectOpenThreatCounts);
   const satCount = useOrbitalStore(s => s.satellites?.length ?? 0);
   const alertCount = useOrbitalStore(s => s.events.filter(e => e.level === 'crit' || e.level === 'warn').length);
@@ -21,20 +24,22 @@ export const RightPanel: React.FC = () => {
   const tabs: { key: Tab; label: string; badge?: number; tone?: string }[] = [
     { key: 'fleet', label: 'Fleet', badge: satCount || undefined },
     { key: 'threats', label: 'Threats', badge: threats.CRITICAL + threats.WARNING || undefined, tone: threats.CRITICAL ? COLORS.crit : COLORS.warn },
+    { key: 'decisions', label: 'Decisions', badge: pending || undefined, tone: COLORS.warn },
     { key: 'alerts', label: 'Alerts', badge: alertCount || undefined, tone: COLORS.warn },
     { key: 'score', label: 'Score' },
   ];
 
   return (
-    <aside className="w-[360px] flex-shrink-0 bg-panel border-l border-line flex flex-col min-h-0">
+    <aside className={`w-full lg:w-[360px] flex-shrink-0 bg-panel lg:border-l border-line flex flex-col min-h-0 ${className}`} aria-label="Operations">
       <nav className="flex border-b border-line flex-shrink-0" role="tablist">
         {tabs.map(t => (
           <button
             key={t.key}
             role="tab"
             aria-selected={tab === t.key}
+            aria-controls={`tab-${t.key}`}
             onClick={() => setTab(t.key)}
-            className={`flex-1 flex items-center justify-center gap-1.5 h-10 text-[13px] border-b-2 -mb-px transition-colors ${
+            className={`flex-1 flex items-center justify-center gap-1 h-10 text-[12.5px] border-b-2 -mb-px transition-colors ${
               tab === t.key ? 'text-ink border-accent font-medium' : 'text-muted border-transparent hover:text-ink'
             }`}
           >
@@ -48,10 +53,11 @@ export const RightPanel: React.FC = () => {
           </button>
         ))}
       </nav>
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0" role="tabpanel" id={`tab-${tab}`}>
         <ErrorBoundary name={tabs.find(t => t.key === tab)!.label}>
           {tab === 'fleet' && <FleetPanel />}
           {tab === 'threats' && <ThreatsPanel />}
+          {tab === 'decisions' && <DecisionsPanel />}
           {tab === 'alerts' && <AlertsPanel />}
           {tab === 'score' && <ScorecardPanel />}
         </ErrorBoundary>

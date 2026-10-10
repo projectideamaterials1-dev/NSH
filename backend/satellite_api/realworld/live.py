@@ -27,7 +27,7 @@ import numpy as np
 from sgp4.api import SatrecArray, jday
 
 from satellite_api.acm.conjunctions import _approach_angle_deg
-from satellite_api.physics_engine import propagate_states
+from satellite_api.physics_engine import propagate_fast
 from satellite_api.realworld import catalog
 from satellite_api.realworld.catalog import CatalogError, CatalogObject
 from satellite_api.timeutils import iso_z
@@ -395,7 +395,7 @@ class RealWorldService:
                     # instead of leaving them frozen while the clock moves on.
                     failed = idx[~ok]
                     work = state.sat_buffer[failed].copy()
-                    propagate_states(work, dt)
+                    propagate_fast(work, dt)
                     state.sat_buffer[failed] = work
             if debs:
                 vecs, ok = catalog.propagate([o for _, o in debs], when)
@@ -405,7 +405,7 @@ class RealWorldService:
                 if dt > 1e-6 and (~ok).any():
                     failed = idx[~ok]
                     work = state.debris_buffer[failed].copy()
-                    propagate_states(work, dt)
+                    propagate_fast(work, dt)
                     state.debris_buffer[failed] = work
             state.last_telemetry_ts = when.timestamp()
             state.telemetry_version += 1
@@ -443,7 +443,7 @@ class RealWorldService:
         rows = np.array([i for i in range(count) if i not in skip], dtype=np.int64)
         if len(rows):
             work = buffer[rows].copy()
-            propagate_states(work, dt)
+            propagate_fast(work, dt)
             buffer[rows] = work
 
     async def refresh(self, force: bool = False) -> dict:

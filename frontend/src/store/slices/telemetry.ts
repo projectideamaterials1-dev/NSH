@@ -1,11 +1,14 @@
 // src/store/slices/telemetry.ts
 // Snapshot ingestion (stream/poll), polling lifecycle, selection, replay cursor and view.
 
-import { apiFetch } from '../../api/http';
+import { apiFetch, apiJson } from '../../api/http';
 import telemetryClient from '../../api/telemetryClient';
 import { snapshotToBinaryBuffers } from '../snapshotBuffers';
 import { CONSTANTS, appendTrails, pushReplayFrame, toReplayFrame } from '../frames';
-import type { GetState, SetState, TelemetryActions } from '../types';
+import type { GetState, Prediction, ReplayFrame, SetState, TelemetryActions } from '../types';
+
+const PREDICT_HORIZON_S = 3 * 3600;
+const PREDICT_STEP_S = 300;
 
 export const createTelemetryActions = (set: SetState, get: GetState): TelemetryActions => ({
   ingestFrame: (timestamp, satellites, debris, parseTimeMs, latencyMs) => {
@@ -140,12 +143,68 @@ export const createTelemetryActions = (set: SetState, get: GetState): TelemetryA
   setReplayIndex: (index) => {
     const { history } = get();
     if (index === null || history.length === 0) {
-      set({ replayIndex: null });
+      set({ replayIndex: null, predictIndex: null });
       return;
     }
     const clamped = Math.max(0, Math.min(history.length - 1, index));
-    set({ replayIndex: clamped === history.length - 1 && index >= history.length - 1 ? null : clamped });
+    set({ replayIndex: clamped === history.length - 1 && index >= history.length - 1 ? null : clamped, predictIndex: null });
+  },
+
+  fetchPrediction: async () => {
+    if (get().predicting) return;
+    set({ predicting: true });
+    try {
+      const data = await apiJson<{ start: string; step_s: number; satellite_ids: string[];
+        frames: { timestamp: string; positions: [number, number, number][] }[]; events: Prediction['events'] }>(
+        `/api/predict?horizon_s=${PREDICT_HORIZON_S}&step_s=${PREDICT_STEP_S}`);
+      const live = get().satellites;
+      const fuelById = new Map<string, number>();
+      const statusById = new Map<string, string>();
+      if (live) {
+        for (let i = 0; i < live.length; i++) {
+          fuelById.set(live.ids[i], live.fuels[i]);
+          statusById.set(live.ids[i], live.statuses[i]);
+        }
+      }
+      const ids = data.satellite_ids;
+      const satFuels = Float32Array.from(ids, id => fuelById.get(id) ?? 0);
+      const satStatuses = ids.map(id => statusById.get(id) ?? 'NOMINAL');
+      const frames: ReplayFrame[] = data.frames.map(f => {
+        const satPositions = new Float32Array(ids.length * 3);
+        f.positions.forEach(([lon, lat, altKm], i) => {
+          satPositions[i * 3] = lon;
+          satPositions[i * 3 + 1] = lat;
+          satPositions[i * 3 + 2] = altKm * 1000;
+        });
+        return { timestamp: f.timestamp, satIds: ids, satPositions, satFuels, satStatuses,
+                 debrisPositions: new Float32Array(0), debrisLength: 0, predicted: true };
+      });
+      const { predictIndex } = get();
+      set({
+        prediction: { start: data.start, step_s: data.step_s, frames, events: data.events, fetchedAt: Date.now() },
+        predictIndex: predictIndex === null ? null : Math.min(predictIndex, frames.length - 1),
+      });
+    } catch {
+      set({ prediction: null, predictIndex: null });
+    } finally {
+      set({ predicting: false });
+    }
+  },
+
+  setPredictIndex: (index) => {
+    const frames = get().prediction?.frames.length ?? 0;
+    if (index === null || frames === 0) {
+      set({ predictIndex: null });
+      return;
+    }
+    set({ predictIndex: Math.max(0, Math.min(frames - 1, index)), replayIndex: null });
   },
 
   setViewMode: (mode) => set({ viewMode: mode }),
+
+  setRightTab: (tab) => set({ rightTab: tab }),
+
+  togglePerfHud: () => set(s => ({ showPerfHud: !s.showPerfHud })),
+
+  setShowShortcuts: (open) => set({ showShortcuts: open }),
 });

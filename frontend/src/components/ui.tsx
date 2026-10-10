@@ -1,7 +1,7 @@
 // src/components/ui.tsx
 // Small, consistent UI primitives shared by all dashboard panels.
 
-import React, { Component, ErrorInfo, ReactNode, useEffect } from 'react';
+import React, { Component, ErrorInfo, ReactNode, useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { STATUS_META, statusMeta } from '../lib/format';
 
@@ -64,6 +64,9 @@ export const Button: React.FC<
   );
 };
 
+let modalSeq = 0;
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export const Modal: React.FC<{
   title: ReactNode;
   subtitle?: ReactNode;
@@ -71,29 +74,57 @@ export const Modal: React.FC<{
   width?: number;
   children: ReactNode;
 }> = ({ title, subtitle, onClose, width = 720, children }) => {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [titleId] = useState(() => `modal-title-${++modalSeq}`);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // Escape closes; Tab stays inside the dialog; focus moves in on open and back to the opener on close.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const opener = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    (dialog?.querySelector<HTMLElement>(FOCUSABLE) ?? dialog)?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !dialog) return;
+      const items = [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(el => el.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      opener?.focus?.();
+    };
+  }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-2 sm:p-6" onClick={onClose}>
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        className="bg-panel border border-line rounded-xl shadow-2xl flex flex-col max-h-[88vh] w-full"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="bg-panel border border-line rounded-xl shadow-2xl flex flex-col max-h-[94dvh] sm:max-h-[88vh] w-full focus:outline-none"
         style={{ maxWidth: width }}
         onClick={e => e.stopPropagation()}
       >
-        <header className="flex items-start justify-between gap-4 px-5 py-4 border-b border-line">
-          <div>
-            <h3 className="text-base font-semibold text-ink">{title}</h3>
+        <header className="flex items-start justify-between gap-4 px-4 sm:px-5 py-4 border-b border-line">
+          <div className="min-w-0">
+            <h3 id={titleId} className="text-base font-semibold text-ink">{title}</h3>
             {subtitle && <p className="text-[13px] text-muted mt-0.5">{subtitle}</p>}
           </div>
           <Button variant="ghost" onClick={onClose} aria-label="Close" icon={<X className="w-4 h-4" />} />
         </header>
-        <div className="overflow-y-auto p-5">{children}</div>
+        <div className="overflow-y-auto p-4 sm:p-5">{children}</div>
       </div>
     </div>
   );

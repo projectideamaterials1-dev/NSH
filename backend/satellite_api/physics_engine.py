@@ -213,6 +213,20 @@ def drag_settings() -> dict:
     return {**_drag, "native_support": _native_set_drag is not None}
 
 
+def propagate_fast(states: np.ndarray, dt_seconds: float) -> None:
+    """In-place propagation through the C++ engine when it supports the active force model
+    (no conjunction search), the NumPy integrator otherwise. For bulk look-ahead work."""
+    if dt_seconds <= 0.0 or len(states) == 0:
+        return
+    if _native is not None and (_native_set_drag is not None or not _drag["enabled"]):
+        work = states if states.flags.c_contiguous and states.dtype == np.float64 else np.ascontiguousarray(states, dtype=np.float64)
+        _native(np.zeros((0, 6)), work, 0.0, dt_seconds)
+        if work is not states:
+            states[...] = work
+    else:
+        propagate_states(states, dt_seconds)
+
+
 def process_conjunctions(sat_states: np.ndarray, debris_states: np.ndarray,
                          threshold: float, dt_seconds: float):
     # A native build without drag support would silently drop drag; use NumPy then.

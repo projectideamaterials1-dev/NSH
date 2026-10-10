@@ -428,7 +428,7 @@ export const DeckGLMap: React.FC = () => {
       )}
 
       {/* Map tools */}
-      <div className="absolute top-3 right-3 flex gap-2">
+      <div className="absolute top-3 right-3 flex flex-wrap justify-end gap-2 max-w-[calc(100%-1.5rem)]">
         {selected && (
           <Button variant={follow ? 'primary' : 'secondary'} onClick={() => setFollow(f => !f)}
             icon={<Crosshair className="w-4 h-4" />} className="shadow-lg">
@@ -462,9 +462,13 @@ export const DeckGLMap: React.FC = () => {
 
       {/* Replay banner */}
       {replay && (
-        <div className="absolute top-3 left-3 flex items-center gap-3 bg-warn/15 border border-warn/50 rounded-lg px-3 py-2 shadow-lg">
+        <div className="absolute top-14 xl:top-3 left-3 flex items-center gap-3 bg-warn/15 border border-warn/50 rounded-lg px-3 py-2 shadow-lg" role="status">
           <History className="w-4 h-4 text-warn" />
-          <span className="text-[13px] text-ink">Replay · <span className="tabular">{formatUtcTime(replay.timestamp)}</span> UTC</span>
+          <span className="text-[13px] text-ink">
+            <span title={replay.predicted ? 'Satellites only (no debris), with every queued burn applied' : undefined}>
+              {replay.predicted ? 'Predicted' : 'Replay'} · <span className="tabular">{formatUtcTime(replay.timestamp)}</span> UTC
+            </span>
+          </span>
           <Button variant="primary" className="h-7" onClick={() => setReplayIndex(null)}>Back to live</Button>
         </div>
       )}

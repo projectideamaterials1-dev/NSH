@@ -108,4 +108,27 @@ test.describe.serial('mission control dashboard', () => {
     await page.getByRole('button', { name: '+60 s' }).click();
     await expect(clock).not.toHaveText(before ?? '');
   });
+
+  test('decision log, shortcuts help, predicted timeline and certification notice', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByRole('button', { name: /SAT-E2E-00/ }).first()).toBeVisible();
+    await expect(page.getByRole('note').getByText(/not certified SSA/)).toBeVisible();
+
+    await page.getByRole('tab', { name: /^Decisions/ }).click();
+    await expect(page.getByText('Command authority:')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Keyboard shortcuts' }).click();
+    const help = page.getByRole('dialog');
+    await expect(help.getByText('Scrub forward one frame, into predictions (Shift: 10)')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(help).toHaveCount(0);
+
+    // Scrubbing past "now" shows a predicted frame from /api/predict.
+    const slider = page.getByRole('slider', { name: /Time position/ });
+    await slider.focus();
+    await page.keyboard.press('End');
+    await expect(page.getByRole('status').getByText(/Predicted/)).toBeVisible();
+    await page.getByRole('button', { name: 'Back to live' }).first().click();
+    await expect(page.getByRole('status').getByText(/Predicted/)).toHaveCount(0);
+  });
 });

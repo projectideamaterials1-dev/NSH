@@ -48,3 +48,16 @@ describe('format helpers', () => {
     expect(maneuverMeta('CUSTOM_THING').label).toBe('custom thing');
   });
 });
+
+describe('collision probability formatting', () => {
+  it('formats Pc compactly and flags actionable encounters', async () => {
+    const { formatPc, needsAction } = await import('../lib/format');
+    expect(formatPc(3.24e-4)).toBe('3.2e-4');
+    expect(formatPc(0.0123)).toBe('0.012');
+    expect(formatPc(1e-12)).toBe('<1e-10');
+    expect(formatPc(undefined)).toBe('—');
+    expect(needsAction({ miss_distance_km: 0.1 })).toBe(true);
+    expect(needsAction({ miss_distance_km: 0.8, pc: 2e-4 })).toBe(true);
+    expect(needsAction({ miss_distance_km: 0.8, pc: 2e-5 })).toBe(false);
+  });
+});

@@ -25,7 +25,7 @@ import numpy as np
 from satellite_api.acm.collision_probability import assess, rtn_basis
 from satellite_api.acm.conjunctions import annotate_pc, closest_approach, needs_action, screen
 from satellite_api.config import CONFIG
-from satellite_api.physics_engine import MU_EARTH, process_conjunctions, propagate_states
+from satellite_api.physics_engine import MU_EARTH, propagate_fast, propagate_states
 
 SHELL_MARGIN_KM = 40.0        # radial slack for the orbit-shell prefilter (burn-induced altitude change)
 TRADE_WINDOW_S = 600.0        # fine-search window around the nominal TCA
@@ -46,14 +46,8 @@ def _shell(states: np.ndarray):
 
 
 def _carry(states: np.ndarray, dt: float) -> None:
-    """Propagates rows in place. Uses the engine entry point (C++ when built) with a zero
-    threshold - the row slices are contiguous views, so the engine writes straight through."""
-    if dt <= 0 or len(states) == 0:
-        return
-    if len(states) > 1:
-        process_conjunctions(states[:1], states[1:], 0.0, dt)
-    else:
-        propagate_states(states, dt)
+    """Propagates rows in place (C++ engine when built)."""
+    propagate_fast(states, dt)
 
 
 def verify_sequence(sat_state: np.ndarray, sat_id: str, burns: Sequence[dict], objects: np.ndarray,

@@ -6,6 +6,7 @@ import { WifiOff } from 'lucide-react';
 import { Header } from './components/Header';
 import { DashboardLayout } from './components/DashboardLayout';
 import { DataSourcesModal } from './components/DataSourcesModal';
+import { CertificationNotice, PerfHud, ShortcutsHelp, useKeyboardShortcuts } from './components/ShellExtras';
 import useOrbitalStore from './store/useOrbitalStore';
 
 const ConnectionBanner: React.FC = () => {
@@ -29,21 +30,28 @@ const App: React.FC = () => {
   const stopAutoSync = useOrbitalStore(s => s.stopAutoSync);
   const dataSourcesOpen = useOrbitalStore(s => s.dataSourcesOpen);
   const setDataSourcesOpen = useOrbitalStore(s => s.setDataSourcesOpen);
+  const fetchPhysics = useOrbitalStore(s => s.fetchPhysics);
+  useKeyboardShortcuts();
 
   useEffect(() => {
     startAutoSync(2000);
+    fetchPhysics();
     return () => {
       stopAutoSync();
       useOrbitalStore.getState().setSimulationRunning(false);
     };
-  }, [startAutoSync, stopAutoSync]);
+  }, [startAutoSync, stopAutoSync, fetchPhysics]);
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-canvas text-ink overflow-hidden min-w-[1200px]">
+    <div className="h-[100dvh] w-screen flex flex-col bg-canvas text-ink overflow-hidden">
+      <a href="#main-view" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:px-3 focus:py-2 focus:bg-accent focus:text-[#04121f] focus:rounded-md">Skip to map</a>
       <Header />
       <ConnectionBanner />
+      <CertificationNotice />
       <DashboardLayout />
       {dataSourcesOpen && <DataSourcesModal onClose={() => setDataSourcesOpen(false)} />}
+      <ShortcutsHelp />
+      <PerfHud />
     </div>
   );
 };
