@@ -131,15 +131,9 @@ jobs:
       - name: Secret scan (gitleaks)
         run: |
           docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.21.2 detect --source /repo --redact --verbose --exit-code 1
-      - name: Dependency vulnerability scan (Trivy, Python + npm lockfiles)
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
+      - name: Dependency vulnerability scan (Trivy, Python + npm lockfiles; exceptions in .trivyignore)
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo aquasec/trivy:0.57.1 fs --scanners vuln             --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 .
 
   e2e:
     runs-on: ubuntu-latest
@@ -201,12 +195,8 @@ jobs:
           load: true
           tags: ${{ steps.image.outputs.name }}:${{ github.sha }}
       - name: Scan image (Trivy) before publishing
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: ${{ steps.image.outputs.name }}:${{ github.sha }}
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/.trivyignore:/.trivyignore:ro"             aquasec/trivy:0.57.1 image --ignorefile /.trivyignore --severity HIGH,CRITICAL --ignore-unfixed             --exit-code 1 "${{ steps.image.outputs.name }}:${{ github.sha }}"
       - name: Push image
         uses: docker/build-push-action@v5
         with:
