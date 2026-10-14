@@ -6,6 +6,8 @@ import { WifiOff } from 'lucide-react';
 import { Header } from './components/Header';
 import { DashboardLayout } from './components/DashboardLayout';
 import { DataSourcesModal } from './components/DataSourcesModal';
+import { AssistantPanel } from './components/AssistantPanel';
+import { ErrorBoundary } from './components/ui';
 import { CertificationNotice, PerfHud, ShortcutsHelp, useKeyboardShortcuts } from './components/ShellExtras';
 import useOrbitalStore from './store/useOrbitalStore';
 
@@ -49,6 +51,7 @@ const App: React.FC = () => {
       <ConnectionBanner />
       <CertificationNotice />
       <DashboardLayout />
+      <ErrorBoundary name="Assistant"><AssistantPanel /></ErrorBoundary>
       {dataSourcesOpen && <DataSourcesModal onClose={() => setDataSourcesOpen(false)} />}
       <ShortcutsHelp />
       <PerfHud />

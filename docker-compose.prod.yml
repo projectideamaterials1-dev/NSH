@@ -73,6 +73,14 @@ services:
       # Optional Space-Track account: public CDMs as an authoritative Pc/miss cross-check.
       - SPACETRACK_IDENTITY=${SPACETRACK_IDENTITY:-}
       - SPACETRACK_PASSWORD=${SPACETRACK_PASSWORD:-}
+      # Operator assistant (POST /api/assistant/chat): a local LLM served by Ollama on the host.
+      - ASSISTANT_OLLAMA_URL=${ASSISTANT_OLLAMA_URL:-http://host.docker.internal:11434}
+      - ASSISTANT_MODEL=${ASSISTANT_MODEL:-qwen3:8b}
+      - ASSISTANT_KEEP_ALIVE=${ASSISTANT_KEEP_ALIVE:-2m}
+      - ASSISTANT_NUM_CTX=${ASSISTANT_NUM_CTX:-8192}
+    # host.docker.internal resolves on Docker Desktop already; this mapping adds it on Linux.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # Runs as uid/gid 1000 (non-root, see Dockerfile) - the bind-mounted host directory must be
     # writable by that uid, e.g. `mkdir -p backend/data && chown -R 1000:1000 backend/data` (or
     # `chmod -R o+rwX backend/data` if you can't chown on your host) before first start.
@@ -272,6 +280,8 @@ services:
     restart: unless-stopped
     environment:
       # Left unset, Grafana starts with admin/admin and forces a new password at first login.
+      # Read only on first start (empty grafana_data volume); later changes go through the UI or API.
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/acm-overview.json

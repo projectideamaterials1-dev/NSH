@@ -216,11 +216,16 @@ def screen(sat_states: np.ndarray, debris_states: np.ndarray, sat_ids: Sequence[
     # Bring every pair to shortly before its first entry into the warning sphere, then find the true
     # TCA. Large batches run on the GPU (one thread per pair) when one is available.
     t_start = np.maximum(0.0, cands[:, 4] - REFINE_LEAD_S)
+    refined = None
     if _refine_on_gpu(k, horizon_s):
         from satellite_api import gpu_engine
-        from satellite_api.physics_engine import _drag
-        best_d, best_t, best_A, best_B = gpu_engine.refine_pairs(A, B, t_start, _drag, bal_a, bal_b,
-                                                                 REFINE_WINDOW_S, REFINE_STEP_S)
+        from satellite_api.physics_engine import _drag, _gpu_failed
+        try:   # refine_pairs only reads A and B, so the CPU path below can redo it after a GPU failure
+            refined = gpu_engine.refine_pairs(A, B, t_start, _drag, bal_a, bal_b, REFINE_WINDOW_S, REFINE_STEP_S)
+        except Exception as e:
+            _gpu_failed(e)
+    if refined is not None:
+        best_d, best_t, best_A, best_B = refined
     else:
         order = np.argsort(t_start)
         t_now = 0.0

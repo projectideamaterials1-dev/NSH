@@ -105,6 +105,22 @@ These are burns that were queued but had no recorded outcome when the process st
 4. If the regression started with a release, compare the benchmark job
    (`tests/benchmark/test_screening_latency.py`) between tags.
 
+## Screening failing
+
+**Signal:** `ScreeningFailing` (critical); `/health` shows `"status": "degraded"` and
+`screening.consecutive_failures` ≥ 3 with the error in `screening.last_error`.
+
+1. Read `screening.last_error`. A CUDA error (`cudaErrorUnknown`, `cudaErrorLaunchFailure`) means
+   the GPU failed at runtime, usually a Windows display-driver reset ("nvlddmkm stopped responding"
+   in the System event log), often from GPU memory pressure: Ollama and the screening engine share
+   the card. The engine switches itself to the CPU after the first such failure, so this alert
+   firing on a CUDA error means the fallback did not take: restart the backend.
+2. If `nvidia-smi` says "GPU is lost", the card needs a reboot. Until then run the backend on the
+   CPU without the GPU reservation (the GPU compose file cannot start a container with a lost GPU):
+   `$env:BACKEND_IMAGE='nsh-backend:gpu'; $env:ACM_ENGINE='cpp'; docker compose -f docker-compose.prod.yml --profile monitoring up -d --no-build backend`
+3. Any other error: the full traceback is in the backend log (`Conjunction screening cycle failed`).
+4. Recovery is logged as an event ("Conjunction screening recovered after N failed cycles").
+
 ## Critical conjunction not mitigated
 
 **Signal:** `CriticalConjunctionOpen` for 10 minutes.

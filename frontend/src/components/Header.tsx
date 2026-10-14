@@ -2,8 +2,9 @@
 // Top bar: product, simulation clock, mission KPIs, threat level, autopilot, settings and link status.
 
 import React, { useMemo, useState } from 'react';
-import { Bot, Keyboard, Orbit, Settings, ShieldAlert } from 'lucide-react';
+import { Bot, Keyboard, MessageSquare, Orbit, Settings, ShieldAlert } from 'lucide-react';
 import useOrbitalStore, { selectOpenThreatCounts } from '../store/useOrbitalStore';
+import useAssistantStore from '../store/assistant';
 import { formatCount, formatUtcDate, formatUtcTime, COLORS } from '../lib/format';
 import { SettingsModal } from './SettingsModal';
 import { Button } from './ui';
@@ -114,6 +115,8 @@ export const Header: React.FC = () => {
   const spaceWeather = useOrbitalStore(s => s.spaceWeather);
   const setShowShortcuts = useOrbitalStore(s => s.setShowShortcuts);
   const [showSettings, setShowSettings] = useState(false);
+  const assistantOpen = useAssistantStore(s => s.open);
+  const setAssistantOpen = useAssistantStore(s => s.setOpen);
 
   const fleet = useMemo(() => {
     if (!satellites || satellites.length === 0) return null;
@@ -186,7 +189,12 @@ export const Header: React.FC = () => {
         )}
         <div className="hidden md:flex items-stretch"><ThreatLevel /></div>
         <div className="hidden sm:flex items-stretch"><AutopilotToggle /></div>
-        <div className="flex items-center px-2 border-l border-line">
+        <div className="flex items-center gap-1 px-2 border-l border-line">
+          <Button variant={assistantOpen ? 'secondary' : 'ghost'} onClick={() => setAssistantOpen(!assistantOpen)}
+            aria-label="Assistant" aria-pressed={assistantOpen} title="Ask the assistant about the mission"
+            icon={<MessageSquare className="w-4 h-4" />} className={assistantOpen ? 'text-accent' : ''}>
+            <span className="hidden xl:inline">Assistant</span>
+          </Button>
           <Button variant="ghost" onClick={() => setShowShortcuts(true)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"
             icon={<Keyboard className="w-4 h-4" />} className="hidden md:inline-flex" />
           <Button variant="ghost" onClick={() => setShowSettings(true)} aria-label="Settings" title="Simulation settings"

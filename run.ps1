@@ -1,4 +1,4 @@
-param(
+<#  #>param(
     [switch]$Demo,
     [switch]$Live,
     [ValidateRange(1, 500)][int]$Satellites = 0,
@@ -29,7 +29,11 @@ Write-Host "🛰️ Starting Crimson Nebula..." -ForegroundColor Cyan
 # 1. Ensure Python venv exists
 if (-not (Test-Path $PythonExe)) {
     Write-Host "🐍 Creating isolated backend virtualenv ($VenvDir)..." -ForegroundColor Yellow
-    python -m venv $VenvDir
+    # Prefer the project-local interpreter (tools\python, Python 3.11.9 from the NuGet "python" package)
+    # so the venv - and pip's download cache - stay inside the project instead of the user profile.
+    $BasePython = Join-Path $RootDir "tools\python\python.exe"
+    if (Test-Path $BasePython) { & $BasePython -m venv $VenvDir } else { python -m venv $VenvDir }
+    Set-Content (Join-Path $VenvDir "pip.ini") "[global]`ncache-dir = $(Join-Path $RootDir '.cache\pip')" -Encoding ascii
 }
 
 # 2. Check dependencies

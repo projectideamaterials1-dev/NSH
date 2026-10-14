@@ -16,7 +16,7 @@ from satellite_api.middleware.auth import APIKeyMiddleware, LeaderGateMiddleware
 setup_logging()
 
 # ─── Modular Routers ─────────────────────────────────────────────────────────
-from satellite_api.routers import telemetry, simulation, visualization, maneuvers, maneuver_history, export, operations, realworld
+from satellite_api.routers import telemetry, simulation, visualization, maneuvers, maneuver_history, export, operations, realworld, assistant
 # ─── Global State Manager ────────────────────────────────────────────────────
 from satellite_api.state import get_state
 from satellite_api.state_redis import RedisStateManager
@@ -211,6 +211,7 @@ app.include_router(maneuver_history.router, tags=["Maneuvers"])
 app.include_router(export.router, tags=["Export"])
 app.include_router(operations.router)
 app.include_router(realworld.router)
+app.include_router(assistant.router)
 observability.install(app)
 
 # ============================================================================
@@ -222,8 +223,12 @@ def _redis_mode():
 
 
 def _status():
+    service = getattr(app.state, "conjunction_service", None)
+    screening = service.health() if service is not None else None
     return {
-        "status": "online",
+        # "degraded": up, but conjunction screening keeps failing - the fleet is not being protected.
+        "status": "degraded" if screening and not screening["ok"] else "online",
+        "screening": screening,
         "system": "Autonomous Constellation Manager API v1.0",
         "engine": ENGINE_NAME,
         "gpu": engine_info()["gpu"],

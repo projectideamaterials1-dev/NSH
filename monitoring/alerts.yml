@@ -47,6 +47,13 @@ groups:
         annotations:
           summary: "Conjunction screening takes longer than its cadence; refinement is being bounded"
           runbook: "docs/RUNBOOKS.md#screening-latency-regression"
+      - alert: ScreeningFailing
+        expr: max(acm_screen_consecutive_failures) >= 3
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Conjunction screening keeps failing: no new conjunctions are being detected"
+          runbook: "docs/RUNBOOKS.md#screening-failing"
       - alert: ScreeningSlow
         expr: histogram_quantile(0.9, sum by (le) (rate(acm_screen_duration_seconds_bucket[30m]))) > 60
         for: 15m

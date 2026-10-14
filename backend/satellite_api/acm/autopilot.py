@@ -54,6 +54,7 @@ EVASION_TYPES = ("PHASING_PROGRADE", "PHASING_RETROGRADE", "RADIAL_SHUNT")
 PLAN_INTERVAL_S = 20.0          # sim seconds between planner-only passes
 REJECT_EVENT_THROTTLE_S = 600.0  # repeat an identical rejection event at most this often (sim seconds)
 DURATION_HISTORY_LEN = 20       # rolling window of recent screen durations, for /api/metrics
+SCREEN_FAILING_AFTER = 3        # consecutive failed screening cycles before /health reports "degraded"
 # Once a screen has taken as long as the cadence it's meant to run at, the loop is provably
 # falling behind (the next screen is already "due" before this one finished). From then on,
 # bound the (expensive) refinement pass to priority + closest candidates - see conjunctions.screen -
@@ -488,6 +489,11 @@ class ConjunctionService:
         self.refiner = None   # realworld.live.Sgp4Refiner once a real catalog is loaded
         self._duration_history: deque = deque(maxlen=DURATION_HISTORY_LEN)
         self._falling_behind = False
+        # Loop health for /health and /metrics: a cycle that keeps raising (e.g. a GPU lost to a driver
+        # reset) must not look like a quiet sky.
+        self.consecutive_failures = 0
+        self.last_error: Optional[str] = None
+        self.last_success_wall: Optional[float] = None
 
     @property
     def _cycle_lock(self) -> asyncio.Lock:
@@ -616,17 +622,41 @@ class ConjunctionService:
                 self._last_plan_ts = state.now_ts
                 return summary
 
+    def health(self) -> dict:
+        return {"ok": self.consecutive_failures < SCREEN_FAILING_AFTER,
+                "consecutive_failures": self.consecutive_failures, "last_error": self.last_error,
+                "last_success_age_s": None if self.last_success_wall is None
+                else round(time.time() - self.last_success_wall, 1)}
+
+    async def _record_cycle(self, error: Optional[Exception]):
+        state = self.state
+        if error is None:
+            if self.consecutive_failures >= SCREEN_FAILING_AFTER:
+                async with state.lock:
+                    state.emit("ok", "system", f"Conjunction screening recovered after "
+                               f"{self.consecutive_failures} failed cycles.")
+            self.consecutive_failures, self.last_success_wall = 0, time.time()
+            return
+        self.consecutive_failures += 1
+        self.last_error = f"{type(error).__name__}: {error}"[:300]
+        if self.consecutive_failures == SCREEN_FAILING_AFTER:
+            async with state.lock:
+                state.emit("crit", "system", f"Conjunction screening is failing ({self.consecutive_failures} cycles "
+                           f"in a row): {self.last_error}. No new conjunctions are being detected.")
+
     async def _loop(self):
         while True:
             try:
                 if self.due():
                     await self.run_cycle()
+                    await self._record_cycle(None)
                 elif self.plan_due():
                     await self.plan_cycle()
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 logger.error(f"Conjunction screening cycle failed: {e}", exc_info=True)
+                await self._record_cycle(e)
                 await asyncio.sleep(5.0)
             await asyncio.sleep(0.5)
 

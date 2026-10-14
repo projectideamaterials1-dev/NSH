@@ -231,6 +231,11 @@ def _gpu_for(n_objects: int, dt_seconds: float) -> bool:
     return _ENGINE_MODE == "cuda" or (n_objects >= GPU_MIN_OBJECTS and n_objects * dt_seconds >= GPU_MIN_WORK)
 
 
+def _gpu_failed(e: Exception) -> None:
+    from satellite_api import gpu_engine
+    gpu_engine.disable(f"runtime failure ({type(e).__name__}: {e})")
+
+
 def engine_info() -> dict:
     """What runs where: CPU engine, and the GPU (if any) used for large calls."""
     from satellite_api import gpu_engine
@@ -262,8 +267,13 @@ def propagate_fast(states: np.ndarray, dt_seconds: float, ballistic=None) -> Non
         return
     if _gpu_for(len(states), dt_seconds):
         from satellite_api import gpu_engine
-        gpu_engine.propagate(states, dt_seconds, _drag, ballistic)
-        return
+        backup = states.copy()
+        try:
+            gpu_engine.propagate(states, dt_seconds, _drag, ballistic)
+            return
+        except Exception as e:      # the GPU died mid-run: restore the input and redo it on the CPU
+            states[...] = backup
+            _gpu_failed(e)
     if _native is not None and (_native_set_drag is not None or not _drag["enabled"]):
         work = states if states.flags.c_contiguous and states.dtype == np.float64 else np.ascontiguousarray(states, dtype=np.float64)
         _native(np.zeros((0, 6)), work, 0.0, dt_seconds, None, _native_ballistic(ballistic))
@@ -288,8 +298,13 @@ def process_conjunctions(sat_states: np.ndarray, debris_states: np.ndarray,
     """Propagates both arrays in place (optionally with per-object Cd*A/m) and returns CCD hits."""
     if _gpu_for(len(sat_states) + len(debris_states), dt_seconds):
         from satellite_api import gpu_engine
-        return gpu_engine.process_conjunctions(sat_states, debris_states, threshold, dt_seconds, _drag,
-                                               sat_ballistic, debris_ballistic)
+        backup = sat_states.copy(), debris_states.copy()
+        try:
+            return gpu_engine.process_conjunctions(sat_states, debris_states, threshold, dt_seconds, _drag,
+                                                   sat_ballistic, debris_ballistic)
+        except Exception as e:      # the arrays may already be written back: restore before the CPU retry
+            sat_states[...], debris_states[...] = backup
+            _gpu_failed(e)
     # A native build without drag support would silently drop drag; use NumPy then.
     if _native is not None and (_native_set_drag is not None or not _drag["enabled"]):
         if sat_ballistic is None and debris_ballistic is None:

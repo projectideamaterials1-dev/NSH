@@ -315,6 +315,14 @@ def unavailable_reason() -> Optional[str]:
     return _error
 
 
+def disable(reason: str) -> None:
+    """Stops using the GPU for the rest of the process - after a runtime CUDA failure (a driver reset
+    loses the context for good: every later call fails too). Callers fall back to the CPU engine."""
+    global _kernels, _error
+    _kernels, _error = None, reason
+    logger.error(f"CUDA engine disabled: {reason}; using the CPU engine until the backend restarts")
+
+
 def _require():
     if not available():
         raise RuntimeError(f"CUDA engine unavailable: {_error}")

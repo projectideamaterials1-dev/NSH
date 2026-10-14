@@ -111,6 +111,10 @@ class MissionCollector:
         yield gauge("acm_proposals_pending", "Maneuver proposals awaiting an operator",
                     sum(1 for p in proposals.values() if p["status"] == "PENDING"))
 
+        service = getattr(self.app.state, "conjunction_service", None)
+        if service is not None:
+            yield gauge("acm_screen_consecutive_failures", "Screening cycles that failed in a row (0 when healthy)",
+                        service.consecutive_failures)
         screen = state.last_screen or {}
         if screen:
             yield gauge("acm_screen_last_duration_seconds", "Duration of the last screening cycle", screen.get("duration_s", 0))

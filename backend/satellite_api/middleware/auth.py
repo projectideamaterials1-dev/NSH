@@ -8,7 +8,8 @@ the box. Preferred: named users with hashed, expiring keys (middleware/identity.
 scripts/apikeys.py) - the audit trail then names the person. Shared keys are still accepted:
     API_KEYS_OPERATOR=<key1,key2,...>   -> full access: can command maneuvers, change config,
                                             toggle the autopilot, (re)load the catalog, etc.
-    API_KEYS_READONLY=<key1,key2,...>   -> GET-only access (telemetry/snapshot/metrics/archive reads)
+    API_KEYS_READONLY=<key1,key2,...>   -> GET-only access (telemetry/snapshot/metrics/archive reads),
+                                            plus the read-only POSTs in _READ_ONLY_POSTS (assistant chat)
     API_KEY=<secret>                     -> legacy single-secret form, treated as an operator key
 Any configured key is checked with a constant-time comparison against `X-API-Key`. Every
 mutating request and every rejected key is written to the audit trail (audit.py). Enable the
@@ -29,6 +30,13 @@ from satellite_api.middleware.identity import USERS
 
 _MUTATING_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 _DOC_PATHS = ("/docs", "/redoc", "/openapi.json")
+# POSTs that never change state (the body is a query, not a command): open to read-only keys and
+# served by non-leader replicas. The assistant only calls read-only tools (assistant/tools.py).
+_READ_ONLY_POSTS = frozenset({"/api/assistant/chat"})
+
+
+def _is_mutating(request: Request) -> bool:
+    return request.method in _MUTATING_METHODS and request.url.path not in _READ_ONLY_POSTS
 
 
 def _parse_keys(value: str) -> frozenset:
@@ -101,7 +109,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         started = time.monotonic()
         auth_on = bool(self.operator_keys or self.readonly_keys) or self.users.enabled()
-        mutating = request.method in _MUTATING_METHODS
+        mutating = _is_mutating(request)
         if auth_on and _is_protected(request):
             provided = request.headers.get("X-API-Key", "")
             resolved = self._resolve(provided)
@@ -176,7 +184,7 @@ class LeaderGateMiddleware(BaseHTTPMiddleware):
         self._get_state = get_state
 
     async def dispatch(self, request: Request, call_next):
-        if request.method in _MUTATING_METHODS and _is_protected(request):
+        if _is_mutating(request) and _is_protected(request):
             state = self._get_state()
             if getattr(state, "is_leader", True) is False:
                 return JSONResponse(

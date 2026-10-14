@@ -228,3 +228,30 @@ async def test_pending_proposals_and_decisions_survive_a_restart():
         approved = fresh_autopilot.approve(restored, pid, actor="operator:user:alice")
     assert approved["status"] == "APPROVED" and restored.maneuver_queue
     assert fresh_autopilot._proposal_seq >= 1          # new proposals will not reuse restored ids
+
+
+@pytest.mark.asyncio
+async def test_replacing_the_catalog_cancels_queued_burns_in_the_archive(tmp_path):
+    """A replace load (clear_objects) drops the queue; its burns must reach a terminal outcome,
+    or reconcile_on_startup reports them as unreconciled after every later restart."""
+    StateManager._instance = None
+    state = StateManager()
+    archive = MissionArchive(str(tmp_path / "archive.db")).attach(state)
+    await state.update_telemetry_raw([[7000.0, 0, 0, 0, 7.5, 0]], [], ["SAT-1"], [], TS)
+    async with state.lock:
+        for k in range(2):
+            ts = state.now_ts + 600.0 * (k + 1)
+            state.maneuver_queue.append((ts, "SAT-1", 0.0, 0.001, 0.0, f"Q{k}", "PHASING_PROGRADE", "autopilot"))
+            state.notify_pending_maneuver(ts, "SAT-1", 0.0, 0.001, 0.0, f"Q{k}")
+    archive.flush()
+    assert {o["burn_id"] for o in archive.reconcile_on_startup()} == {"Q0", "Q1"}
+
+    async with state.lock:
+        state.clear_objects()
+    archive.flush()
+    assert state.maneuver_queue == []
+    assert archive.reconcile_on_startup() == []
+    cancelled = archive.maneuvers(status="cancelled")
+    assert {m["burn_id"] for m in cancelled} == {"Q0", "Q1"}
+    assert all(m["reason"] == "CATALOG_REPLACED" for m in cancelled)
+    archive.close()

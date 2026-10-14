@@ -1,4 +1,12 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
+
+// Locally, browsers live in the repo (../.cache/ms-playwright, git-ignored), not the user profile on C:.
+// Workers inherit this. CI keeps the default location its `playwright install` step uses. Install with:
+//   $env:PLAYWRIGHT_BROWSERS_PATH = "..\.cache\ms-playwright"; npx playwright install chromium
+if (!process.env.CI) {
+  process.env.PLAYWRIGHT_BROWSERS_PATH ??= fileURLToPath(new URL('../.cache/ms-playwright', import.meta.url));
+}
 
 // Starts an isolated backend (:8010) and Vite dev server (:3010) for the dashboard E2E tests.
 // Locally, `PW_CHANNEL=chrome npm run test:e2e` uses the installed Chrome instead of a downloaded browser.

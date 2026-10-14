@@ -12,6 +12,9 @@ services:
         ENABLE_GPU: "1"
     environment:
       - ACM_ENGINE=${ACM_ENGINE:-auto}
+      # Which GPU the screening engine uses (nvidia-smi UUID or index; .env PHYSICS_GPU). Set it on
+      # multi-GPU hosts to keep the engine off the card running the LLM and the display.
+      - CUDA_VISIBLE_DEVICES=${PHYSICS_GPU:-0}
     deploy:
       resources:
         reservations:

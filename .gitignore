@@ -94,3 +94,14 @@ monitoring/metrics_token
 frontend/test-results/
 frontend/playwright-report/
 backup.env
+
+# Local LLM (Ollama portable build, models, logs) - see scripts/ollama.ps1
+/ollama/
+# Project-local toolchain and caches, kept off C: (tools/python, pip/npm/Playwright caches, Docker disk)
+/tools/
+/.cache/
+/docker/
+frontend/.npmrc
+
+# Runtime logs (gpu-watchdog etc.)
+/logs/

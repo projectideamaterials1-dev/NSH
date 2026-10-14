@@ -178,6 +178,14 @@ class StateManager:
     def clear_objects(self):
         """Removes every tracked object and resets mission counters, keeping the event log, persistence
         listeners and the lock (used when a new catalog replaces the current one). Caller holds the lock."""
+        # Queued burns go with their satellites: record them as cancelled (as remove_satellites does), or the
+        # archive keeps them pending forever and reports them as unreconciled after every restart.
+        dropped = [_unpack_maneuver(m) for m in self.maneuver_queue]
+        for m in dropped:
+            self._record(self._maneuver_dict(m, "cancelled", actor="catalog reload", reason="CATALOG_REPLACED"))
+        if dropped:
+            self.emit("warn", "maneuver", f"{len(dropped)} queued burn(s) cancelled: the catalog was replaced",
+                      burn_ids=[m[5] for m in dropped])
         kept = (self._lock, self._lock_loop, self.listeners, self.events, self.event_seq)
         self._reset()
         self._lock, self._lock_loop, self.listeners, self.events, self.event_seq = kept

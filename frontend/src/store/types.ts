@@ -373,7 +373,9 @@ export interface SimConfigDto {
 }
 
 export interface ManualBurnInput {
-  offset_s: number;
+  /** Seconds after the current simulation time, or an absolute burnTime (ISO UTC) - one of the two. */
+  offset_s?: number;
+  burnTime?: string;
   frame: 'RTN' | 'ECI';
   dv_mps: Record<string, number>;
 }
