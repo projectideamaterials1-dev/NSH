@@ -4,10 +4,13 @@ routers/export.py
 GET /api/export/czml
 Predicted satellite ground tracks in Cesium CZML format.
 """
+import asyncio
+import time
 from datetime import timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
 import numpy as np
 
 from satellite_api.coordinates import convert_states_to_lla
@@ -110,3 +113,75 @@ async def export_czml(
 
     sats = [{"id": sid, "trajectory": tracks[i]} for i, sid in enumerate(ids)]
     return generate_czml(sats, iso_z(start_dt), iso_z(end_dt))
+
+
+# ─── CCSDS OEM ────────────────────────────────────────────────────────────────────────────
+def _oem_epoch(ts: float) -> str:
+    return iso_z(ts)[:-1]          # CCSDS epochs carry no "Z"
+
+
+def build_oem(sat_id: str, state0: np.ndarray, start_ts: float, horizon_s: float, step_s: float,
+              burns: List[tuple], ballistic=None, originator: str = "NSH") -> str:
+    """CCSDS Orbit Ephemeris Message 2.0 (KVN) of one satellite's predicted trajectory, WITH its queued
+    burns applied (ILRS practice: predictions issued before a maneuver contain the post-maneuver arc).
+    Each burn starts a new segment, as CCSDS 502.0-B recommends for velocity discontinuities.
+
+    burns: (burn_ts, dv_eci_kms[3]) in time order, within the horizon."""
+    end_ts = start_ts + horizon_s
+    cuts = [start_ts] + [b[0] for b in burns] + [end_ts]
+    state = np.asarray(state0, dtype=np.float64).reshape(1, 6).copy()
+    lines = ["CCSDS_OEM_VERS = 2.0", f"CREATION_DATE = {_oem_epoch(time.time())}", f"ORIGINATOR = {originator}", ""]
+    t = start_ts
+    for seg in range(len(cuts) - 1):
+        seg_start, seg_end = cuts[seg], cuts[seg + 1]
+        if seg > 0:
+            state[0, 3:] += burns[seg - 1][1]            # the burn at the segment boundary
+        lines += ["META_START", f"OBJECT_NAME = {sat_id}", f"OBJECT_ID = {sat_id}", "CENTER_NAME = EARTH",
+                  "REF_FRAME = TEME", "TIME_SYSTEM = UTC", f"START_TIME = {_oem_epoch(seg_start)}",
+                  f"STOP_TIME = {_oem_epoch(seg_end)}", "META_STOP", ""]
+        if seg == 0:
+            lines.append("COMMENT Predicted by the NSH engine (RK4 + J2 + drag), decision-support fidelity.")
+        else:
+            dv = burns[seg - 1][1] * 1000.0
+            lines.append(f"COMMENT Planned impulsive burn at {_oem_epoch(seg_start)}: dv ECI "
+                         f"[{dv[0]:.4f}, {dv[1]:.4f}, {dv[2]:.4f}] m/s ({np.linalg.norm(dv):.4f} m/s)")
+        samples = [seg_start] + [seg_start + k * step_s for k in range(1, int((seg_end - seg_start) // step_s) + 1)]
+        if samples[-1] < seg_end - 1e-6:
+            samples.append(seg_end)
+        for ts in samples:
+            if ts - t > 1e-9:
+                propagate_fast(state, ts - t, ballistic)
+                t = ts
+            r, v = state[0, :3], state[0, 3:]
+            lines.append(f"{_oem_epoch(ts)} {r[0]:.6f} {r[1]:.6f} {r[2]:.6f} {v[0]:.9f} {v[1]:.9f} {v[2]:.9f}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+@router.get("/api/export/oem/{sat_id}", tags=["Export"], response_class=PlainTextResponse)
+async def export_oem(
+    request: Request, sat_id: str,
+    hours: float = Query(6.0, gt=0, le=72, description="Prediction horizon"),
+    step_seconds: float = Query(60.0, ge=1.0, le=3600.0),
+):
+    """Predicted ephemeris of one satellite, including its queued burns, as a CCSDS OEM (KVN) - the format
+    operators and screening services exchange planned-maneuver trajectories in."""
+    state = request.app.state.orbital_state
+    if not state.is_ready() or state.current_time is None:
+        raise HTTPException(status_code=400, detail="State not initialized")
+    horizon_s = hours * 3600.0
+    if horizon_s / step_seconds > MAX_SAMPLES:
+        raise HTTPException(status_code=422, detail="Too many samples; increase step_seconds")
+    async with state.lock:
+        idx = state.sat_id_to_idx.get(sat_id)
+        if idx is None:
+            raise HTTPException(status_code=404, detail=f"Unknown satellite {sat_id!r}")
+        state0 = state.sat_buffer[idx].copy()
+        start_ts = state.now_ts
+        sat_b, _ = state.ballistic_arrays()
+        ballistic = None if sat_b is None else np.asarray(sat_b, dtype=float)[idx:idx + 1]
+        burns = sorted((float(m[0]), np.array(m[2:5], dtype=float)) for m in state.maneuver_queue
+                       if m[1] == sat_id and start_ts < float(m[0]) < start_ts + horizon_s)
+    text = await asyncio.to_thread(build_oem, sat_id, state0, start_ts, horizon_s, step_seconds, burns, ballistic)
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in sat_id)
+    return PlainTextResponse(text, headers={"Content-Disposition": f'attachment; filename="{safe}.oem"'})

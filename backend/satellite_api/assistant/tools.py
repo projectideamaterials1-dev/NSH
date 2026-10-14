@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 
 MAX_RESULT_CHARS = 12000
 _CDM_FIELDS = ("cdm_id", "satellite_id", "object_id", "object_type", "tca", "miss_distance_km",
-               "relative_velocity_kms", "pc", "risk", "status", "safe_miss_km", "mitigation_burn_ids")
+               "relative_velocity_kms", "pc", "pc_max", "pc_diluted", "pc_trend", "short_encounter_valid", "pc_mc",
+               "object_maneuvered",
+               "risk", "status", "safe_miss_km", "mitigation_burn_ids")
 
 
 @dataclass(frozen=True)
@@ -125,7 +127,10 @@ async def _trade_study(request: Request, args: dict, min_lead_s: float = 0.0):
     required = baseline_pc is not None and baseline_pc >= threshold
     burns = [o for o in data["grid"] if o["dv_mps"] != 0.0 and o["burn_offset_s"] >= min_lead_s]
     safe = [o for o in burns if o["pc"] is not None and o["pc"] < threshold]
-    cheapest = sorted(safe, key=lambda o: (abs(o["dv_mps"]), -o["miss_km"]))[:3]
+    # The refined minimum Δv per burn time (bisected between grid cells) beats the coarse grid when present.
+    refined = [o for o in data.get("min_dv_options", []) if o["burn_offset_s"] >= min_lead_s
+               and o["pc"] is not None and o["pc"] < threshold]
+    cheapest = (refined or sorted(safe, key=lambda o: (abs(o["dv_mps"]), -o["miss_km"])))[:3]
     latest = sorted(safe, key=lambda o: (-o["burn_offset_s"], abs(o["dv_mps"])))[:1]
     widest = sorted(burns, key=lambda o: -o["miss_km"])[:1]
     return {
@@ -180,7 +185,19 @@ async def _list_satellites(request: Request, args: dict):
 
 async def _ground_passes(request: Request, args: dict):
     hours = _int(args, "hours", 6, 1, 24)
-    return await operations.ground_station_passes(request, _satellite_id(request, args, True), hours=hours, step_s=30.0)
+    data = await operations.ground_station_passes(request, _satellite_id(request, args, True), hours=hours, step_s=30.0)
+    # The answer to "when can we uplink?", spelled out: given only the pass list, qwen3:8b led with the
+    # next pass even while a pass was in progress.
+    current = next((p for p in data["passes"] if p["in_progress"]), None)
+    upcoming = next((p for p in data["passes"] if not p["in_progress"]), None)
+    if current:
+        data["next_uplink"] = (f"NOW: in contact with {current['station_name']} until {current['end']}. "
+                               "Commands can be uplinked immediately.")
+    elif upcoming:
+        data["next_uplink"] = f"Not in contact now. Next contact: {upcoming['station_name']} from {upcoming['start']}."
+    else:
+        data["next_uplink"] = f"No ground contact in the next {hours} h."
+    return {"next_uplink": data.pop("next_uplink"), **data}
 
 
 async def _mission_metrics(request: Request, args: dict):
@@ -252,7 +269,8 @@ TOOLS: List[Tool] = [
          {"type": "object", "properties": {}}, _autopilot_status),
     Tool("get_physics_model",
          "The force model, propagator, collision-probability method and covariance assumptions in use, "
-         "plus the fidelity caveats. Use this when asked how reliable a number is.",
+         "plus the fidelity caveats. Use this when asked how reliable, accurate or trustworthy the numbers, "
+         "predictions or collision probabilities are.",
          {"type": "object", "properties": {}}, _physics_model),
 ]
 def all_tools() -> List[Tool]:
@@ -261,8 +279,9 @@ def all_tools() -> List[Tool]:
     return TOOLS + ACTION_TOOLS
 
 
-def specs() -> List[dict]:
-    return [t.spec() for t in all_tools()]
+def specs(actions: bool = True) -> List[dict]:
+    """actions=False leaves out the propose_* tools (the operator asked a question, not for an action)."""
+    return [t.spec() for t in all_tools() if actions or not t.name.startswith("propose_")]
 
 
 async def call(name: str, request: Request, args: Optional[dict]) -> dict:

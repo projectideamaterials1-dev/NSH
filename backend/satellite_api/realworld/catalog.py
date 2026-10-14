@@ -128,6 +128,80 @@ class CatalogObject:
 
 
 # ============================================================================
+# maneuver detection between consecutive element sets
+# ============================================================================
+# Lemmens & Krag (2014): a jump in semi-major axis between consecutive element sets beyond ~100 m that
+# the drag decay cannot explain marks a maneuver; an inclination jump marks an out-of-plane one. Commercial
+# services (AVM Dynamics, Kratos) flag the same thing so that predictions made from the old elements are
+# treated as stale.
+MANEUVER_DA_KM = float(os.environ.get("MANEUVER_DA_KM", "0.1"))
+MANEUVER_DI_DEG = float(os.environ.get("MANEUVER_DI_DEG", "0.01"))
+MANEUVER_MAX_GAP_DAYS = 3.0      # beyond this the decay model is too uncertain to call a jump a maneuver
+# AVM-style population threshold: k x the robust spread of the unexplained da across all objects of the
+# same class updated in the same refresh (most of which did NOT maneuver), never below MANEUVER_DA_KM.
+MANEUVER_SENSITIVITY = float(os.environ.get("MANEUVER_SENSITIVITY", "5"))
+MANEUVER_MIN_POPULATION = 20     # fewer samples than this: the fixed floor alone
+
+
+def population_threshold_km(unexplained_da_km: List[float]) -> float:
+    """max(floor, k * 1.4826 * MAD) - the MAD ignores the few objects that really did maneuver."""
+    if len(unexplained_da_km) < MANEUVER_MIN_POPULATION:
+        return MANEUVER_DA_KM
+    x = np.asarray(unexplained_da_km, dtype=float)
+    mad = float(np.median(np.abs(x - np.median(x))))
+    return max(MANEUVER_DA_KM, MANEUVER_SENSITIVITY * 1.4826 * mad)
+
+
+def unexplained_da_km(old: "CatalogObject", new: "CatalogObject") -> Optional[float]:
+    """The semi-major-axis change between two element sets that drag does not explain, or None when the
+    pair can't be judged (gap too long, missing fields)."""
+    hit = detect_maneuver(old, new, da_threshold_km=0.0, di_threshold_deg=0.0)
+    return None if hit is None else hit["unexplained_delta_a_km"]
+
+
+def detect_maneuver(old: "CatalogObject", new: "CatalogObject", da_threshold_km: Optional[float] = None,
+                    di_threshold_deg: Optional[float] = None) -> Optional[dict]:
+    """A maneuver between two element sets of the same object, or None.
+
+    The semi-major-axis change is compared with the decay the OLD elements already predicted: TLE/OMM
+    MEAN_MOTION_DOT is n-dot/2 [rev/day^2], so the expected mean-motion change over dt days is
+    2 * MEAN_MOTION_DOT * dt, and a ~ n^(-2/3) turns that into an expected da.
+    Thresholds default to MANEUVER_DA_KM / MANEUVER_DI_DEG; pass a population threshold to use that."""
+    da_thr = MANEUVER_DA_KM if da_threshold_km is None else da_threshold_km
+    di_thr = MANEUVER_DI_DEG if di_threshold_deg is None else di_threshold_deg
+    dt_days = (new.epoch - old.epoch).total_seconds() / 86400.0
+    if dt_days <= 0.0 or dt_days > MANEUVER_MAX_GAP_DAYS:
+        return None
+    try:
+        n_old, n_new = float(old.fields["MEAN_MOTION"]), float(new.fields["MEAN_MOTION"])
+        ndot = float(old.fields.get("MEAN_MOTION_DOT", 0.0))
+        i_old, i_new = float(old.fields["INCLINATION"]), float(new.fields["INCLINATION"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if n_old <= 0.0 or n_new <= 0.0:
+        return None
+    a = lambda n: (MU_EARTH / (n * 2.0 * math.pi / 86400.0) ** 2) ** (1.0 / 3.0)
+    a_old, a_new = a(n_old), a(n_new)
+    expected_da = -(2.0 / 3.0) * a_old * (2.0 * ndot * dt_days) / n_old
+    unexplained_da = (a_new - a_old) - expected_da
+    di = i_new - i_old
+    if abs(unexplained_da) < da_thr and abs(di) < di_thr and (da_thr > 0.0 or di_thr > 0.0):
+        return None
+    return {
+        "norad_id": new.norad_id, "name": new.name,
+        "between": [iso_z(old.epoch), iso_z(new.epoch)],
+        "delta_a_km": round(a_new - a_old, 4), "unexplained_delta_a_km": round(unexplained_da, 4),
+        "delta_inclination_deg": round(di, 5),
+        # Near-circular: an along-track dv changes a by 2 a dv / v, a plane change of di costs v di. A lower
+        # bound on the burn size (several burns, or radial ones, would have cost more).
+        "dv_estimate_mps": round(math.sqrt(MU_EARTH / a_old) * 1000.0 * math.hypot(
+            unexplained_da / (2.0 * a_old), math.radians(di)), 3),
+        "kind": "in-plane" if abs(unexplained_da) >= da_thr else "out-of-plane",
+        "da_threshold_km": round(da_thr, 4),
+    }
+
+
+# ============================================================================
 # fetching + cache
 # ============================================================================
 _last_failure: Dict[str, float] = {}

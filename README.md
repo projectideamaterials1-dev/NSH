@@ -34,6 +34,7 @@ conjunction messages.
 - [What it does](#-what-it-does)
 - [Architecture](#%EF%B8%8F-architecture)
 - [Performance and GPU acceleration](#-performance-and-gpu-acceleration)
+- [Operator assistant](#-operator-assistant)
 - [Design decisions](#-design-decisions)
 - [Physics and mathematics](#-physics-and-mathematics)
 - [Getting started](#-getting-started)
@@ -76,7 +77,15 @@ threat list ranks conjunctions by risk and probability of collision (Pc).
 | **GPU acceleration** | Optional CUDA engine (CuPy): screening, refinement and bulk propagation run on an NVIDIA GPU when the workload is large enough to win, and on the C++ engine otherwise. It gives the same conjunctions as the CPU, and is ~14× faster for 500 satellites × 20k objects. |
 | **Propagation** | RK4 with J2 and atmospheric drag (exponential atmosphere scaled by live NOAA F10.7/Kp, per-object ballistic coefficients from B*). The C++ engine has a NumPy fallback, and both give identical results. |
 | **Screening** | Broad phase over the whole catalogue (spatial hash + continuous collision detection), then pair-wise refinement to the true TCA, refined again with SGP4 for catalog objects. |
-| **Collision probability** | 2-D short-encounter Pc in the encounter plane. It uses a time-scaled covariance model, or the **measured covariance** from an imported CCSDS CDM. |
+| **Collision probability** | 2-D short-encounter Pc in the encounter plane. It uses a time-scaled covariance model (grown over the catalog element age in live mode), or the **measured covariance** from an imported CCSDS CDM. Each event also reports the maximum Pc over covariance size and flags **probability dilution**, flags slow encounters where the 2-D assumption is questionable, and keeps a **Pc trend** across screenings. |
+| **Maneuver detection** | Every catalog refresh compares each object's new element set with the previous one. A semi-major-axis jump that drag can't explain (> 100 m, Lemmens & Krag, or more for a noisy class of objects) or an inclination jump marks a maneuver. Conjunctions predicted from that object's old orbit are flagged and re-screened. |
+| **Monte Carlo Pc** | For slow encounters, where the 2-D formula is unreliable, both objects are sampled from their covariances and every pair is propagated through the encounter (with a 95 % interval). |
+| **Minimum-Δv burns** | The trade study bisects between grid cells to the exact minimum Δv per burn time and direction (a decade below the Pc threshold). In a test case: 0.12 m/s where the grid's best was 1.5 m/s. |
+| **Re-entries and activity** | Lifetime and re-entry window for decaying catalog objects (from their observed decay), and an Activity tab with maneuvers detected over 1/6/24/48 h and a watchlist. |
+| **Orbit fitting** | Pseudo-OD (Levit & Marshall): the engine's state and drag fitted to several consecutive element sets of one object. |
+| **Notifications** | Webhook alerts (Slack / Teams / any JSON endpoint) for critical events, rate-limited and de-duplicated. |
+| **Operator assistant** | A local LLM (Ollama, `qwen3:8b`) answers questions from read-only tools over live mission data, checks every number in its answer against the tool output, and proposes actions as cards that run only when the operator confirms them. |
+| **Data exchange** | CCSDS CDM import, and **CCSDS OEM export** of a satellite's predicted orbit with its planned burns (one segment per burn), so other operators can screen against the post-maneuver trajectory. |
 | **Autonomous avoidance** | Transverse phasing or radial shunt (plus recovery), sized to reach the miss at which Pc falls a decade below threshold. Also handles station-keeping returns and end-of-life graveyard burns. |
 | **Verified maneuvers** | Every evasion is re-screened along its post-burn path. A plan that leaves the threat uncleared or creates a secondary conjunction is replaced by the mirrored or other-axis alternative. |
 | **Explainability** | A plain-language rationale for every decision, including the options considered and why they were rejected (`GET /api/decisions`). |
@@ -208,6 +217,58 @@ The dashboard already renders on the GPU (WebGL through Three.js and deck.gl).
 
 ---
 
+## 🤖 Operator assistant
+
+The **Assistant** button in the header opens a chat about the mission ("why did the autopilot
+maneuver SAT-D?", "what is the cheapest burn that makes CDM-00018 safe?"). It runs a local model
+through [Ollama](https://ollama.com), so no mission data leaves the machine.
+
+- **Grounded.** The model gets every fact from read-only tools that wrap the dashboard's own
+  endpoints (conjunctions, trade studies, decisions, proposals, passes, physics model). After it
+  answers, every number, time and date is checked against what the tools returned, and against the
+  right object. Mismatches are shown next to the answer.
+- **Proposes, never executes.** For an action ("schedule the cheapest burn", "approve PRP-00001") the
+  model creates an action card: a dry-run with its validation and the ground-contact window. Clicking
+  **Confirm** calls the same endpoint a manual command would, with the same authorization and audit.
+  The `propose_*` tools are offered only when the message asks for an action, and refused for
+  questions ("what would happen if …").
+- **Measured.** `backend/evals/assistant_eval.py` scores a model on 32 questions against a planted
+  mission (tools, arguments, actions, facts, grounding). On that eval `qwen3:8b` scores 98 %, up from
+  78 % before the action gate, the tool nudge and the grounding fixes.
+
+```powershell
+cd backend
+.venv\Scripts\python.exe -m evals.assistant_eval --models qwen3:8b --repeat 2   # results: ollama\tests\eval\<ts>\
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ASSISTANT_OLLAMA_URL` | `http://localhost:11434` | Ollama server (`http://host.docker.internal:11434` from Docker) |
+| `ASSISTANT_MODEL` | `qwen3:8b` | Model tag (`qwen3:4b` if VRAM is tight) |
+| `ASSISTANT_NUM_CTX` · `ASSISTANT_NUM_BATCH` | `8192` · `128` | Context window; prompt batch size (small batches = short GPU kernels) |
+| `ASSISTANT_KEEP_ALIVE` · `ASSISTANT_MAX_STEPS` | `2m` · `6` | How long the model stays loaded; tool rounds per question |
+
+### Windows workstation scripts
+
+| Script | What it does |
+|---|---|
+| `scripts\stack.ps1` | Starts Docker Desktop, Ollama and the production stack (GPU screening, monitoring), then waits for health. `-Status`, `-Stop`, `-Cpu` (no GPU) |
+| `scripts\ollama.ps1` | Portable Ollama from `ollama\` (models, logs and home stay in the repo). Pins it to `LLM_GPU` from `.env`, with Vulkan off so the pin holds. `-Stop` also kills orphan runners |
+| `scripts\gpu-watchdog.ps1` | Runs in the background (`-Install`: one UAC prompt, then an elevated logon task). It raises `TdrDelay` to 10 s. When the display driver resets or the GPU stops answering, it stops the LLM, restarts it on the CPU and recovers the screen in steps: wait, Win+Ctrl+Shift+B, restart the NVIDIA adapter, disable/enable it. `-Status`, `-TestRecovery` (dry run), `-ResetTdr`, `-Uninstall` |
+
+Everything for this workstation lives under the repo root; nothing is installed on `C:`:
+
+```
+D:\NSH\
+├── ollama\        # app\ (portable Ollama) · models\ · home\ · logs\ · tests\eval\ (eval results)
+├── tools\python\  # Python used to build the backend venv
+├── .cache\        # npm cache · Playwright browsers · temp
+├── docker\        # Docker Desktop data (WSL disk)
+└── logs\          # gpu-watchdog.log (git-ignored)
+```
+
+---
+
 ## 🧭 Design decisions
 
 Each choice and the trade-off it makes:
@@ -273,6 +334,20 @@ $1-e^{-R^2/2\sigma^2}$ and the small-hard-body approximation. Risk is CRITICAL a
 $P_c \ge 10^{-4}$ (configurable) or a miss under 100 m, and WARNING at $P_c \ge 10^{-6}$ or a miss
 under 1 km.
 
+**How far to trust the Pc** (NASA CARA practice; details and sources in
+[docs/RESEARCH_IMPROVEMENTS.txt](docs/RESEARCH_IMPROVEMENTS.txt)):
+
+- *Dilution.* Scaling the covariance by $k^2$, $P_c(k)$ peaks near $k^\* = \sqrt{q/2}$, where $q$ is the
+  squared Mahalanobis distance of the miss (Alfano's maximum-probability construct). If the actual
+  covariance lies beyond the peak, a larger uncertainty would give a *lower* Pc. A low Pc there means
+  "unknown", not "safe". Such events report `pc_diluted` and `pc_max`, and are graded at least WARNING
+  when $P_{c,max}$ reaches the threshold.
+- *Short-encounter validity.* Below 0.1 km/s relative speed, or when crossing the 5σ region takes more
+  than 2 % of an orbit, the straight-line assumption is flagged (`short_encounter_valid: false`). A
+  3-D Pc or Monte Carlo assessment is then advised.
+- *Catalog age.* A tracked object's model covariance grows over its element-set age plus the time to
+  TCA, because TLE error grows from the element epoch.
+
 ### Maneuvers
 
 Along-track phasing displacement after drift time $t$ (Clohessy–Wiltshire):
@@ -309,7 +384,13 @@ $$\Delta m = m_{wet}\left(1 - e^{-\Delta v/(I_{sp}g_0)}\right), \qquad I_{sp} = 
 
 Then open http://localhost:3000. Press <kbd>?</kbd> for keyboard shortcuts: <kbd>Space</kbd>
 run/pause, <kbd>←</kbd>/<kbd>→</kbd> scrub into the past or the prediction, <kbd>T</kbd>/<kbd>D</kbd>
-for the Threats/Decisions tabs, <kbd>P</kbd> for the performance overlay.
+for the Threats/Decisions tabs, <kbd>P</kbd> for the performance overlay, <kbd>[</kbd>/<kbd>]</kbd>
+to hide either side panel, <kbd>M</kbd> for a map-only view and <kbd>Shift</kbd>+<kbd>F</kbd> for
+fullscreen. <kbd>V</kbd> opens the Activity tab.
+
+To plan an avoidance burn, open a conjunction, then click any cell of its trade space (or
+**Plan cheapest safe burn**). The burn planner opens pre-filled with that burn and validates it
+live. It also shows whether the satellite is in ground contact now, which an uplink needs.
 
 <details>
 <summary>Manual setup</summary>
@@ -382,6 +463,8 @@ All variables are documented in [`.env.example`](.env.example). The main ones:
 | `BACKUP_INTERVAL` · `BACKUP_KEEP` | `6h` · `28` | Scheduled backups (`backup` profile) |
 | `AUTOPILOT` · `CDM_HORIZON_S` · `CDM_SCREEN_INTERVAL_S` | `1` · `10800` · `600` | Autonomy and screening cadence |
 | `ACM_ENGINE` · `ACM_GPU_MIN_OBJECTS` · `ACM_GPU_MIN_WORK` | `auto` · `1000` · `5e6` | CPU/GPU engine selection |
+| `NOTIFY_WEBHOOK_URLS` · `NOTIFY_MIN_LEVEL` · `NOTIFY_CATEGORIES` | unset · `crit` · all | Webhook alerts for operator events |
+| `MANEUVER_DA_KM` · `MANEUVER_DI_DEG` · `MANEUVER_SENSITIVITY` | `0.1` · `0.01` · `5` | Maneuver detection between element sets |
 
 Runtime settings can be changed from the dashboard's **Settings** (`POST /api/config`) and are
 persisted to `data/config.json`. They include spacecraft limits, screening, the Pc threshold,
@@ -413,6 +496,11 @@ Interactive schemas are at `/docs`. The main groups:
 | `/api/catalog/*` · `/api/live` · `/api/space-weather` | Real-world catalog, live clock, NOAA space weather |
 | `GET /api/satellites` · `/{id}/track` · `/{id}/passes` | Per-satellite details, ground track, ground-station passes |
 | `GET /api/archive/maneuvers` · `/events` · `GET /api/export/czml` | History and Cesium export |
+| `GET /api/export/oem/{id}` | CCSDS OEM 2.0 of the predicted orbit with queued burns (one segment per burn) |
+| `POST /api/conjunctions/{id}/pc-monte-carlo` | Monte Carlo Pc for one conjunction (stored on the CDM) |
+| `GET /api/catalog/maneuvers?hours=` · `GET /api/catalog/reentries?max_days=` | Maneuvers detected in new element sets · predicted re-entries |
+| `GET /api/catalog/orbit-fit/{id}` | Pseudo-OD over the object's element-set history |
+| `POST /api/assistant/chat` · `GET /api/assistant/status` | Operator assistant (answers, tool calls, grounding report, action cards) and model status |
 | `GET /health` | Engine, persistence/Redis mode, leadership, feed summary |
 
 ---
@@ -421,10 +509,11 @@ Interactive schemas are at `/docs`. The main groups:
 
 | Suite | What it covers | Run |
 |---|---|---|
-| **Backend** (140 tests, 80 % coverage gate) | Engines and drag, Pc, screening and CDM lifecycle, autopilot avoidance, secondary-conjunction replacement, approvals, CDM ingestion, identity/audit, Redis/Sentinel clients, backups, feed health, fault injection, property-based tests | `cd backend && pytest tests --ignore=tests/benchmark` |
+| **Backend** (208 tests, 80 % coverage gate) | Engines and drag, Pc (incl. dilution, short-encounter, element age), screening and CDM lifecycle, autopilot avoidance, secondary-conjunction replacement, approvals, CDM ingestion, maneuver detection, OEM export, assistant (tools, grounding, action gating), identity/audit, Redis/Sentinel clients, backups, feed health, fault injection, property-based tests | `cd backend && pytest tests --ignore=tests/benchmark` |
+| **Assistant eval** | A real model against a planted mission: tool choice, arguments, actions, facts, grounding | `python -m evals.assistant_eval --models qwen3:8b` |
 | **Propagation validation** | Engine vs SGP4 (24 h), J2 nodal regression, drag decay | `python backend/scripts/validate_propagation.py` |
-| **Frontend unit** (27 tests, coverage gate) | Formatting, geometry, motion smoothing, store, selectors, shortcuts | `cd frontend && npm run test:coverage` |
-| **End-to-end** (Playwright) | Dashboard flows, manual burns, simulation, 3D and 2D maps rendering, decisions, shortcuts, predicted timeline | `cd frontend && npm run test:e2e` |
+| **Frontend unit** (42 tests, coverage gate) | Formatting, geometry, motion smoothing, store, selectors, shortcuts, panel layout, assistant store, markdown | `cd frontend && npm run test:coverage` |
+| **End-to-end** (Playwright) | Dashboard flows, manual burns, simulation, 3D and 2D maps rendering, decisions, shortcuts, predicted timeline, assistant panel (mocked model: answer, action card, confirm/dismiss), collapsible panels | `cd frontend && npm run test:e2e` |
 | **Backup/restore** | Back up, wipe, restore, reload, against a real Redis | CI `backup-restore` job |
 | **Security** | gitleaks (full history), Trivy dependency and image scans, Dependabot | CI `security` and `build-docker` jobs |
 | **Benchmarks** | Screening latency, snapshot performance | `pytest tests/benchmark` |
@@ -442,15 +531,18 @@ Demo mission result (`scripts/demo.py`: 50 satellites, 10,000 debris, 6 planted 
 ├── docker-compose.gpu.yml          # optional NVIDIA GPU override for the backend
 ├── run.sh · run.ps1                # local launchers (--demo / --live)
 ├── scripts/deploy.sh               # health-gated rollout with pre-deploy backup and rollback
+├── scripts/*.ps1                   # stack · ollama · gpu-watchdog (Windows workstation)
 ├── monitoring/                     # Prometheus, alert rules, Alertmanager, Grafana, sentinel entrypoint
 ├── docs/
 │   ├── VALIDATION.md               # physics model, SGP4 comparison, Pc method
 │   ├── RUNBOOKS.md                 # one section per alert, backup/restore, Redis HA
+│   ├── RESEARCH_IMPROVEMENTS.txt   # SDA products + literature → what was applied, with sources
 │   └── images/                     # screenshots and tour GIF
 ├── backend/
 │   ├── acm_engine/physics_rk4.cpp  # RK4 + J2 + drag, spatial hash + CCD (OpenMP)
 │   ├── scripts/                    # demo.py · backup.py · apikeys.py · validate_propagation.py
 │   ├── tests/                      # unit · integration · regression · benchmark
+│   ├── evals/assistant_eval.py     # model comparison on a planted mission
 │   └── satellite_api/
 │       ├── main.py                 # app, lifespan, health, audit/feeds endpoints
 │       ├── physics_engine.py       # engine dispatch (CUDA / C++ / NumPy), drag model
@@ -460,6 +552,7 @@ Demo mission result (`scripts/demo.py`: 50 satellites, 10,000 debris, 6 planted 
 │       ├── middleware/             # auth (named users, shared keys), identity, rate limiting, leader gate
 │       ├── acm/                    # brain · autopilot · conjunctions · collision_probability
 │       │                           #   decision_support · scheduler · fleet_coordinator · plugins
+│       ├── assistant/              # llm (Ollama) · tools (read-only) · actions (proposals) · grounding · agent
 │       ├── realworld/              # catalog · live · space_weather · cdm_ingest · spacetrack · validation
 │       └── routers/                # telemetry · simulation · maneuvers · visualization · operations · realworld · export
 └── frontend/src/

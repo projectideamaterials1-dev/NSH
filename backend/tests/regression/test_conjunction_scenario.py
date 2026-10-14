@@ -33,3 +33,23 @@ def test_conjunction_evasion_plan():
     )
     
     assert len(plans) > 0
+
+
+def test_unbound_satellite_state_is_skipped_not_fatal():
+    # Live-catalog regression (2026-10-15): one satellite's state was above escape speed, station-keeping
+    # took sqrt of a negative semi-major axis, and every screening cycle for the whole fleet failed.
+    from satellite_api.acm.scenario import circular_state_over
+    from satellite_api.acm.autopilot import brain_stations
+    from satellite_api.ground_stations import STATIONS
+    st = STATIONS[0]
+    good = circular_state_over(st.latitude, st.longitude, 1767225600.0)
+    bad = good.copy()
+    bad[3:6] *= 1.5                                   # hyperbolic
+    states = np.vstack([bad, good]).astype(float)
+    nominal = states.copy()
+    states[:, :3] += 10.0                             # both drifted out of their slot -> station-keeping runs
+    brain = AutonomousBrain()
+    plans = brain.plan_evasion(states, nominal, [50.0, 50.0], [], datetime.fromtimestamp(1767225600.0, timezone.utc),
+                               brain_stations())
+    assert brain.skipped_unbound == {0}
+    assert all(p.sat_idx != 0 for p in plans)

@@ -329,7 +329,10 @@ def score(case: Case, reply: dict, ctx: dict) -> dict:
 
 
 # ─── runner ────────────────────────────────────────────────────────────────────────────────
-async def run_model(model: str, selected: List[Case], repeat: int, think: bool, url: str) -> dict:
+async def run_model(model: str, selected: List[Case], repeat: int, think: bool, url: str,
+                    partial: Optional[Path] = None) -> dict:
+    """partial: a .jsonl file each row is appended to as it finishes, so a crash or reboot mid-run (it has
+    happened) still leaves the results so far."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://eval", timeout=900) as client:
         ctx = await plant(client)
@@ -363,6 +366,9 @@ async def run_model(model: str, selected: List[Case], repeat: int, think: bool, 
                              "actions": [a["kind"] for a in reply["actions"]],
                              "grounding_issues": reply["grounding"]["issues"], "answer": reply["answer"],
                              "fact": case.fact_desc})
+                if partial:
+                    with partial.open("a", encoding="utf-8") as fh:
+                        fh.write(json.dumps(rows[-1], default=str) + "\n")
                 failed = [k2 for k2, v in checks.items() if not v]
                 print(f"  {case.id:20s} {'PASS' if passed else 'FAIL ' + ','.join(failed):32s} "
                       f"{reply['duration_s']:6.1f}s", flush=True)
@@ -432,7 +438,8 @@ def main():
     results = []
     for model in [m.strip() for m in args.models.split(",") if m.strip()]:
         print(f"== {model}", flush=True)
-        res = asyncio.run(run_model(model, selected, args.repeat, args.think, args.url))
+        res = asyncio.run(run_model(model, selected, args.repeat, args.think, args.url,
+                                    partial=out / f"{model.replace(':', '_')}.partial.jsonl"))
         (out / f"{model.replace(':', '_')}.json").write_text(json.dumps(res, indent=1, default=str), encoding="utf-8")
         results.append(res)
     summary = summarize(results)

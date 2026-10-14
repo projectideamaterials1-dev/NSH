@@ -138,8 +138,12 @@ class Autopilot:
         eol_idx = {state.sat_id_to_idx[s] for s in state.eol_satellites if s in state.sat_id_to_idx}
         self.brain.eol_scheduled |= eol_idx
 
+        reported = set(self.brain.skipped_unbound)
         plans = self.brain.plan_evasion(sat_states, nominal, fuels, conjunctions, now, self.stations,
                                         evasion_mode=plugin.mode)
+        for i in sorted(self.brain.skipped_unbound - reported):
+            state.emit("warn", "autopilot", f"{state.idx_to_sat_id[i]}: state is not a bound orbit (bad element set?) - "
+                       "station-keeping skipped for it", satellite_id=state.idx_to_sat_id[i])
 
         # End-of-life: retire satellites at the fuel threshold while they are in contact.
         planned_sats = {p.sat_idx for p in plans}
@@ -523,6 +527,7 @@ class ConjunctionService:
                 versions = (state.telemetry_version, state.burn_version)
                 refiner = self.refiner
                 refine_snapshot = refiner.snapshot() if refiner else None
+                element_ages = refiner.element_ages_s(state.now_ts) if refiner else None
                 # Falling-behind decision is made from the *previous* cycle's measured duration,
                 # applied to this cycle - see MAX_REFINE_WHEN_OVERLOADED.
                 if self._falling_behind:
@@ -547,7 +552,7 @@ class ConjunctionService:
             SCREEN_DURATION.observe(elapsed)
             if state.attached_pairs:
                 predictions = [p for p in predictions if not state.is_attached(p["satellite_id"], p["object_id"])]
-            predictions = await asyncio.to_thread(annotate_pc, predictions, start_ts, external_index)
+            predictions = await asyncio.to_thread(annotate_pc, predictions, start_ts, external_index, element_ages)
 
             async with state.lock:
                 stats = state.cdms.apply(predictions, state.now_ts, state.emit)

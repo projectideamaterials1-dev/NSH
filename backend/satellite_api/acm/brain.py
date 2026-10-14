@@ -85,6 +85,7 @@ def plan_from_dict(d: dict) -> ManeuverPlan:
 class AutonomousBrain:
     def __init__(self):
         self.eol_scheduled = set()
+        self.skipped_unbound = set()   # satellite indices whose state is not a bound orbit (reported, not planned)
         # 🚀 PATCH 1: Global Sequence Registry to prevent overlapping burns
         self.locked_satellites = {}
         
@@ -357,7 +358,13 @@ class AutonomousBrain:
                 # 🚀 THE PARADOX FIX: Exact Vis-Viva Period Targeting
                 r_mag = np.linalg.norm(sat_state[:3])
                 v_mag = np.linalg.norm(sat_state[3:6])
-                a = 1.0 / (2.0/r_mag - (v_mag**2)/MU_EARTH)
+                energy_term = 2.0/r_mag - (v_mag**2)/MU_EARTH
+                if not np.isfinite(energy_term) or energy_term <= 0.0:
+                    # Not a bound orbit (bad element set / corrupt state): no period to target. Skip this
+                    # satellite instead of failing the whole screening cycle for the fleet.
+                    self.skipped_unbound.add(sat_idx)
+                    continue
+                a = 1.0 / energy_term
                 n_mean = math.sqrt(MU_EARTH / (a**3))
                 
                 h_vec = np.cross(sat_state[:3], sat_state[3:6])

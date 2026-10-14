@@ -3,7 +3,8 @@
 // and nearby tracked objects.
 
 import React, { useMemo, useState } from 'react';
-import { BarChart3, Box, CalendarClock, Crosshair, Database, MousePointerClick, Radio, Rocket, X } from 'lucide-react';
+import { BarChart3, Box, CalendarClock, Crosshair, Database, Download, MousePointerClick, Radio, Rocket, X } from 'lucide-react';
+import { apiFetch } from '../api/http';
 import useOrbitalStore, { selectSelectedSatellite } from '../store/useOrbitalStore';
 import type { Conjunction } from '../store/useOrbitalStore';
 import {
@@ -17,6 +18,7 @@ import { ManeuverTimeline } from './ManeuverTimeline';
 import { ManualBurnModal } from './ManualBurnModal';
 import { SatellitePhotoCard } from './SatellitePhoto';
 import { ModelViewer } from './ModelViewer';
+import { StarButton } from './ActivityPanel';
 
 const RADAR_RANGE_KM = 500;
 const BULLSEYE_RINGS_S = [900, 3600, 10800];   // 15 min, 1 h, 3 h
@@ -59,6 +61,18 @@ const FleetOverview: React.FC = () => {
     </div>
   );
 };
+
+/** Saves the satellite's predicted ephemeris (with queued burns) as a CCSDS OEM file. */
+async function downloadOem(id: string) {
+  const res = await apiFetch(`/api/export/oem/${encodeURIComponent(id)}?hours=6&step_seconds=60`);
+  if (!res.ok) throw new Error(`OEM export failed (HTTP ${res.status})`);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${id.replace(/[^\w-]+/g, '_')}.oem`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 const SatelliteDetails: React.FC = () => {
   const sat = useOrbitalStore(selectSelectedSatellite);
@@ -114,7 +128,10 @@ const SatelliteDetails: React.FC = () => {
             )}
           </div>
         </div>
-        <Button variant="ghost" onClick={() => selectSatellite(null)} aria-label="Clear selection" icon={<X className="w-4 h-4" />} />
+        <div className="flex items-center gap-1">
+          <StarButton id={sat.id} className="w-8 h-8 flex items-center justify-center" />
+          <Button variant="ghost" onClick={() => selectSatellite(null)} aria-label="Clear selection" icon={<X className="w-4 h-4" />} />
+        </div>
       </div>
 
       <SatellitePhotoCard key={sat.id} id={sat.id} />
@@ -230,6 +247,11 @@ const SatelliteDetails: React.FC = () => {
         <Button onClick={() => setModal('model')} icon={<Box className="w-4 h-4" />}>3D model</Button>
         <Button onClick={() => setModal('resources')} icon={<BarChart3 className="w-4 h-4" />}>Fuel</Button>
         <Button onClick={() => setModal('timeline')} icon={<CalendarClock className="w-4 h-4" />}>Plan</Button>
+        <Button onClick={() => downloadOem(sat.id).catch(e => setCancelError(e instanceof Error ? e.message : 'Export failed'))}
+          icon={<Download className="w-4 h-4" />} className="col-span-2"
+          title="Predicted orbit for the next 6 h, including queued burns, as a CCSDS OEM file to share with other operators">
+          Export orbit (CCSDS OEM)
+        </Button>
       </div>
 
       {modal === 'resources' && <ResourcesModal satelliteId={sat.id} onClose={() => setModal(null)} />}

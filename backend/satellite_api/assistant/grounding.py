@@ -244,13 +244,22 @@ def check(answer: str, sources: List[object], question: str = "") -> dict:
                 ids.add(i)
                 line = re.sub(re.escape(i), " " * len(i), line, flags=re.IGNORECASE)
         indent = len(raw.expandtabs(4)) - len(raw.expandtabs(4).lstrip())
+        inherited = False
         if ids:
             scope = ids
             scoped_lines.append((indent, ids))
             mentioned.extend(i for i in ids if i not in mentioned)
         elif raw.strip():
             scope = next((s for ind, s in reversed(scoped_lines) if ind <= indent), scope)
-        allowed = index.scope_values(scope) if scope else index.all_values()
+            inherited = True
+        if not scope:
+            allowed = index.all_values()
+        elif inherited:
+            # A line naming no id continues the item above it, which may be a nested object ("Threat: DEB-2002"
+            # inside a proposal): its bullets can quote the enclosing record (the proposal's burns) too.
+            allowed = index.scope_values(scope | set().union(*(index.parents.get(i, set()) for i in scope)))
+        else:
+            allowed = index.scope_values(scope)
         allowed.merge(question_values)
         for claim in _claims(line):
             checked += 1

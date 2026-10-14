@@ -44,11 +44,18 @@ EVASION_TRIGGER_KM = COLLISION_THRESHOLD_KM * 1.5
 WARNING_PC = 1e-6
 
 
-def risk_level(miss_km: float, pc: Optional[float] = None) -> str:
-    """Risk tier from miss distance and, when available, probability of collision."""
+def risk_level(miss_km: float, pc: Optional[float] = None, pc_max: Optional[float] = None,
+               diluted: bool = False) -> str:
+    """Risk tier from miss distance and, when available, probability of collision.
+
+    A diluted Pc (the covariance is so large that the Pc is low because of uncertainty, not distance)
+    is not evidence of safety: if its maximum over covariance scaling reaches the maneuver threshold,
+    the event is at least a WARNING, so it is watched and re-screened instead of being dismissed."""
     if miss_km < CRITICAL_KM or (pc is not None and pc >= CONFIG.pcManeuverThreshold):
         return "CRITICAL"
     if miss_km < WARNING_KM or (pc is not None and pc >= WARNING_PC):
+        return "WARNING"
+    if diluted and pc_max is not None and pc_max >= CONFIG.pcManeuverThreshold:
         return "WARNING"
     return "WATCH"
 
@@ -59,13 +66,16 @@ def needs_action(cdm: dict) -> bool:
     return cdm["miss_distance_km"] <= EVASION_TRIGGER_KM or (pc is not None and pc >= CONFIG.pcManeuverThreshold)
 
 
-def annotate_pc(predictions: List[dict], now_ts: float, external_index: Optional[dict] = None) -> List[dict]:
+def annotate_pc(predictions: List[dict], now_ts: float, external_index: Optional[dict] = None,
+                element_ages_s: Optional[Dict[str, float]] = None) -> List[dict]:
     """Adds Pc + encounter-plane geometry from the TCA states that screen()/the SGP4 refiner
     attach as `_state_sat`/`_state_obj`, then drops those internal fields.
 
     `external_index` (ExternalCDMStore.index()): when an external CDM describes the same encounter,
     its Pc/miss are attached for comparison and, if it carries both covariances, Pc is computed
-    from those measured covariances instead of the model."""
+    from those measured covariances instead of the model.
+    `element_ages_s` (live catalog mode): object id -> age of its element set, which the model
+    covariance grows over (catalog error grows from the element epoch, not from now)."""
     for p in predictions:
         a, b = p.pop("_state_sat", None), p.pop("_state_obj", None)
         rec = lookup(external_index, p["satellite_id"], p["object_id"], p["tca_ts"]) if external_index else None
@@ -79,11 +89,32 @@ def annotate_pc(predictions: List[dict], now_ts: float, external_index: Optional
                         obj_is_owned=p["object_type"] == "SATELLITE", hbr_m=CONFIG.hardBodyRadiusM,
                         covariance_scale=CONFIG.covarianceScale, pc_threshold=CONFIG.pcManeuverThreshold,
                         cov_sat_rtn=cov_sat, cov_obj_rtn=cov_obj,
-                        covariance_source=f"CDM {rec['originator']} {rec['message_id']}" if rec else None))
+                        covariance_source=f"CDM {rec['originator']} {rec['message_id']}" if rec else None,
+                        obj_element_age_s=(element_ages_s or {}).get(p["object_id"], 0.0)))
     return predictions
 
 
 RISK_RANK = {"WATCH": 0, "WARNING": 1, "CRITICAL": 2}
+
+PC_HISTORY_LEN = 24
+PC_TREND_FACTOR = 3.0     # Pc changes by more than 3x between screenings -> rising / falling
+
+
+def _record_pc(cdm: dict, pc: Optional[float], now_ts: float):
+    """Pc of every screening of this event, and its trend. The ESA Collision Avoidance Challenge (Uriot et
+    al. 2022) found the latest CDM's risk to be the strongest single forecast of the final risk, so the
+    latest Pc stays the decision value; the history shows whether the event is converging or growing."""
+    if pc is None:
+        return
+    history = cdm.setdefault("pc_history", [])
+    history.append([round(now_ts, 1), pc])
+    del history[:-PC_HISTORY_LEN]
+    if len(history) < 2:
+        cdm["pc_trend"] = "new"
+        return
+    prev, last = max(history[-2][1], 1e-300), max(pc, 1e-300)
+    cdm["pc_trend"] = ("rising" if last > prev * PC_TREND_FACTOR else
+                       "falling" if last * PC_TREND_FACTOR < prev else "stable")
 
 
 def _pc_text(p: dict) -> str:
@@ -292,7 +323,7 @@ class CDMRegistry:
             if p["tca_ts"] <= now_ts:
                 continue
             match = self._match(p)
-            risk = risk_level(p["miss_distance_km"], p.get("pc"))
+            risk = risk_level(p["miss_distance_km"], p.get("pc"), p.get("pc_max"), p.get("pc_diluted", False))
             if match is None:
                 self._seq += 1
                 cdm = {
@@ -303,6 +334,7 @@ class CDMRegistry:
                     "mitigation_burn_ids": [], "detected_at": iso_z(now_ts), "updated_at": iso_z(now_ts),
                     "final_status_at": None,
                 }
+                _record_pc(cdm, p.get("pc"), now_ts)
                 self.items.append(cdm)
                 stats["new"] += 1
                 seen.add(cdm["cdm_id"])
@@ -316,6 +348,7 @@ class CDMRegistry:
             stats["updated"] += 1
             previous_risk = match["risk"]
             match.update({**p, "tca": iso_z(p["tca_ts"]), "risk": risk, "updated_at": iso_z(now_ts)})
+            _record_pc(match, p.get("pc"), now_ts)
             match["min_predicted_miss_km"] = min(match["min_predicted_miss_km"], p["miss_distance_km"])
             if p.get("pc") is not None:
                 match["peak_pc"] = max(match.get("peak_pc") or 0.0, p["pc"])

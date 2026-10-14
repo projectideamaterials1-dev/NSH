@@ -5,6 +5,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Rocket, XCircle } from 'lucide-react';
 import useOrbitalStore from '../store/useOrbitalStore';
 import type { ManualPlanResult } from '../store/useOrbitalStore';
+import type { GroundPass } from '../store/types';
+import { apiJson } from '../api/http';
 import { COLORS, formatDuration, formatUtcTime } from '../lib/format';
 import { Button, Modal } from './ui';
 
@@ -25,15 +27,22 @@ const Check: React.FC<{ ok: boolean; label: string; detail?: string }> = ({ ok, 
   </div>
 );
 
-export const ManualBurnModal: React.FC<{ satelliteId: string; onClose: () => void }> = ({ satelliteId, onClose }) => {
+/** A burn picked elsewhere (a trade-space cell) to start from. */
+export interface BurnPrefill { dv: { r: number; t: number; n: number }; offset_s: number; note?: string }
+
+const QUICK_OFFSETS: [string, number][] = [['+5 min', 300], ['+15 min', 900], ['+30 min', 1800], ['+1 h', 3600]];
+const QUICK_DV = [0.1, 0.5, 1, 2];
+
+export const ManualBurnModal: React.FC<{ satelliteId: string; onClose: () => void; prefill?: BurnPrefill }> = ({ satelliteId, onClose, prefill }) => {
   const planManualBurn = useOrbitalStore(s => s.planManualBurn);
   const config = useOrbitalStore(s => s.config);
   const timestamp = useOrbitalStore(s => s.timestamp);
-  const [mode, setMode] = useState<'preset' | 'custom'>('preset');
+  const [mode, setMode] = useState<'preset' | 'custom'>(prefill ? 'custom' : 'preset');
   const [preset, setPreset] = useState<(typeof PRESETS)[number]['key']>('prograde');
   const [magnitude, setMagnitude] = useState(1.0);
-  const [custom, setCustom] = useState({ r: 0, t: 1, n: 0 });
-  const [offset, setOffset] = useState(60);
+  const [custom, setCustom] = useState(prefill?.dv ?? { r: 0, t: 1, n: 0 });
+  const [offset, setOffset] = useState(prefill ? Math.max(10, Math.round(prefill.offset_s / 10) * 10) : 60);
+  const [passes, setPasses] = useState<GroundPass[] | null>(null);
   const [preview, setPreview] = useState<ManualPlanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -47,6 +56,27 @@ export const ManualBurnModal: React.FC<{ satelliteId: string; onClose: () => voi
   }, [mode, preset, magnitude, custom]);
 
   const burns = useMemo(() => [{ offset_s: offset, frame: 'RTN' as const, dv_mps: dv }], [offset, dv]);
+
+  // Ground contacts for this satellite, so "next contact" can place the burn where it can be uplinked.
+  useEffect(() => {
+    let cancelled = false;
+    apiJson<{ passes: GroundPass[] }>(`/api/satellites/${encodeURIComponent(satelliteId)}/passes?hours=6`)
+      .then(r => { if (!cancelled) setPasses(r.passes); })
+      .catch(() => { if (!cancelled) setPasses([]); });
+    return () => { cancelled = true; };
+  }, [satelliteId]);
+
+  // Commands are uplinked when Schedule is pressed, so what matters is contact NOW (the engine checks it
+  // then); the burn itself may fire later, out of contact.
+  const contact = useMemo(() => {
+    if (!passes || !timestamp) return null;
+    const now = Date.parse(timestamp);
+    const current = passes.find(p => p.in_progress);
+    if (current) return { now: true, station: current.station_name, untilS: (Date.parse(current.end) - now) / 1000 };
+    const next = passes.find(p => Date.parse(p.start) > now);
+    return next ? { now: false, station: next.station_name, inS: (Date.parse(next.start) - now) / 1000, at: next.start } : { now: false };
+  }, [passes, timestamp]);
+  const maxOffset = Math.max(5400, offset);
 
   // Live dry-run preview (debounced)
   useEffect(() => {
@@ -111,15 +141,27 @@ export const ManualBurnModal: React.FC<{ satelliteId: string; onClose: () => voi
                   </button>
                 ))}
               </div>
-              <label className="block">
-                <span className="flex justify-between text-[13px] mb-1.5">
+              <p className="text-[12px] text-muted -mt-2">{PRESETS.find(p => p.key === preset)!.hint}.</p>
+              <div className="block">
+                <span className="flex items-center justify-between gap-2 text-[13px] mb-1.5">
                   <span className="text-ink">Δv magnitude</span>
-                  <span className="tabular text-accent">{magnitude.toFixed(2)} m/s</span>
+                  <span className="flex items-center gap-1">
+                    {QUICK_DV.filter(v => v <= maxDv).map(v => (
+                      <button key={v} onClick={() => setMagnitude(v)}
+                        className={`tabular text-[11px] px-1.5 h-6 rounded border ${magnitude === v ? 'border-accent text-ink bg-accent/15' : 'border-line text-muted hover:text-ink'}`}>
+                        {v}
+                      </button>
+                    ))}
+                    <input type="number" min={0.01} max={maxDv} step={0.01} value={magnitude} aria-label="Δv magnitude in m/s"
+                      onChange={e => setMagnitude(Math.min(maxDv, Math.max(0, Number(e.target.value))))}
+                      className="tabular w-20 h-6 px-1.5 rounded bg-raised border border-line text-[12px] text-accent text-right focus:outline-none focus:border-accent" />
+                    <span className="text-[12px] text-muted">m/s</span>
+                  </span>
                 </span>
-                <input type="range" min={0.01} max={maxDv} step={0.01} value={magnitude}
+                <input type="range" min={0.01} max={maxDv} step={0.01} value={magnitude} aria-label="Δv magnitude slider"
                   onChange={e => setMagnitude(Number(e.target.value))} className="w-full accent-[var(--color-accent)]" />
                 <span className="flex justify-between text-[11px] text-faint tabular"><span>0</span><span>limit {maxDv} m/s</span></span>
-              </label>
+              </div>
             </>
           ) : (
             <div className="grid grid-cols-3 gap-3">
@@ -134,14 +176,32 @@ export const ManualBurnModal: React.FC<{ satelliteId: string; onClose: () => voi
             </div>
           )}
 
-          <label className="block">
-            <span className="flex justify-between text-[13px] mb-1.5">
+          <div className="block">
+            <span className="flex items-center justify-between gap-2 text-[13px] mb-1.5">
               <span className="text-ink">Execute in</span>
               <span className="tabular text-muted">{formatDuration(offset)}{burnTime ? ` · ${formatUtcTime(burnTime)} UTC` : ''}</span>
             </span>
-            <input type="range" min={10} max={5400} step={10} value={offset}
+            <input type="range" min={10} max={maxOffset} step={10} value={offset} aria-label="Time until the burn"
               onChange={e => setOffset(Number(e.target.value))} className="w-full accent-[var(--color-accent)]" />
-          </label>
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {QUICK_OFFSETS.map(([label, s]) => (
+                <button key={s} onClick={() => setOffset(s)}
+                  className={`text-[11px] px-2 h-6 rounded border ${offset === s ? 'border-accent text-ink bg-accent/15' : 'border-line text-muted hover:text-ink'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {contact && (
+              <p className={`text-[12px] mt-2 ${contact.now ? 'text-ok' : 'text-warn'}`} aria-live="polite">
+                {contact.now
+                  ? `In contact with ${contact.station} for ${formatDuration(contact.untilS!)}: the burn can be uplinked now.`
+                  : contact.station
+                    ? `No ground contact now - commands can't be uplinked until ${contact.station} at ${formatUtcTime(contact.at!)} UTC (in ${formatDuration(contact.inS!)}). Prepare the burn and schedule it then.`
+                    : 'No ground contact in the next 6 h.'}
+              </p>
+            )}
+          </div>
+          {prefill?.note && <p className="text-[12px] text-muted">{prefill.note}</p>}
 
           {before && after && (
             <div>

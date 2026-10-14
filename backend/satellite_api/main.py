@@ -23,6 +23,7 @@ from satellite_api.state_redis import RedisStateManager
 from satellite_api.physics_engine import ENGINE_NAME, engine_info
 from satellite_api.config import CONFIG, save_config
 from satellite_api.db import MissionArchive, archive_enabled
+from satellite_api.notify import WebhookNotifier
 from satellite_api.realworld.live import get_service as get_realworld_service
 from satellite_api import observability
 from satellite_api.audit import AUDIT
@@ -146,6 +147,9 @@ async def lifespan(app: FastAPI):
     archive = getattr(app.state, "archive", None)
     if archive:
         archive.close()
+    notifier = getattr(app.state, "notifier", None)
+    if notifier:
+        notifier.close()
 
 # ============================================================================
 # APP INITIALIZATION
@@ -199,6 +203,10 @@ if archive_enabled():
         app.state.unreconciled_maneuvers = app.state.archive.reconcile_on_startup()
     except Exception as e:  # read-only filesystem etc.
         logger.warning(f"Mission archive disabled: {e}")
+# Webhook alerts (Slack / Teams / any JSON endpoint) for operator events; off unless NOTIFY_WEBHOOK_URLS is set.
+app.state.notifier = WebhookNotifier.from_env()
+if app.state.notifier:
+    app.state.notifier.attach(app.state.orbital_state)
 
 # ============================================================================
 # ROUTER MOUNTING
@@ -241,6 +249,7 @@ def _status():
         "archive": app.state.archive is not None,
         "live": bool(getattr(getattr(app.state, "realworld", None), "live", False)),
         "unreconciled_maneuvers": len(getattr(app.state, "unreconciled_maneuvers", [])),
+        "notifications": app.state.notifier.stats() if getattr(app.state, "notifier", None) else None,
         "feeds": {name: info["status"] for name, info in assess_feeds(getattr(app.state, "realworld", None)).items()},
     }
 

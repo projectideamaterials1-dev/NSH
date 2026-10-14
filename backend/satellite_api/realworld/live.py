@@ -16,8 +16,10 @@ Live mode loop (every TICK_S of wall time):
     switched on), objects are re-anchored at "now" instead of integrating the gap.
 """
 import asyncio
+import collections
 import contextlib
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -74,6 +76,12 @@ class Sgp4Refiner:
                            if sid in state.sat_id_to_idx and not svc._maneuvered(sid)},
             "objects": {did: o.satrec for did, o in svc.objects.items()},
         }
+
+    def element_ages_s(self, at_ts: float) -> Dict[str, float]:
+        """Age of each tracked object's element set at `at_ts` (seconds). Its uncertainty grows from the
+        element epoch, so the Pc covariance model uses it. Caller holds the state lock."""
+        at = datetime.fromtimestamp(at_ts, tz=timezone.utc)
+        return {did: max(0.0, o.age_days(at) * 86400.0) for did, o in self.service.objects.items()}
 
     @staticmethod
     def refine(predictions: List[dict], snapshot: dict, warning_km: float) -> List[dict]:
@@ -136,6 +144,10 @@ class RealWorldService:
         self.last_refresh_wall: Optional[float] = None
         self.last_error: Optional[str] = None
         self.skipped = {"stale": 0, "propagation": 0, "duplicate": 0}
+        # Maneuvers seen in new element sets (catalog.detect_maneuver), newest last.
+        self.maneuver_detections: collections.deque = collections.deque(maxlen=200)
+        self.maneuver_thresholds: Dict[str, dict] = {}     # role -> last refresh's da threshold + population
+        self.element_history: Dict[int, collections.deque] = {}   # NORAD id -> earlier element sets, oldest first
         self._anchor_fuel: Dict[str, float] = {}
         self.restored_max_satellites: Optional[int] = None   # fleet size from a Redis snapshot
         self._task: Optional[asyncio.Task] = None
@@ -456,22 +468,61 @@ class RealWorldService:
             raise ValueError("Nothing loaded yet")
         fleet_objs, tracked_objs, info, warnings = await asyncio.to_thread(self._fetch, self.request, force)
         by_norad = {o.norad_id: o for o in fleet_objs + tracked_objs}
+        detected: List[dict] = []
         async with self._lock:
             updated = 0
             for table in (self.fleet, self.objects):
+                role = "fleet" if table is self.fleet else "object"
+                pairs = []
                 for key, old in list(table.items()):
                     new = by_norad.get(old.norad_id)
                     if new is not None and new.epoch >= old.epoch:
                         new.source = old.source
                         table[key] = new
                         updated += new.epoch > old.epoch
+                        if new.epoch > old.epoch:
+                            pairs.append((key, old, new))
+                            # CelesTrak serves only the latest set: keep the ones we have seen (pseudo-OD).
+                            hist = self.element_history.setdefault(old.norad_id, collections.deque(maxlen=12))
+                            if not hist or hist[-1].epoch < old.epoch:
+                                hist.append(old)
+                # Threshold from this class's own element-to-element noise in this refresh (AVM-style).
+                population = [d for d in (catalog.unexplained_da_km(o, n) for _, o, n in pairs) if d is not None]
+                threshold = catalog.population_threshold_km(population)
+                self.maneuver_thresholds[role] = {"da_km": round(threshold, 4), "population": len(population)}
+                for key, old, new in pairs:
+                    hit = catalog.detect_maneuver(old, new, da_threshold_km=threshold)
+                    if hit:
+                        detected.append({**hit, "id": key, "role": role, "detected_at": iso_z(_utcnow())})
             self.source_info, self.warnings = info, warnings
             self.last_refresh_wall = time.time()
+            self.maneuver_detections.extend(detected)
         when = _utcnow() if self.live else self.state.current_time
         result = await self.resync(when)
         async with self.state.lock:
             self.state.emit("info", "catalog", f"Element sets refreshed from CelesTrak ({updated} newer)")
-        return {**result, "updated": updated}
+            self._flag_maneuvered_objects(detected)
+        return {**result, "updated": updated, "maneuvers_detected": len(detected)}
+
+    def _flag_maneuvered_objects(self, detected: List[dict]):
+        """Open conjunctions predicted from an object's old elements are stale once it has maneuvered: mark
+        them (the next screening recomputes them from the new elements) and alert. Caller holds the state lock."""
+        if not detected:
+            return
+        state = self.state
+        moved = {d["id"]: d for d in detected}
+        for cdm in state.cdms.open():
+            hit = moved.get(cdm["object_id"]) or moved.get(cdm["satellite_id"])
+            if hit:
+                cdm["object_maneuvered"] = {"id": hit["id"], "detected_at": hit["detected_at"],
+                                            "dv_estimate_mps": hit["dv_estimate_mps"]}
+                state.emit("warn", "conjunction", f"{hit['id']} maneuvered (~{hit['dv_estimate_mps']} m/s, "
+                           f"{hit['kind']}): {cdm['cdm_id']} was predicted from its old orbit and is being re-screened",
+                           satellite_id=cdm["satellite_id"], cdm_id=cdm["cdm_id"])
+        objects = [d for d in detected if d["role"] == "object"]
+        names = ", ".join(d["id"] for d in detected[:5]) + (f" and {len(detected) - 5} more" if len(detected) > 5 else "")
+        state.emit("warn" if objects else "info", "catalog",
+                   f"Maneuvers detected in new element sets: {names}")
 
     async def tick(self):
         state = self.state
@@ -537,8 +588,67 @@ class RealWorldService:
             "next_refresh": iso_z(self.last_refresh_wall + catalog.CACHE_TTL_S) if self.last_refresh_wall else None,
             "clock_lag_s": round(lag, 2) if lag is not None else None,
             "last_error": self.last_error,
+            "maneuver_detections": list(self.maneuver_detections)[-20:][::-1],
+            "maneuver_thresholds": self.maneuver_thresholds,
             "propagator": "SGP4 (element sets) + RK4/J2 engine between re-anchors",
             "data_source": "CelesTrak GP (NORAD element sets)",
+        }
+
+    REENTRY_MAX_PERIGEE_KM = 450.0      # above this, LEO lifetimes are years: not worth integrating
+
+    def reentry_watch(self, max_days: float = 90.0) -> List[dict]:
+        """Catalog objects predicted to re-enter within max_days (realworld/decay.py), soonest first.
+        Cached until the next element-set refresh."""
+        from satellite_api.physics_engine import drag_settings
+        from satellite_api.realworld import decay
+        key = (self.last_refresh_wall, self.loaded_at)
+        if getattr(self, "_reentry_cache", (None, None))[0] != key:
+            scale = float(drag_settings().get("scale", 1.0))
+            rows = []
+            for table, role in ((self.fleet, "fleet"), (self.objects, "object")):
+                for oid, obj in table.items():
+                    el = obj.elements()
+                    if el["perigee_alt_km"] > self.REENTRY_MAX_PERIGEE_KM:
+                        continue
+                    est = decay.estimate(el, float(obj.fields.get("MEAN_MOTION_DOT", 0.0) or 0.0),
+                                         catalog.ballistic_coefficient(obj), scale)
+                    if est and est["lifetime_days"] is not None:
+                        epoch_ts = obj.epoch.timestamp()
+                        rows.append({"id": oid, "name": obj.name, "norad_id": obj.norad_id, "role": role, **est,
+                                     "predicted_reentry": iso_z(epoch_ts + est["lifetime_days"] * 86400.0),
+                                     "window": [iso_z(epoch_ts + d * 86400.0) for d in est["window_days"]]})
+            self._reentry_cache = (key, sorted(rows, key=lambda r: r["lifetime_days"]))
+        return [r for r in self._reentry_cache[1] if r["lifetime_days"] <= max_days]
+
+    def orbit_fit(self, object_id: str) -> dict:
+        """Pseudo-OD over the object's element-set history (realworld/pseudo_od.py), compared with SGP4 on the
+        latest set now. Blocking (seconds): run it in a thread."""
+        from satellite_api.realworld import pseudo_od
+        obj = self.fleet.get(object_id) or self.objects.get(object_id)
+        if obj is None:
+            raise KeyError(object_id)
+        sets = list(self.element_history.get(obj.norad_id, [])) + [obj]
+        bstar_b = catalog.ballistic_coefficient(obj)
+        result = pseudo_od.fit_element_history(sets, bstar_b if math.isfinite(bstar_b) else 0.01)
+        if result is None:
+            span_h = (sets[-1].epoch - sets[0].epoch).total_seconds() / 3600.0
+            return {"id": object_id, "fitted": False, "sets": len(sets), "span_h": round(span_h, 1),
+                    "needs": f"at least {pseudo_od.MIN_SETS} element sets over {pseudo_od.MIN_SPAN_H:.0f} h "
+                             "(collected at each catalog refresh, ~2 h apart)"}
+        now = self.state.current_time or _utcnow()
+        state = result["state0"].reshape(1, 6).copy()
+        bal = np.array([result["ballistic_m2_kg"]])
+        from satellite_api.physics_engine import propagate_states
+        propagate_states(state, (now - result["epoch"]).total_seconds(), max_step=30.0, ballistic=bal)
+        sgp4_now, ok = catalog.propagate([obj], now)
+        return {
+            "id": object_id, "fitted": True, "sets": result["sets"], "span_h": result["span_h"],
+            "fit_epoch": iso_z(result["epoch"]), "rms_km": round(result["rms_km"], 4),
+            "rms_per_set_km": [round(x, 4) for x in result["rms_per_set_km"]],
+            "ballistic_m2_kg": round(result["ballistic_m2_kg"], 5),
+            "bstar_ballistic_m2_kg": round(bstar_b, 5) if math.isfinite(bstar_b) else None,
+            "state_now": state[0].tolist(),
+            "difference_from_latest_sgp4_km": round(float(np.linalg.norm(state[0, :3] - sgp4_now[0, :3])), 3) if ok[0] else None,
         }
 
     def object_info(self, object_id: str) -> Optional[dict]:

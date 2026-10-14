@@ -125,50 +125,98 @@ def verify_sequence(sat_state: np.ndarray, sat_id: str, burns: Sequence[dict], o
 def trade_space(sat_state: np.ndarray, obj_state: np.ndarray, tca_offset_s: float, obj_is_owned: bool,
                 axis: str = "T", n_times: int = 8, n_dv: int = 11, max_dv_mps: Optional[float] = None,
                 fuel_kg: float = 50.0, sat_ballistic: float = float("nan"), obj_ballistic: float = float("nan")) -> dict:
-    """Miss distance and Pc at TCA for single impulsive burns on a (burn time x Δv) grid."""
+    """Miss distance and Pc at TCA for single impulsive burns on a (burn time x Δv) grid, plus the exact
+    minimum Δv per burn time and direction (`min_dv_options`), refined from the grid by bisection."""
     axis_idx = {"R": 0, "T": 1, "N": 2}[axis.upper()]
     max_dv = (CONFIG.maxDeltaV if max_dv_mps is None else max_dv_mps) / 2.0
     dvs = np.linspace(-max_dv, max_dv, n_dv)
     latest = max(15.0, tca_offset_s - 120.0)
     offsets = np.unique(np.round(np.linspace(15.0, latest, n_times), 1))
+    mass = CONFIG.dryMass + fuel_kg
+    fuel = lambda dv: mass * (1.0 - math.exp(-abs(dv) / (300.0 * 9.80665)))
+    run = lambda bt, bdv: _evaluate(sat_state, obj_state, bt, bdv, axis_idx, tca_offset_s, obj_is_owned,
+                                    sat_ballistic, obj_ballistic)
 
     combos = [(t, dv) for t in offsets for dv in dvs]
-    k = len(combos)
+    miss, pc, tca = run(np.array([c[0] for c in combos]), np.array([c[1] for c in combos]))
+    grid = [{"burn_offset_s": float(bt), "dv_mps": round(float(dv), 4), "miss_km": float(miss[i]), "pc": pc[i],
+             "tca_offset_s": tca[i], "fuel_kg": fuel(dv)} for i, (bt, dv) in enumerate(combos)]
+    # Target a decade below the threshold - the same margin the autopilot sizes its burns to - so the
+    # "minimum" burn is not one that sits exactly on the decision boundary.
+    target = CONFIG.pcManeuverThreshold / 10.0
+    # No burn needed (the no-burn cells already meet the target): there is no minimum to look for.
+    baseline_ok = all(g["pc"] is not None and g["pc"] < target for g in grid if g["dv_mps"] == 0.0)
+    refined = [] if baseline_ok else _refine_min_dv(grid, offsets, run, target, fuel)
+    return {"axis": axis.upper(), "burn_offsets_s": offsets.tolist(), "dv_mps": [round(float(d), 4) for d in dvs],
+            "grid": grid, "min_dv_options": refined, "min_dv_target_pc": target,
+            "pc_threshold": CONFIG.pcManeuverThreshold}
+
+
+def _evaluate(sat_state, obj_state, burn_t: np.ndarray, burn_dv_mps: np.ndarray, axis_idx: int, tca_offset_s: float,
+              obj_is_owned: bool, sat_ballistic: float, obj_ballistic: float):
+    """Miss, Pc and TCA offset for each single burn (burn_t[i] s from now, burn_dv_mps[i] along the RTN axis)."""
+    k = len(burn_t)
     A = np.repeat(np.asarray(sat_state, dtype=float).reshape(1, 6), k, axis=0)
     B = np.repeat(np.asarray(obj_state, dtype=float).reshape(1, 6), k, axis=0)
-    burn_t = np.array([c[0] for c in combos])
-    burn_dv = np.array([c[1] for c in combos]) / 1000.0
+    burn_dv = np.asarray(burn_dv_mps, dtype=float) / 1000.0
     pair_b = np.concatenate([np.full(k, sat_ballistic), np.full(k, obj_ballistic)])
 
     # Carry every copy forward, applying each burn in RTN at its own epoch.
     t = 0.0
-    for epoch in offsets:
+    for epoch in np.unique(burn_t):
         pair = np.vstack([A, B])
         propagate_states(pair, epoch - t, max_step=BRIDGE_STEP_S, ballistic=pair_b)
         A, B = pair[:k], pair[k:]
         t = epoch
-        rows = np.nonzero(burn_t == epoch)[0]
-        for i in rows:
+        for i in np.nonzero(burn_t == epoch)[0]:
             A[i, 3:] += rtn_basis(A[i, :3], A[i, 3:])[:, axis_idx] * burn_dv[i]
     start = max(t, tca_offset_s - TRADE_WINDOW_S / 2)
     pair = np.vstack([A, B])
     propagate_states(pair, start - t, max_step=BRIDGE_STEP_S, ballistic=pair_b)
     A, B = pair[:k], pair[k:]
     miss, t_rel, A_at, B_at = closest_approach(A, B, TRADE_WINDOW_S, 2.0, pair_b[:k], pair_b[k:])
+    tca = [start + float(t_rel[i]) for i in range(k)]
+    pc = [assess(A_at[i], B_at[i], float(miss[i]), tca[i], obj_is_owned, hbr_m=CONFIG.hardBodyRadiusM,
+                 covariance_scale=CONFIG.covarianceScale)["pc"] for i in range(k)]
+    return miss, pc, tca
 
-    grid = []
-    for i, (bt, dv) in enumerate(combos):
-        tca_i = start + float(t_rel[i])
-        res = assess(A_at[i], B_at[i], float(miss[i]), tca_i, obj_is_owned,
-                     hbr_m=CONFIG.hardBodyRadiusM, covariance_scale=CONFIG.covarianceScale)
-        mass = CONFIG.dryMass + fuel_kg
-        grid.append({
-            "burn_offset_s": float(bt), "dv_mps": round(float(dv), 4),
-            "miss_km": float(miss[i]), "pc": res["pc"], "tca_offset_s": tca_i,
-            "fuel_kg": mass * (1.0 - math.exp(-abs(dv) / (300.0 * 9.80665))),
-        })
-    return {"axis": axis.upper(), "burn_offsets_s": offsets.tolist(), "dv_mps": [round(float(d), 4) for d in dvs],
-            "grid": grid, "pc_threshold": CONFIG.pcManeuverThreshold}
+
+REFINE_ITERATIONS = 10      # bisection steps: a grid step of 0.75 m/s refined to < 1 mm/s
+
+
+def _refine_min_dv(grid: List[dict], offsets, run, threshold: float, fuel) -> List[dict]:
+    """For each burn time and direction, the smallest Δv that brings Pc below the threshold.
+
+    The grid brackets it between the smallest safe |Δv| and the next smaller grid value (unsafe, or 0);
+    all brackets are bisected together, one batched propagation per iteration. Analytic CAM work
+    (Bombardelli & Hernando-Ayuso; OCCAM) computes this minimum directly in the B-plane; doing it on the
+    numerically propagated trajectories keeps J2, drag and the real geometry."""
+    brackets = []      # (burn_t, sign, lo_abs_unsafe, hi_abs_safe)
+    for t in offsets:
+        for sign in (1.0, -1.0):
+            cells = sorted((c for c in grid if c["burn_offset_s"] == float(t) and c["dv_mps"] * sign > 0),
+                           key=lambda c: abs(c["dv_mps"]))
+            safe = [c for c in cells if c["pc"] is not None and c["pc"] < threshold]
+            if not safe:
+                continue
+            hi = abs(safe[0]["dv_mps"])
+            below = [abs(c["dv_mps"]) for c in cells if abs(c["dv_mps"]) < hi]
+            brackets.append([float(t), sign, max(below) if below else 0.0, hi])
+    if not brackets:
+        return []
+    for _ in range(REFINE_ITERATIONS):
+        mids = np.array([0.5 * (b[2] + b[3]) for b in brackets])
+        _, pcs, _ = run(np.array([b[0] for b in brackets]), mids * np.array([b[1] for b in brackets]))
+        for b, mid, p in zip(brackets, mids, pcs):
+            if p is not None and p < threshold:
+                b[3] = mid
+            else:
+                b[2] = mid
+    dv = np.array([b[3] * b[1] for b in brackets])
+    miss, pcs, tcas = run(np.array([b[0] for b in brackets]), dv)
+    out = [{"burn_offset_s": b[0], "dv_mps": round(float(d), 4), "miss_km": float(m), "pc": p, "tca_offset_s": tc,
+            "fuel_kg": fuel(d)} for b, d, m, p, tc in zip(brackets, dv, miss, pcs, tcas)]
+    return sorted(out, key=lambda o: abs(o["dv_mps"]))
 
 
 # ── rationale text ─────────────────────────────────────────────────────────────

@@ -78,6 +78,14 @@ services:
       - ASSISTANT_MODEL=${ASSISTANT_MODEL:-qwen3:8b}
       - ASSISTANT_KEEP_ALIVE=${ASSISTANT_KEEP_ALIVE:-2m}
       - ASSISTANT_NUM_CTX=${ASSISTANT_NUM_CTX:-8192}
+      - ASSISTANT_NUM_BATCH=${ASSISTANT_NUM_BATCH:-128}
+      - NOTIFY_WEBHOOK_URLS=${NOTIFY_WEBHOOK_URLS:-}
+      - NOTIFY_MIN_LEVEL=${NOTIFY_MIN_LEVEL:-crit}
+      - NOTIFY_CATEGORIES=${NOTIFY_CATEGORIES:-}
+      - NOTIFY_MAX_PER_MIN=${NOTIFY_MAX_PER_MIN:-20}
+      - MANEUVER_DA_KM=${MANEUVER_DA_KM:-0.1}
+      - MANEUVER_DI_DEG=${MANEUVER_DI_DEG:-0.01}
+      - MANEUVER_SENSITIVITY=${MANEUVER_SENSITIVITY:-5}
     # host.docker.internal resolves on Docker Desktop already; this mapping adds it on Linux.
     extra_hosts:
       - "host.docker.internal:host-gateway"

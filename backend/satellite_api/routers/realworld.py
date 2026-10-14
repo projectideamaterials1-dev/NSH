@@ -20,11 +20,11 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from satellite_api.realworld import catalog, imagery
+from satellite_api.realworld import catalog, imagery, live
 from satellite_api.realworld.catalog import CatalogError
 from satellite_api.realworld.live import MAX_OBJECTS, MAX_SATELLITES, RealWorldService, get_service
 from satellite_api.realworld.space_weather import fetch_space_weather
-from satellite_api.timeutils import iso_z
+from satellite_api.timeutils import iso_z, parse_iso_utc
 
 router = APIRouter(tags=["Real-world data"])
 
@@ -135,6 +135,34 @@ async def resize_fleet(body: FleetResize, request: Request):
 @router.get("/api/catalog/status")
 async def catalog_status(request: Request):
     return _service(request).status()
+
+
+@router.get("/api/catalog/orbit-fit/{object_id:path}")
+async def catalog_orbit_fit(object_id: str, request: Request):
+    """Pseudo orbit determination over the object's element-set history (Levit & Marshall): the engine's
+    force model fitted to several consecutive sets, with residuals per set and the fitted drag."""
+    service = _service(request)
+    try:
+        return await asyncio.to_thread(service.orbit_fit, object_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"{object_id} is not a catalog object")
+
+
+@router.get("/api/catalog/maneuvers")
+async def catalog_maneuvers(request: Request, hours: float = Query(24.0, gt=0, le=24 * 30)):
+    """Maneuvers detected in new element sets during the last `hours` (wall clock), newest first."""
+    service = _service(request)
+    cutoff = live._utcnow().timestamp() - hours * 3600.0     # the clock detections are stamped with
+    rows = [d for d in service.maneuver_detections if parse_iso_utc(d["detected_at"]).timestamp() >= cutoff]
+    return {"hours": hours, "count": len(rows), "maneuvers": rows[::-1]}
+
+
+@router.get("/api/catalog/reentries")
+async def catalog_reentries(request: Request, max_days: float = Query(90.0, gt=0, le=3650)):
+    """Objects predicted to re-enter within max_days (lifetime from observed decay or B*, +-25 % window)."""
+    service = _service(request)
+    rows = await asyncio.to_thread(service.reentry_watch, max_days)
+    return {"max_days": max_days, "count": len(rows), "reentries": rows}
 
 
 @router.get("/api/catalog/objects/{object_id:path}")

@@ -2,6 +2,7 @@
 // Global keyboard shortcuts: one table drives both the handler and the help overlay.
 
 import useOrbitalStore from '../store/useOrbitalStore';
+import useLayoutStore from '../store/layout';
 
 export interface Shortcut {
   keys: string[];          // KeyboardEvent.key values (case-insensitive for letters)
@@ -43,10 +44,15 @@ export const SHORTCUTS: Shortcut[] = [
   { keys: ['3'], display: '3', label: '3D Earth', group: 'View', run: () => store().setViewMode('3d') },
   { keys: ['2'], display: '2', label: '2D map', group: 'View', run: () => store().setViewMode('2d') },
   { keys: ['p'], display: 'P', label: 'Performance overlay', group: 'View', run: () => store().togglePerfHud() },
+  { keys: ['F'], display: 'Shift F', label: 'Fullscreen on / off', group: 'View', run: () => { useLayoutStore.getState().toggleFullscreen(); } },
+  { keys: ['m'], display: 'M', label: 'Map only (hide both side panels) / restore', group: 'View', run: () => useLayoutStore.getState().toggleFocus() },
+  { keys: ['['], display: '[', label: 'Hide / show the satellite panel', group: 'Panels', run: () => useLayoutStore.getState().togglePanel('left') },
+  { keys: [']'], display: ']', label: 'Hide / show the operations panel', group: 'Panels', run: () => useLayoutStore.getState().togglePanel('right') },
   { keys: ['f'], display: 'F', label: 'Fleet tab', group: 'Panels', run: () => store().setRightTab('fleet') },
   { keys: ['t'], display: 'T', label: 'Threats tab', group: 'Panels', run: () => store().setRightTab('threats') },
   { keys: ['d'], display: 'D', label: 'Decisions & approvals tab', group: 'Panels', run: () => store().setRightTab('decisions') },
   { keys: ['a'], display: 'A', label: 'Alerts tab', group: 'Panels', run: () => store().setRightTab('alerts') },
+  { keys: ['v'], display: 'V', label: 'Activity tab (maneuvers detected, re-entries)', group: 'Panels', run: () => store().setRightTab('activity') },
   { keys: ['s'], display: 'S', label: 'Screen for conjunctions now', group: 'Panels',
     run: () => { const s = store(); if (s.satellites?.length && !s.screening) s.screenNow(); } },
   { keys: ['j'], display: 'J', label: 'Select next satellite', group: 'Selection', run: () => cycleSatellite(1) },
@@ -74,7 +80,8 @@ export function handleShortcut(e: KeyboardEvent): boolean {
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   // Arrow keys on a focused slider already scrub it natively.
   if ((key === 'ArrowLeft' || key === 'ArrowRight') && (e.target as HTMLElement | null)?.tagName === 'INPUT') return false;
-  const hit = SHORTCUTS.find(s => s.keys.includes(key));
+  // Exact key first, so Shift+F ("F") is not the Fleet tab shortcut ("f").
+  const hit = SHORTCUTS.find(s => s.keys.includes(e.key)) ?? SHORTCUTS.find(s => s.keys.includes(key));
   if (!hit) return false;
   e.preventDefault();
   hit.run(e);

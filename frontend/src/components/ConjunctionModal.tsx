@@ -3,11 +3,14 @@
 // maneuver trade space (Pc or miss over burn time x delta-v) and the autopilot's reasoning.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Rocket } from 'lucide-react';
 import useOrbitalStore from '../store/useOrbitalStore';
 import type { Conjunction, TradeSpace, TradeSpaceCell } from '../store/useOrbitalStore';
+import type { PcMonteCarlo } from '../store/types';
+import { apiJson } from '../api/http';
 import { CDM_STATUS_META, formatDuration, formatKm, formatPc, formatUtcTime, riskMeta, secondsUntil } from '../lib/format';
-import { Modal } from './ui';
+import { Button, Modal } from './ui';
+import { ManualBurnModal, type BurnPrefill } from './ManualBurnModal';
 
 // ── colour scales (dark surface) ──────────────────────────────────────────────
 // Diverging around the Pc threshold: blue = below (safer), red = above, gray midpoint = at threshold.
@@ -155,6 +158,30 @@ const TradeSpaceView: React.FC<{ cdm: Conjunction }> = ({ cdm }) => {
 
   const color = (g: TradeSpaceCell) => (metric === 'pc' ? pcColor(g.pc, study!.pc_threshold) : ramp(SEQ, g.miss_km / maxMiss));
   const axisLabel = { T: 'along-track', R: 'radial', N: 'cross-track' }[axis];
+  const timestamp = useOrbitalStore(s => s.timestamp);
+  const [pick, setPick] = useState<BurnPrefill | null>(null);
+
+  // Opens the burn planner on a grid option. Offsets are relative to the study's computation time;
+  // the planner's are relative to now.
+  const planCell = (g: TradeSpaceCell) => {
+    if (!study) return;
+    const age = timestamp ? (Date.parse(timestamp) - Date.parse(study.computed_at)) / 1000 : 0;
+    const key = axis.toLowerCase() as 'r' | 't' | 'n';
+    setPick({
+      dv: { r: 0, t: 0, n: 0, [key]: g.dv_mps },
+      offset_s: Math.max(10, g.burn_offset_s - age),
+      note: `From the trade space: ${g.dv_mps.toFixed(2)} m/s ${axisLabel}, ${formatDuration(tcaOffset - g.burn_offset_s)} before TCA → miss ${formatKm(g.miss_km)}, Pc ${formatPc(g.pc)}.`,
+    });
+  };
+  const cheapestSafe = useMemo(() => {
+    if (!study) return null;
+    const age = timestamp ? (Date.parse(timestamp) - Date.parse(study.computed_at)) / 1000 : 0;
+    // Prefer the refined minimum (exact Δv, not the nearest coarser grid value).
+    const refined = (study.min_dv_options ?? []).filter(g => g.pc < study.pc_threshold && g.burn_offset_s - age >= 60);
+    if (refined.length) return refined[0];
+    const safe = study.grid.filter(g => g.dv_mps !== 0 && g.pc < study.pc_threshold && g.burn_offset_s - age >= 60);
+    return safe.sort((a, b) => Math.abs(a.dv_mps) - Math.abs(b.dv_mps) || b.miss_km - a.miss_km)[0] ?? null;
+  }, [study, timestamp]);
 
   return (
     <div>
@@ -192,6 +219,8 @@ const TradeSpaceView: React.FC<{ cdm: Conjunction }> = ({ cdm }) => {
                 return (
                   <rect key={`${i}-${j}`} x={x} y={y} width={cellW} height={cellH} rx={3} fill={color(g)}
                     stroke={hover === g ? 'var(--color-ink)' : isPlanned ? 'var(--color-ok)' : 'none'} strokeWidth={2}
+                    style={{ cursor: g.dv_mps !== 0 ? 'pointer' : undefined }}
+                    onClick={() => g.dv_mps !== 0 && planCell(g)}
                     onMouseEnter={() => setHover(g)} onMouseLeave={() => setHover(null)}>
                     <title>{`Burn ${formatDuration(tcaOffset - g.burn_offset_s)} before TCA, ${g.dv_mps.toFixed(2)} m/s: miss ${formatKm(g.miss_km)}, Pc ${formatPc(g.pc)}, ${g.fuel_kg.toFixed(3)} kg`}</title>
                   </rect>
@@ -207,8 +236,22 @@ const TradeSpaceView: React.FC<{ cdm: Conjunction }> = ({ cdm }) => {
             {hover
               ? `Burn ${formatDuration(tcaOffset - hover.burn_offset_s)} before TCA · ${hover.dv_mps.toFixed(2)} m/s → miss ${formatKm(hover.miss_km)}, Pc ${formatPc(hover.pc)}, ${hover.fuel_kg.toFixed(3)} kg`
               : `No burn: miss ${formatKm(study.baseline.miss_km)}, Pc ${formatPc(study.baseline.pc)}.` +
-                (planned ? ` Autopilot's first burn: ${planned.dv_mps.toFixed(2)} m/s, ${formatDuration(tcaOffset - planned.burn_offset_s)} before TCA (green outline, nearest cell).` : '')}
+                (planned ? ` Autopilot's first burn: ${planned.dv_mps.toFixed(2)} m/s, ${formatDuration(tcaOffset - planned.burn_offset_s)} before TCA (green outline, nearest cell).` : '') +
+                ' Click a cell to plan that burn.'}
           </p>
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            <Button variant="primary" disabled={!cheapestSafe} onClick={() => cheapestSafe && planCell(cheapestSafe)}
+              icon={<Rocket className="w-4 h-4" />}
+              title={cheapestSafe ? `Smallest ${axisLabel} burn that brings Pc below the threshold` : 'No grid option brings Pc below the threshold'}>
+              Plan cheapest safe burn
+            </Button>
+            {cheapestSafe && (
+              <span className="text-[12px] text-muted tabular">
+                {cheapestSafe.dv_mps.toFixed(2)} m/s, {formatDuration(tcaOffset - cheapestSafe.burn_offset_s)} before TCA → Pc {formatPc(cheapestSafe.pc)}, {cheapestSafe.fuel_kg.toFixed(3)} kg
+              </span>
+            )}
+          </div>
+          {pick && <ManualBurnModal satelliteId={cdm.satellite_id} prefill={pick} onClose={() => setPick(null)} />}
 
           <details className="mt-2 text-[12px]">
             <summary className="cursor-pointer text-muted hover:text-ink">Table view</summary>
@@ -258,6 +301,112 @@ const Segmented: React.FC<{ value: string; onChange: (v: string) => void; option
   </div>
 );
 
+// ── how far to trust the Pc ───────────────────────────────────────────────────
+const TREND_META = {
+  rising: { label: 'Rising', color: 'var(--color-crit)', arrow: '↑' },
+  falling: { label: 'Falling', color: 'var(--color-ok)', arrow: '↓' },
+  stable: { label: 'Stable', color: 'var(--color-muted)', arrow: '→' },
+  new: { label: 'First estimate', color: 'var(--color-muted)', arrow: '•' },
+} as const;
+
+/** Pc history as a log-scale sparkline: is the event converging or growing between screenings? */
+const PcSparkline: React.FC<{ history: [number, number][] }> = ({ history }) => {
+  const w = 160, h = 36;
+  const logs = history.map(([, pc]) => Math.log10(Math.max(pc, 1e-30)));
+  const lo = Math.min(...logs), hi = Math.max(...logs);
+  const span = Math.max(hi - lo, 1);
+  const pts = logs.map((v, i) => `${(i / Math.max(logs.length - 1, 1)) * (w - 4) + 2},${h - 2 - ((v - lo) / span) * (h - 4)}`);
+  return (
+    <svg width={w} height={h} role="img" aria-label={`Pc over the last ${history.length} screenings`} className="flex-shrink-0">
+      <polyline points={pts.join(' ')} fill="none" stroke="var(--color-accent)" strokeWidth={1.5} />
+      {pts.length > 0 && <circle cx={pts[pts.length - 1].split(',')[0]} cy={pts[pts.length - 1].split(',')[1]} r={2.5} fill="var(--color-accent)" />}
+    </svg>
+  );
+};
+
+/** Monte Carlo Pc on demand: the trustworthy number when the 2-D formula's assumptions don't hold. */
+const MonteCarloPc: React.FC<{ cdm: Conjunction }> = ({ cdm }) => {
+  const [result, setResult] = useState<PcMonteCarlo | null>(cdm.pc_mc ?? null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setResult(await apiJson<PcMonteCarlo>(`/api/conjunctions/${encodeURIComponent(cdm.cdm_id)}/pc-monte-carlo?samples=5000`,
+        { method: 'POST' }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Monte Carlo failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (cdm.short_encounter_valid !== false && !result) return null;
+  return (
+    <div className="flex-shrink-0 text-[12px] leading-tight min-w-[180px]">
+      <div className="text-faint">Monte Carlo Pc</div>
+      {result ? (
+        <>
+          <div className="text-ink font-medium tabular">
+            {result.hits ? formatPc(result.pc_mc) : `< ${formatPc(result.ci95[1])}`}
+          </div>
+          <div className="text-faint tabular mt-0.5" title={result.method}>
+            {result.hits}/{result.samples} hits · 95% {formatPc(result.ci95[0])}–{formatPc(result.ci95[1])}
+          </div>
+        </>
+      ) : null}
+      <Button className="mt-1.5" onClick={run} disabled={busy}
+        icon={busy ? <Loader2 className="w-4 h-4 animate-spin" /> : undefined}
+        title="Sample both objects from their covariances and propagate every pair through the encounter (RK4 + J2 + drag)">
+        {busy ? 'Sampling…' : result ? 'Run again' : 'Run Monte Carlo'}
+      </Button>
+      {error && <div className="text-crit mt-1">{error}</div>}
+    </div>
+  );
+};
+
+const PcQuality: React.FC<{ cdm: Conjunction }> = ({ cdm }) => {
+  const trend = cdm.pc_trend ? TREND_META[cdm.pc_trend] : null;
+  const history = cdm.pc_history ?? [];
+  const warnings: React.ReactNode[] = [];
+  if (cdm.pc_diluted) {
+    warnings.push(
+      <li key="dilution"><b className="text-warn">Probability dilution.</b> The Pc is low because the position uncertainty is
+        large, not because the objects are far apart: with a better-known orbit the Pc could reach{' '}
+        <b className="text-ink tabular">{formatPc(cdm.pc_max ?? null)}</b>. Treat this as unknown risk - import a CDM with measured
+        covariance or wait for fresher tracking.</li>);
+  }
+  if (cdm.object_maneuvered) {
+    warnings.push(
+      <li key="moved"><b className="text-warn">{cdm.object_maneuvered.id} maneuvered</b> (≈{cdm.object_maneuvered.dv_estimate_mps} m/s,
+        seen in its new element set at {formatUtcTime(cdm.object_maneuvered.detected_at)} UTC). This prediction came from its
+        old orbit; the next screening recomputes it from the new one.</li>);
+  }
+  if (cdm.short_encounter_valid === false) {
+    warnings.push(
+      <li key="short"><b className="text-warn">Slow encounter.</b> The objects stay close for about{' '}
+        {formatDuration(cdm.encounter_duration_s ?? 0)}, so the 2-D Pc's straight-line assumption is questionable;
+        a 3-D Pc or Monte Carlo assessment would be more accurate.</li>);
+  }
+  if (!trend && !warnings.length && !cdm.pc_mc) return null;
+  return (
+    <section className="mb-5 flex flex-col sm:flex-row gap-4 rounded-lg border border-line bg-raised/50 px-4 py-3" aria-label="Pc quality">
+      <MonteCarloPc cdm={cdm} />
+      {trend && (
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {history.length > 1 && <PcSparkline history={history} />}
+          <div className="text-[12px] leading-tight">
+            <div className="text-faint">Pc trend ({history.length} screens)</div>
+            <div className="font-medium" style={{ color: trend.color }}>{trend.arrow} {trend.label}</div>
+            {cdm.pc_max !== undefined && <div className="text-faint tabular mt-0.5" title="Largest Pc over any covariance size (Alfano)">max {formatPc(cdm.pc_max)}</div>}
+          </div>
+        </div>
+      )}
+      {warnings.length > 0 && <ul className="text-[12.5px] text-muted space-y-1.5 leading-relaxed">{warnings}</ul>}
+    </section>
+  );
+};
+
 // ── modal ─────────────────────────────────────────────────────────────────────
 export const ConjunctionModal: React.FC = () => {
   const id = useOrbitalStore(s => s.conjunctionDetailId);
@@ -300,6 +449,7 @@ export const ConjunctionModal: React.FC = () => {
           </div>
         ))}
       </dl>
+      <PcQuality cdm={cdm} />
       {ext && (
         <section className="mb-5 rounded-lg border border-accent/40 bg-accent/5 px-4 py-3 text-[13px]" aria-label="External CDM comparison">
           <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">

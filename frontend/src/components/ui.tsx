@@ -65,6 +65,9 @@ export const Button: React.FC<
 };
 
 let modalSeq = 0;
+// Open dialogs, innermost last: only the top one handles Escape/Tab (a burn planner opened from the
+// conjunction view must not close both).
+const modalStack: number[] = [];
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export const Modal: React.FC<{
@@ -75,7 +78,8 @@ export const Modal: React.FC<{
   children: ReactNode;
 }> = ({ title, subtitle, onClose, width = 720, children }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
-  const [titleId] = useState(() => `modal-title-${++modalSeq}`);
+  const [seq] = useState(() => ++modalSeq);
+  const titleId = `modal-title-${seq}`;
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
@@ -84,7 +88,9 @@ export const Modal: React.FC<{
     const opener = document.activeElement as HTMLElement | null;
     const dialog = dialogRef.current;
     (dialog?.querySelector<HTMLElement>(FOCUSABLE) ?? dialog)?.focus();
+    modalStack.push(seq);
     const onKey = (e: KeyboardEvent) => {
+      if (modalStack[modalStack.length - 1] !== seq) return;
       if (e.key === 'Escape') {
         e.stopPropagation();
         onCloseRef.current();
@@ -101,9 +107,11 @@ export const Modal: React.FC<{
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);
+      const at = modalStack.lastIndexOf(seq);
+      if (at >= 0) modalStack.splice(at, 1);
       opener?.focus?.();
     };
-  }, []);
+  }, [seq]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-2 sm:p-6" onClick={onClose}>

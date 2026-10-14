@@ -202,7 +202,7 @@ async def test_ollama_request_body_and_think_fallback():
     msg = await _ollama(handler).chat([{"role": "user", "content": "q"}], tools.specs(), think=True)
     assert msg["content"] == "hi"
     first, retry = bodies
-    assert first["think"] is True and first["keep_alive"] == "30s" and first["options"] == {"num_ctx": 4096}
+    assert first["think"] is True and first["keep_alive"] == "30s" and first["options"] == {"num_ctx": 4096, "num_batch": 128}
     assert first["stream"] is False and len(first["tools"]) == len(tools.specs()) > len(tools.TOOLS)
     assert "think" not in retry
 
@@ -252,7 +252,7 @@ async def test_manual_burn_proposal_validation(client, model):
     model(_tool_call("propose_manual_burn", satellite_id="SAT-A", minutes_from_now=5),
           _tool_call("propose_manual_burn", satellite_id="SAT-A", minutes_from_now=5, dv_t_mps=99),
           _answer("ok"))
-    body = (await _ask(client)).json()
+    body = (await _ask(client, "Schedule it.")).json()
     assert "zero delta-v" in body["tool_calls"][0]["error"]
     [action] = body["actions"]
     assert action["valid"] is False and action["params"]["burns"][0]["dv_mps"] == {"t": 99.0}
@@ -276,7 +276,7 @@ async def test_burn_proposal_out_of_contact_waits_for_the_next_pass(client, mode
     cdm = await _plant_conjunction(client)
     _out_of_contact(monkeypatch, (600, 630), (620, 900))   # overlapping passes merge into 600-900 s
     model(_tool_call("propose_burn_from_trade_study", cdm_id=cdm["cdm_id"], option="cheapest"), _answer("ok"))
-    [action] = (await _ask(client)).json()["actions"]
+    [action] = (await _ask(client, "Schedule it.")).json()["actions"]
 
     assert action["valid"] is True and action["preview"]["dry_run_status"] == "REJECTED: NO_LINE_OF_SIGHT"
     burn_ts = parse_iso_utc(action["params"]["burns"][0]["burnTime"]).timestamp()
@@ -293,13 +293,13 @@ async def test_burn_proposals_without_a_usable_contact(client, model, monkeypatc
     _out_of_contact(monkeypatch, (0, 30), (600, 900))      # the first pass is too short to confirm in
     model(_tool_call("propose_manual_burn", satellite_id="SAT-A", minutes_from_now=5, dv_t_mps=0.5),
           _answer("ok"))
-    [action] = (await _ask(client)).json()["actions"]
+    [action] = (await _ask(client, "Schedule it.")).json()["actions"]
     assert action["valid"] is False and action["confirm_window"] is None
     assert any("too late to uplink" in w and "12 minutes" in w for w in action["warnings"]), action["warnings"]
 
     _out_of_contact(monkeypatch)
     model(_tool_call("propose_burn_from_trade_study", cdm_id=cdm["cdm_id"]), _answer("ok"))
-    body = (await _ask(client)).json()
+    body = (await _ask(client, "Schedule it.")).json()
     assert body["actions"] == [] and "no ground-station contact" in body["tool_calls"][0]["error"]
 
 
@@ -315,7 +315,7 @@ async def test_proposal_answer_and_autopilot_proposals_change_nothing(client, mo
           _tool_call("propose_proposal_decision", proposal_id="PROP-2", decision="approve"),
           _tool_call("propose_autopilot_change", enabled=False),
           _tool_call("propose_screening"), _answer("ok"))
-    body = (await _ask(client)).json()
+    body = (await _ask(client, "Schedule it.")).json()
     reject, autopilot, screen = body["actions"]
     assert reject["kind"] == "reject_proposal" and reject["params"] == {"proposal_id": "PROP-1", "reason": "too costly"}
     assert "_internal" not in reject["preview"]
@@ -323,3 +323,34 @@ async def test_proposal_answer_and_autopilot_proposals_change_nothing(client, mo
     assert autopilot["params"] == {"enabled": False} and autopilot["warnings"]
     assert screen["kind"] == "screen_now"
     assert state.proposals["PROP-1"]["status"] == "PENDING" and CONFIG.autopilotEnabled is True
+
+
+@pytest.mark.asyncio
+async def test_questions_get_no_action_tools_and_cannot_propose(client, model):
+    await _plant_conjunction(client)
+    m = model(_tool_call("propose_autopilot_change", enabled=False), _answer("It would stop automatic avoidance."))
+    body = (await _ask(client, "What would happen if I disabled the autopilot?")).json()
+    assert not any(t["function"]["name"].startswith("propose_") for t in m.calls[0]["tools"])
+    assert body["actions"] == [] and "not for an action" in body["tool_calls"][0]["error"]
+    assert "do not offer to perform actions" in m.calls[0]["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_answer_without_tools_is_nudged_once(client, model):
+    m = model(_answer("Very reliable."), _tool_call("get_physics_model"), _answer("Decision-support fidelity."))
+    body = (await _ask(client, "How reliable are the collision probabilities?")).json()
+    assert [c["name"] for c in body["tool_calls"]] == ["get_physics_model"]
+    assert body["answer"] == "Decision-support fidelity."
+    assert "not from memory" in m.calls[1]["messages"][-1]["content"]
+    # Small talk needs no data: no nudge.
+    m = model(_answer("I can explain conjunctions."))
+    assert (await _ask(client, "Hi, what can you help me with?")).json()["answer"] == "I can explain conjunctions."
+    assert len(m.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_claims_of_execution_are_rewritten_when_an_action_was_only_proposed(client, model):
+    await _plant_conjunction(client)
+    model(_tool_call("propose_screening"), _answer("Screening has been executed."))
+    body = (await _ask(client, "Run a conjunction screening now.")).json()
+    assert body["actions"] and body["answer"] == "Screening is ready to be executed once you confirm it."

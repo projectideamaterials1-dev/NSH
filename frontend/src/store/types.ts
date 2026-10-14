@@ -148,6 +148,30 @@ export interface Conjunction {
   covariance_measured?: boolean;
   /** Matching external CDM (uploaded CCSDS CDM or Space-Track cdm_public), for comparison. */
   external?: ExternalCdmSummary;
+  /** Largest Pc over covariance scaling (Alfano). */
+  pc_max?: number;
+  /** Pc is low because the uncertainty is large, not the miss distance: a low value is not evidence of safety. */
+  pc_diluted?: boolean;
+  /** False for slow / long encounters where the 2-D Pc's straight-line assumption is questionable. */
+  short_encounter_valid?: boolean;
+  encounter_duration_s?: number;
+  /** [timestamp s, Pc] for each screening of this event, oldest first. */
+  pc_history?: [number, number][];
+  pc_trend?: 'new' | 'rising' | 'falling' | 'stable';
+  /** Set when a newer element set showed one of the two objects maneuvering after this prediction. */
+  object_maneuvered?: { id: string; detected_at: string; dv_estimate_mps: number };
+  /** Monte Carlo Pc, when an operator ran it (POST /api/conjunctions/{id}/pc-monte-carlo). */
+  pc_mc?: PcMonteCarlo;
+}
+
+export interface PcMonteCarlo {
+  pc_mc: number;
+  hits: number;
+  samples: number;
+  ci95: [number, number];
+  window_s: number;
+  computed_at: string;
+  method: string;
 }
 
 export interface ExternalCdmSummary {
@@ -195,6 +219,8 @@ export interface TradeSpace {
   burn_offsets_s: number[];
   dv_mps: number[];
   grid: TradeSpaceCell[];
+  /** Exact minimum Δv per burn time and direction (bisected between grid cells), smallest first. */
+  min_dv_options?: TradeSpaceCell[];
   pc_threshold: number;
   baseline: { miss_km: number; pc: number | null };
   planned_burn: { burn_id: string; burn_offset_s: number; dv_mps: number } | null;
@@ -557,7 +583,7 @@ export interface OrbitalData {
   proposals: Proposal[];
   physics: PhysicsModel | null;
   conjunctionDetailId: string | null;
-  rightTab: 'fleet' | 'threats' | 'decisions' | 'alerts' | 'score';
+  rightTab: 'fleet' | 'threats' | 'decisions' | 'alerts' | 'activity' | 'score';
   showPerfHud: boolean;
   showShortcuts: boolean;
   viewMode: '2d' | '3d';

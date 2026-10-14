@@ -172,6 +172,54 @@ async def conjunction_tradespace(
     }
 
 
+@router.post("/api/conjunctions/{cdm_id}/pc-monte-carlo", tags=["Operations"])
+async def conjunction_pc_monte_carlo(cdm_id: str, request: Request,
+                                     samples: int = Query(5000, ge=500, le=50000)):
+    """Monte Carlo Pc for one conjunction (acm/monte_carlo.py): sampled from the same covariances as the
+    2-D Pc and propagated with the full force model through the encounter. Meant for events the 2-D
+    formula flags as slow / long encounters. The result is stored on the CDM as `pc_mc`."""
+    from satellite_api.acm.collision_probability import model_covariance_rtn
+    from satellite_api.acm.monte_carlo import monte_carlo_pc
+    from satellite_api.realworld.cdm_ingest import covariances_for, lookup
+    state = request.app.state.orbital_state
+    _require_ready(state)
+    async with state.lock:
+        cdm = next((c for c in state.cdms.items if c["cdm_id"] == cdm_id), None)
+        if cdm is None:
+            raise HTTPException(status_code=404, detail=f"Conjunction {cdm_id} not found.")
+        now_ts = state.now_ts
+        if cdm["tca_ts"] <= now_ts:
+            raise HTTPException(status_code=409, detail="TCA has passed.")
+        sat_idx = _sat_index(state, cdm["satellite_id"])
+        is_debris = cdm["object_type"] == "DEBRIS"
+        obj_idx = (state.debris_id_to_idx if is_debris else state.sat_id_to_idx).get(cdm["object_id"])
+        if obj_idx is None:
+            raise HTTPException(status_code=404, detail=f"Object {cdm['object_id']} is no longer tracked.")
+        sat_state = state.sat_buffer[sat_idx].copy()
+        obj_state = (state.debris_buffer if is_debris else state.sat_buffer)[obj_idx].copy()
+        sat_b = float(state.sat_ballistic[sat_idx])
+        obj_b = float((state.debris_ballistic if is_debris else state.sat_ballistic)[obj_idx])
+        rec = lookup(state.external_cdms.index(), cdm["satellite_id"], cdm["object_id"], cdm["tca_ts"])
+    dt = cdm["tca_ts"] - now_ts
+    cov_sat = cov_obj = None
+    if rec is not None:
+        cov_sat, cov_obj = covariances_for(rec)
+    if cov_sat is None or cov_obj is None:
+        realworld = getattr(request.app.state, "realworld", None)
+        catalog_obj = realworld.objects.get(cdm["object_id"]) if realworld else None
+        age_s = catalog_obj.age_days(state.current_time) * 86400.0 if catalog_obj else 0.0
+        owned = not is_debris
+        cov_sat = model_covariance_rtn(dt, True, CONFIG.covarianceScale)
+        cov_obj = model_covariance_rtn(dt + (0.0 if owned else max(0.0, age_s)), owned, CONFIG.covarianceScale)
+    result = await asyncio.to_thread(
+        monte_carlo_pc, sat_state, obj_state, dt, cov_sat, cov_obj, CONFIG.hardBodyRadiusM / 1000.0,
+        float(cdm.get("encounter_duration_s") or 120.0), samples, None, sat_b, obj_b)
+    result["computed_at"] = iso_z(now_ts)
+    async with state.lock:
+        cdm["pc_mc"] = result
+    return {"cdm_id": cdm_id, "pc_2d": cdm.get("pc"), **result}
+
+
 @router.get("/api/decisions", tags=["Operations"])
 async def list_decisions(request: Request, satellite_id: Optional[str] = None,
                          limit: int = Query(100, ge=1, le=500)):

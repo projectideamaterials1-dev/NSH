@@ -2,9 +2,10 @@
 // Top bar: product, simulation clock, mission KPIs, threat level, autopilot, settings and link status.
 
 import React, { useMemo, useState } from 'react';
-import { Bot, Keyboard, MessageSquare, Orbit, Settings, ShieldAlert } from 'lucide-react';
+import { Bot, Columns3, Keyboard, Maximize, MessageSquare, Minimize, Orbit, PanelsLeftRight, Settings, ShieldAlert } from 'lucide-react';
 import useOrbitalStore, { selectOpenThreatCounts } from '../store/useOrbitalStore';
 import useAssistantStore from '../store/assistant';
+import useLayoutStore from '../store/layout';
 import { formatCount, formatUtcDate, formatUtcTime, COLORS } from '../lib/format';
 import { SettingsModal } from './SettingsModal';
 import { Button } from './ui';
@@ -117,6 +118,10 @@ export const Header: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const assistantOpen = useAssistantStore(s => s.open);
   const setAssistantOpen = useAssistantStore(s => s.setOpen);
+  const mapOnly = useLayoutStore(s => s.collapsed.left && s.collapsed.right);
+  const toggleFocus = useLayoutStore(s => s.toggleFocus);
+  const fullscreen = useLayoutStore(s => s.fullscreen);
+  const toggleFullscreen = useLayoutStore(s => s.toggleFullscreen);
 
   const fleet = useMemo(() => {
     if (!satellites || satellites.length === 0) return null;
@@ -195,6 +200,13 @@ export const Header: React.FC = () => {
             icon={<MessageSquare className="w-4 h-4" />} className={assistantOpen ? 'text-accent' : ''}>
             <span className="hidden xl:inline">Assistant</span>
           </Button>
+          <Button variant="ghost" onClick={toggleFocus} aria-label="Map only" aria-pressed={mapOnly}
+            title={mapOnly ? 'Show the side panels (M)' : 'Map only: hide both side panels (M)'}
+            icon={mapOnly ? <PanelsLeftRight className="w-4 h-4" /> : <Columns3 className="w-4 h-4" />}
+            className={`hidden lg:inline-flex ${mapOnly ? 'text-accent' : ''}`} />
+          <Button variant="ghost" onClick={toggleFullscreen} aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            aria-pressed={fullscreen} title={fullscreen ? 'Exit fullscreen (Shift+F or Esc)' : 'Fullscreen (Shift+F)'}
+            icon={fullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />} />
           <Button variant="ghost" onClick={() => setShowShortcuts(true)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"
             icon={<Keyboard className="w-4 h-4" />} className="hidden md:inline-flex" />
           <Button variant="ghost" onClick={() => setShowSettings(true)} aria-label="Settings" title="Simulation settings"

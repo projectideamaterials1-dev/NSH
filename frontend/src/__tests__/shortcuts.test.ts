@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { SHORTCUTS, isTypingTarget } from '../lib/shortcuts';
 import useOrbitalStore, { selectPendingProposals, selectReplayFrame } from '../store/useOrbitalStore';
 import type { Proposal, ReplayFrame } from '../store/useOrbitalStore';
+import useLayoutStore from '../store/layout';
+import useWatchlist from '../store/watchlist';
 
 const frame = (timestamp: string, predicted = false): ReplayFrame => ({
   timestamp, satIds: ['S'], satPositions: new Float32Array(3), satFuels: new Float32Array(1), satStatuses: ['NOMINAL'],
@@ -33,6 +35,34 @@ describe('keyboard shortcuts', () => {
     expect(useOrbitalStore.getState().showPerfHud).toBe(!before);
     run('2');
     expect(useOrbitalStore.getState().viewMode).toBe('2d');
+  });
+
+  it('collapses side panels and toggles the map-only view', () => {
+    const run = (key: string) => SHORTCUTS.find(s => s.keys.includes(key))!.run({ shiftKey: false } as KeyboardEvent);
+    useLayoutStore.setState({ collapsed: { left: false, right: false } });
+    run('[');
+    expect(useLayoutStore.getState().collapsed).toEqual({ left: true, right: false });
+    run('m');                                   // not fully map-only yet -> hide both
+    expect(useLayoutStore.getState().collapsed).toEqual({ left: true, right: true });
+    run('m');                                   // map-only -> restore both
+    expect(useLayoutStore.getState().collapsed).toEqual({ left: false, right: false });
+    run(']');
+    expect(useLayoutStore.getState().collapsed.right).toBe(true);
+  });
+
+  it('toggles objects on the watchlist and opens the activity tab', () => {
+    useWatchlist.setState({ ids: [] });
+    useWatchlist.getState().toggle('STARLINK-1337');
+    useWatchlist.getState().toggle('DEB-7');
+    useWatchlist.getState().toggle('STARLINK-1337');
+    expect(useWatchlist.getState().ids).toEqual(['DEB-7']);
+    SHORTCUTS.find(s => s.keys.includes('v'))!.run({ shiftKey: false } as KeyboardEvent);
+    expect(useOrbitalStore.getState().rightTab).toBe('activity');
+  });
+
+  it('keeps Shift+F (fullscreen) apart from F (fleet tab)', () => {
+    expect(SHORTCUTS.find(s => s.keys.includes('F'))!.label).toMatch(/Fullscreen/);
+    expect(SHORTCUTS.find(s => s.keys.includes('f'))!.label).toMatch(/Fleet/);
   });
 });
 

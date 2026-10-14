@@ -1,5 +1,6 @@
 """Real-world data API: CelesTrak catalog loading (offline fixture), SGP4 anchoring, live mode,
 cache fallback, SGP4 conjunction refinement and space weather."""
+import collections
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -391,3 +392,68 @@ def test_starlink_uses_pinned_photo_not_logo(monkeypatch):
     assert imagery._wikipedia_family("STARLINK")["image"] == imagery.FAMILY_PHOTOS["STARLINK"][1]
     assert imagery._photo("Starlink_Logo_2024.svg") is None and imagery._photo("Coverage_map.png") is None
     assert imagery._photo("Render_of_Cartosat-3.png")
+
+
+@pytest.mark.asyncio
+async def test_refresh_detects_a_tracked_object_maneuver_and_flags_its_conjunctions(client, celestrak, monkeypatch):
+    await _load(client)
+    service, state = app.state.realworld, app.state.orbital_state
+    debris_id, obj = next(iter(service.objects.items()))
+    # Plant an open conjunction predicted from the object's current elements.
+    async with state.lock:
+        state.cdms.items.append({"cdm_id": "CDM-TEST", "satellite_id": "ISS (ZARYA)", "object_id": debris_id,
+                                 "status": "ACTIVE", "risk": "WARNING", "tca_ts": state.now_ts + 3600})
+    # CelesTrak publishes a newer element set for it, 6 h later, with a semi-major axis 1 km higher.
+    records = json.loads(json.dumps(FIXTURE["cosmos-2251-debris"]))
+    rec = next(r for r in records if r["NORAD_CAT_ID"] == obj.norad_id)
+    a = (catalog.MU_EARTH / (rec["MEAN_MOTION"] * 2 * np.pi / 86400.0) ** 2) ** (1 / 3)
+    rec["MEAN_MOTION"] = np.sqrt(catalog.MU_EARTH / (a + 1.0) ** 3) * 86400.0 / (2 * np.pi)
+    rec["EPOCH"] = (obj.epoch + timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%S.%f")
+    monkeypatch.setitem(FIXTURE, "cosmos-2251-debris", records)
+
+    result = await service.refresh(force=True)
+    assert result["maneuvers_detected"] == 1
+    [hit] = service.status()["maneuver_detections"]
+    assert hit["id"] == debris_id and hit["kind"] == "in-plane" and hit["unexplained_delta_a_km"] == pytest.approx(1.0, abs=0.01)
+    cdm = next(c for c in state.cdms.items if c["cdm_id"] == "CDM-TEST")
+    assert cdm["object_maneuvered"]["id"] == debris_id
+    assert any("CDM-TEST" in e["message"] and "maneuvered" in e["message"] for e in state.events)
+
+    feed = (await client.get("/api/catalog/maneuvers", params={"hours": 1})).json()
+    assert [m["id"] for m in feed["maneuvers"]] == [debris_id]
+    celestrak[1].now = celestrak[1].now + timedelta(hours=2)        # outside a 1 h window two hours later
+    assert (await client.get("/api/catalog/maneuvers", params={"hours": 1})).json()["count"] == 0
+    assert (await client.get("/api/catalog/maneuvers", params={"hours": 6})).json()["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reentry_watch_lists_decaying_objects_soonest_first(client, celestrak):
+    await _load(client)
+    body = (await client.get("/api/catalog/reentries", params={"max_days": 1000})).json()
+    names = [r["name"] for r in body["reentries"]]
+    assert "CSS (TIANHE)" in names                      # 390 km, decaying ~100 m/day: ~1.4 years
+    assert "ISS (ZARYA)" not in names                   # 420 km, slower decay: ~5 years (> 1000 days)
+    days = [r["lifetime_days"] for r in body["reentries"]]
+    assert days == sorted(days)
+    css = body["reentries"][names.index("CSS (TIANHE)")]
+    assert css["window"][0] < css["predicted_reentry"] < css["window"][1]
+    assert (await client.get("/api/catalog/reentries", params={"max_days": 30})).json()["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_orbit_fit_needs_history_then_fits_the_engine_to_sgp4(client, celestrak):
+    import dataclasses
+    await _load(client)
+    service = app.state.realworld
+    first = (await client.get("/api/catalog/orbit-fit/ISS (ZARYA)")).json()
+    assert first["fitted"] is False and first["sets"] == 1 and "at least 3" in first["needs"]
+    assert (await client.get("/api/catalog/orbit-fit/NOPE")).status_code == 404
+
+    # Three "earlier" sets on one consistent SGP4 orbit, 13 h apart overall.
+    iss = service.fleet["ISS (ZARYA)"]
+    service.element_history[iss.norad_id] = collections.deque(
+        dataclasses.replace(iss, epoch=iss.epoch - timedelta(hours=h)) for h in (13, 6))
+    fit = (await client.get("/api/catalog/orbit-fit/ISS (ZARYA)")).json()
+    assert fit["fitted"] is True and fit["sets"] == 3 and fit["span_h"] == pytest.approx(13.0)
+    assert fit["rms_km"] < 1.0                         # the engine reproduces 13 h of SGP4 to under a kilometre
+    assert len(fit["rms_per_set_km"]) == 3 and fit["difference_from_latest_sgp4_km"] < 5.0

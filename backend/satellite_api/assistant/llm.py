@@ -11,6 +11,9 @@ Client for the chat model, served by Ollama (POST /api/chat). Configured from th
     ASSISTANT_NUM_CTX      context window in tokens (default 8192)
     ASSISTANT_TIMEOUT_S    per-model-call timeout (default 180)
     ASSISTANT_MAX_STEPS    tool-call rounds per question before the model must answer (default 6)
+    ASSISTANT_NUM_BATCH    prompt tokens per GPU batch (default 128; Ollama's is 512). Smaller batches are
+                           shorter GPU kernels: on a card that also drives the monitors, a long kernel can
+                           exceed Windows' 2 s TDR limit and black out the display.
 """
 import os
 from dataclasses import dataclass
@@ -31,6 +34,7 @@ class AssistantSettings:
     num_ctx: int = 8192
     timeout_s: float = 180.0
     max_steps: int = 6
+    num_batch: int = 128
 
     @classmethod
     def from_env(cls) -> "AssistantSettings":
@@ -42,6 +46,7 @@ class AssistantSettings:
             num_ctx=int(env("ASSISTANT_NUM_CTX", cls.num_ctx)),
             timeout_s=float(env("ASSISTANT_TIMEOUT_S", cls.timeout_s)),
             max_steps=int(env("ASSISTANT_MAX_STEPS", cls.max_steps)),
+            num_batch=int(env("ASSISTANT_NUM_BATCH", cls.num_batch)),
         )
 
 
@@ -58,7 +63,7 @@ class OllamaClient:
         """One model turn. Returns Ollama's assistant message: content, optional thinking and tool_calls."""
         s = self.settings
         body = {"model": s.model, "messages": messages, "stream": False, "keep_alive": s.keep_alive,
-                "think": think, "options": {"num_ctx": s.num_ctx}}
+                "think": think, "options": {"num_ctx": s.num_ctx, "num_batch": s.num_batch}}
         if tools:
             body["tools"] = tools
         async with self._http() as http:

@@ -1,9 +1,10 @@
 // src/components/RightPanel.tsx
-// Tabbed operations panel: Fleet · Threats · Decisions · Alerts · Score.
+// Tabbed operations panel: Fleet · Threats · Decisions · Alerts · Activity · Score.
 
 import React from 'react';
 import useOrbitalStore, { selectOpenThreatCounts, selectPendingProposals } from '../store/useOrbitalStore';
 import { COLORS } from '../lib/format';
+import { ActivityPanel } from './ActivityPanel';
 import { AlertsPanel } from './AlertsPanel';
 import { DecisionsPanel } from './DecisionsPanel';
 import { FleetPanel } from './FleetPanel';
@@ -11,7 +12,7 @@ import { ScorecardPanel } from './ScorecardPanel';
 import { ThreatsPanel } from './ThreatsPanel';
 import { ErrorBoundary } from './ui';
 
-export type Tab = 'fleet' | 'threats' | 'decisions' | 'alerts' | 'score';
+export type Tab = 'fleet' | 'threats' | 'decisions' | 'alerts' | 'activity' | 'score';
 
 export const RightPanel: React.FC<{ className?: string }> = ({ className = '' }) => {
   const tab = useOrbitalStore(s => s.rightTab);
@@ -26,6 +27,7 @@ export const RightPanel: React.FC<{ className?: string }> = ({ className = '' })
     { key: 'threats', label: 'Threats', badge: threats.CRITICAL + threats.WARNING || undefined, tone: threats.CRITICAL ? COLORS.crit : COLORS.warn },
     { key: 'decisions', label: 'Decisions', badge: pending || undefined, tone: COLORS.warn },
     { key: 'alerts', label: 'Alerts', badge: alertCount || undefined, tone: COLORS.warn },
+    { key: 'activity', label: 'Activity' },
     { key: 'score', label: 'Score' },
   ];
 
@@ -59,6 +61,7 @@ export const RightPanel: React.FC<{ className?: string }> = ({ className = '' })
           {tab === 'threats' && <ThreatsPanel />}
           {tab === 'decisions' && <DecisionsPanel />}
           {tab === 'alerts' && <AlertsPanel />}
+          {tab === 'activity' && <ActivityPanel />}
           {tab === 'score' && <ScorecardPanel />}
         </ErrorBoundary>
       </div>

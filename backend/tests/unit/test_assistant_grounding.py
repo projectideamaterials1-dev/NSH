@@ -99,3 +99,28 @@ def test_a_nested_object_brings_its_parent_records_own_fields():
     wrong = "- Burn `AUTO-SAT-E-RADIAL_SHUNT-1767225625-0` fires at 01:36:04"
     [issue] = grounding.check(wrong, [{"decisions": [decision]}])["issues"]
     assert issue["claim"] == "01:36:04"
+
+
+def test_bullets_under_a_nested_object_may_quote_the_enclosing_record():
+    # A proposal's threat row (DEB-2002) and its burns are sibling sub-records. qwen3:8b wrote
+    # "Threat: DEB-2002" and then listed the burns underneath; the burn times are the proposal's.
+    proposals = {"proposals": [{"proposal_id": "PRP-00001", "satellite_id": "SAT-E", "cdm_ids": ["CDM-00002"],
+                                "threats": [{"object_id": "DEB-2002", "miss_distance_km": 0.0291}],
+                                "burns": [{"burn_id": "AUTO-SAT-E-1", "burn_time": "2026-01-01T00:00:25.000Z",
+                                           "dv_mps": 2.0027}]}]}
+    answer = "Threat: DEB-2002, miss 0.0291 km\n- Burn 1 at 00:00:25, 2.0027 m/s"
+    assert grounding.check(answer, [proposals])["issues"] == []
+    # Naming the object explicitly still keeps the stricter scope.
+    assert grounding.check("DEB-2002 burn at 00:00:25", [proposals])["issues"]
+
+
+def test_action_requests_and_questions_are_told_apart():
+    from satellite_api.assistant.agent import wants_action
+    for q in ("Schedule the cheapest avoidance burn for CDM-00001.", "Turn off the autopilot.",
+              "Set up a radial burn of -0.1 m/s on SAT-C.", "Approve proposal PRP-00001.", "yes, do it",
+              "Can you run a screening?", "Reject PRP-1, it uses too much fuel."):
+        assert wants_action(q), q
+    for q in ("What would happen if I disabled the autopilot?", "Should I approve PRP-1? Don't do anything yet.",
+              "Do we need to maneuver for CDM-00002?", "Recommend what to do about CDM-00003.",
+              "Is anything waiting for my approval?", "Why did the autopilot maneuver SAT-D?"):
+        assert not wants_action(q), q

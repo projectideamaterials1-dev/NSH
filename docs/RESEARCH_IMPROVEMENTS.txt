@@ -1,0 +1,256 @@
+NSH - Research-driven improvement plan
+=====================================
+Compiled 2026-10-15 from commercial space-domain-awareness (SDA) / space-traffic-management (STM)
+products and the conjunction-assessment literature. Each item says what the source does, what NSH
+does today, and what to change. Status markers: [DONE] applied in this repo, [NEXT] planned, [LATER]
+documented only.
+
+
+1. WHAT THE REFERENCE PRODUCTS DO
+---------------------------------
+
+Orbital Radar (orbitalradar.com) - public SSA dashboard
+  - Live anomaly feed over 1 h / 6 h / 24 h / 48 h windows; maneuver-detection alerts for a watchlist.
+  - Conjunction alerts, a threat-level indicator, re-entry tracker, debris map and statistics.
+  - NOAA SWPC space weather (Kp / G-scale, solar wind, flares) next to the orbital data.
+  - Push / e-mail / in-app notifications; filters by operator and country.
+  NSH today: threat level, Kp in the header, alerts tab. Missing: maneuver detection on tracked
+  objects, re-entry view, watchlists, external notifications.
+
+Kratos KnownSpace - tracking and maneuver detection (RF)
+  - Detects maneuvers from changes in a satellite's RF emissions; keeps custody through
+    proximity operations without cross-tagging closely spaced objects.
+  - Ephemeris accuracy ~150 m, updates < 30 min, 24/7 GEO coverage.
+  Lesson for NSH: a maneuver of the OTHER object invalidates our prediction. Flag it the moment the
+  object's new elements disagree with our propagation (see 3.5).
+
+NASA ILRS - maneuver handling in predictions
+  - Prediction (CPF) files issued before a planned maneuver must already contain the post-maneuver
+    arc, built from the planned thrust; the ranging network is warned ahead of time.
+  - After execution, predictions are refined from the actual maneuver data (IDS maneuver files).
+  Lesson for NSH: publish our own predicted ephemeris WITH the queued burns in a standard format
+  (CCSDS OEM) so other operators / screening services see where we will be (see 3.6).
+
+Astroscale U.S. - maneuvering and endurance
+  - RPOD, on-orbit refueling, responsive maneuver, managed station-keeping, inclination correction.
+  Lesson for NSH: station-keeping and fuel are first-class: show fuel cost and remaining lifetime of
+  every option, keep the station-keeping box view (already present).
+
+The Aerospace Corporation - CORDS (Center for Orbital and Reentry Debris Studies)
+  - Re-entry predictions and a re-entry database since 2000; breakup and survivability modeling.
+  - Warns that megaconstellations will make LEO density grow "markedly and unevenly", creating
+    "enormous, unworkable numbers of collision avoidance actions" -> automation and false-alarm
+    control are essential.
+  Lesson for NSH: keep the autopilot's false-alarm rate low (Pc thresholds, dilution handling) and
+  add a decay / re-entry estimate for low-perigee objects [LATER].
+
+AVM Dynamics - maneuver detection
+  - Compares propagated states with newly published ones (TLEs from space-track.org).
+  - Threshold = RMSE of a matching population's differences x a user sensitivity factor, LOWESS
+    smoothed; detects maneuvers of a few mm/s (examples: 9.43 mm/s and 6.05 mm/s).
+  - Reports differences in velocity and in each Keplerian element.
+  Lesson for NSH: implement element-difference maneuver detection on catalog updates (see 3.5).
+
+Neuraspace STM-Ops
+  - ML-assisted screening; classification and prioritization of each conjunction.
+  - Automatic maneuver suggestions for every high-risk event, tailored to the satellite; explicit
+    goal of "elimination of unnecessary manoeuvres".
+  - CDM (Space-Track), OEM and OPM ingest/export; alerts by e-mail, Teams, webhooks; an operator
+    chat to coordinate maneuvers between companies; maneuver simulation.
+  NSH today: autopilot + trade study + assistant cover suggestions and simulation; CDM import exists.
+  Missing: OEM export, webhook notifications, Pc trend per event.
+
+
+2. WHAT THE LITERATURE SAYS
+---------------------------
+
+2.1 NASA CARA best practices (NASA-SP-20205011318, rev. 2023 / rev. 2 2026)
+  - Pc is the primary risk metric; mitigation is normally considered at Pc >= 1e-4 (NSH's default).
+  - The 2-D Pc (Foster 1992 / Chan / Alfano 2005) assumes a short, linear encounter with constant
+    covariance; for slow or long encounters CARA uses the 3-D Pc (Coppola 2012; Hall, Hejduk &
+    Johnson 2017) or Monte Carlo.
+  - Covariance realism matters as much as the Pc formula; Pc uncertainty should be assessed
+    (Hejduk & Johnson 2016).
+
+2.2 Probability dilution (Alfano; Balch et al.)
+  - When the covariance is large compared with the miss distance, inflating it LOWERS Pc. A low Pc in
+    this "dilution region" means "we do not know", not "it is safe".
+  - Remedy: compute the maximum Pc over covariance scaling and flag dilution; treat diluted events
+    by miss distance / Pc-max rather than by the diluted Pc.
+
+2.3 TLE / catalog accuracy
+  - Along-track error dominates and grows with element age: 1-sigma in-track error after 1 day is
+    10-30 km for LEO objects, 20-70 km after 2 days (TLE accuracy studies; Vallado, Bastida Virgili &
+    Flohrer). Fitting a numerical model to TLE pseudo-observations cuts growth from ~0.1-3 km/day
+    to 50-200 m/day (Levit & Marshall).
+  - Consequence: a catalog object's uncertainty must grow from ITS ELEMENT EPOCH, not from "now".
+
+2.4 Maneuver detection from element histories (Lemmens & Krag 2014; SDC papers; arXiv 2605.19850)
+  - Flag a maneuver when the semi-major-axis jump between consecutive element sets exceeds a
+    threshold (|delta a| > ~100 m for station-keeping LEO satellites), or when the new elements
+    disagree with the propagation of the previous ones beyond k x the population RMSE.
+
+2.5 ESA Spacecraft Collision Avoidance Challenge (Uriot et al. 2022, Astrodynamics 6)
+  - 13,154 training events of CDM time series; task: predict the final risk 2 days before TCA.
+  - The naive forecast (latest CDM's risk) and its variants were among the strongest predictors:
+    CDM series behave close to Markov. ML adds most value in classifying high-risk events.
+  - Consequence: keep the Pc history per event and show the trend; the latest Pc is the forecast.
+
+2.6 Optimal collision-avoidance maneuvers (Bombardelli & Hernando-Ayuso 2015; OCCAM; convex
+    multi-impulse formulations, arXiv 2101.07403)
+  - Analytical / semi-analytical solutions give the minimum delta-v for a target Pc or the
+    max miss for a given delta-v in the B-plane; along-track burns about half an orbit (odd
+    multiples) before TCA are most efficient.
+  - NSH's trade study is a grid search over burn time x delta-v; the analytic optimum could seed
+    or refine it [LATER].
+
+2.7 Data standards
+  - CCSDS Orbit Data Messages (ISO 26900:2024): OEM (ephemeris, optional covariance), OPM, and the
+    CCSDS CDM. OEM is the format for sharing planned-maneuver ephemerides between operators.
+
+
+3. CHANGES FOR NSH (in priority order)
+--------------------------------------
+
+3.1 [DONE] Assistant accuracy (operator chat)
+  - Measured with backend/evals/assistant_eval.py (32 planted-mission cases): qwen3:8b went from
+    78 % to 98 % (then 100 % on the remaining failing case) by:
+      * offering the propose_* (action) tools only when the operator asks for an action, and
+        refusing them server-side for questions ("what would happen if ...");
+      * one nudge when the model answers mission questions without calling a tool;
+      * rewriting "has been scheduled/approved" into "is ready to be ... once you confirm it";
+      * a grounding-check fix (bullets under a nested object may quote the enclosing record);
+      * an explicit next_uplink line in the ground-pass tool.
+  - Eval results are written per case (crash-safe .partial.jsonl).
+
+3.2 [DONE] Probability-dilution check (2.2)
+  - For every conjunction: Pc_max over covariance scale k (log-spaced search) and the scale at which
+    it occurs; "dilution" = true when the current covariance is past the maximum (inflating it
+    lowers Pc). Shown in the conjunction view and returned to the assistant.
+  - Decision rule: a diluted event whose Pc_max >= threshold is graded at least WARNING and labelled
+    "diluted - Pc not trustworthy", so a low diluted Pc never reads as safe.
+
+3.3 [DONE] Short-encounter validity check (2.1)
+  - Encounter duration = time to cross the 5-sigma + HBR region at the relative speed. When it is
+    long (slow, near co-orbital pairs) the 2-D Pc is flagged "2-D assumption questionable" so the
+    operator knows to request a 3-D / Monte Carlo assessment.
+
+3.4 [DONE] Element-age-aware covariance for catalog objects (2.3)
+  - In live (real catalog) mode the tracked object's model covariance grows over its element age +
+    time to TCA instead of time to TCA only. Owned satellites keep the GNSS-quality model.
+
+3.5 [DONE] Maneuver detection on tracked objects (Kratos, AVM, 2.4)
+  - On every catalog refresh (realworld/catalog.py detect_maneuver), each newer element set is
+    compared with the previous one: a semi-major-axis jump the old elements' decay term (n-dot)
+    does not explain, above MANEUVER_DA_KM (default 0.1 km, Lemmens & Krag), or an inclination jump
+    above MANEUVER_DI_DEG (0.01 deg) is a maneuver, with a minimum delta-v estimate. Open CDMs with
+    that object are marked object_maneuvered (shown in the conjunction view) and alerted; the next
+    screening recomputes them from the new elements. Last 20 detections in /api/catalog/status.
+  - Population-based threshold: see the 3.5 addendum below.
+
+3.6 [DONE] CCSDS OEM export with planned burns (ILRS, Neuraspace, 2.7)
+  - GET /api/export/oem/{satellite_id}?hours=6&step_seconds=60: predicted ephemeris including the
+    queued burns, CCSDS OEM 2.0 KVN, REF_FRAME TEME, one segment per burn (velocity discontinuity)
+    with the burn in a COMMENT. "Export orbit (CCSDS OEM)" button in the satellite panel.
+
+3.7 [DONE] Pc trend per conjunction (2.5)
+  - Each CDM keeps the Pc of its last 24 screenings (pc_history) and a trend (rising / falling /
+    stable, 3x change); the conjunction view shows a log-scale sparkline. The latest Pc stays the
+    decision value (the naive forecast the ESA challenge found hardest to beat).
+
+3.8 [DONE] Webhook notifications (Neuraspace, Orbital Radar)
+  - satellite_api/notify.py: every operator event at or above NOTIFY_MIN_LEVEL (default crit), in
+    NOTIFY_CATEGORIES, is POSTed to NOTIFY_WEBHOOK_URLS as {"text": ..., "event": {...}} (Slack, Teams,
+    Mattermost render "text"). Own thread + bounded queue (never stalls screening), 3 retries, 10-min
+    de-duplication, rate limit; counters in /health "notifications". Prometheus alerts keep going
+    through Alertmanager.
+
+3.9 [DONE] Monte Carlo Pc (Hall 2017 / CARA practice for slow encounters)
+  - acm/monte_carlo.py + POST /api/conjunctions/{id}/pc-monte-carlo: both objects sampled from the
+    same covariances as the 2-D Pc (velocity spread n x sigma, Clohessy-Wiltshire scaling), every
+    pair propagated with RK4 + J2 + drag through the encounter, hit = continuous closest approach
+    inside the HBR; Wilson 95 % interval (with no hits, the upper bound ~3/N is reported, not zero).
+  - Validated: on a fast encounter it agrees with the 2-D Pc (0.0578 vs 0.0545, 20k samples).
+  - "Run Monte Carlo" appears in the conjunction view for slow encounters (3.3); the result is
+    stored on the CDM (pc_mc) and visible to the assistant.
+  - Not done: Hall's semi-analytic 3-D Nc integral - Monte Carlo covers the same cases, slower.
+
+3.10 [DONE] Exact minimum delta-v in the trade study (2.6)
+  - decision_support._refine_min_dv: for every burn time and direction the grid brackets the
+    cheapest safe delta-v; all brackets are bisected together on the propagated trajectories
+    (10 batched iterations) to a target of threshold/10 (the autopilot's margin). In a test case
+    the grid's cheapest safe burn was 1.5 m/s and the refined minimum 0.12 m/s. Used by
+    "Plan cheapest safe burn" and the assistant's cheapest options (min_dv_options).
+  - Not done: closed-form B-plane optimum (OCCAM) - the bisection gives the same minimum with J2
+    and drag included, at ~1 s per trade study.
+
+3.11 [DONE] Re-entry / decay estimates (CORDS, Orbital Radar)
+  - realworld/decay.py + GET /api/catalog/reentries?max_days=90: drag strength calibrated from the
+    object's own observed decay (MEAN_MOTION_DOT), else B* x current solar activity; lifetime
+    integrated down to 120 km through the engine's atmosphere table; +-25 % window; eccentric orbits
+    flagged low-confidence. Fixture check: CSS (390 km) ~1.4 years, ISS (420 km) ~5 years without
+    reboost at its measured decay.
+
+3.12 [DONE] Watchlist and activity feed (Orbital Radar)
+  - Activity tab (key V): maneuvers detected in the last 1 / 6 / 24 / 48 h
+    (GET /api/catalog/maneuvers?hours=) and predicted re-entries, with a star watchlist (also on the
+    satellite panel) and a watchlist-only filter. The watchlist is a per-browser preference.
+
+3.13 [DONE] Pseudo orbit determination from element-set history (Levit & Marshall)
+  - realworld/pseudo_od.py + GET /api/catalog/orbit-fit/{id}: the engine's state and drag
+    coefficient fitted (Gauss-Newton) to SGP4 positions sampled near the epochs of several
+    consecutive element sets. The live service keeps the sets it sees at each refresh (CelesTrak
+    serves only the latest); a fit needs 3 sets over 12 h.
+  - Validated on synthetic data (4 sets with 0.6 km along-track errors over 36 h): 24 h prediction
+    error 0.40 km vs 21 km extrapolating the latest set; drag coefficient recovered exactly.
+  - Not yet used automatically by screening: it runs on demand (seconds per object).
+
+3.5 addendum [DONE] AVM-style population threshold
+  - Each refresh, the threshold for a class (fleet / tracked objects) is
+    max(MANEUVER_DA_KM, MANEUVER_SENSITIVITY x 1.4826 x MAD of that class's unexplained da), so a
+    poorly tracked class does not flood the feed. Reported in /api/catalog/status.
+
+
+4. OPERATIONS / USABILITY CHANGES MADE ALONGSIDE
+------------------------------------------------
+  - Side panels collapse to rails ([ and ] keys), map-only view (M), fullscreen (Shift+F).
+  - Easier maneuvering: click any trade-space cell (or "Plan cheapest safe burn") to open the burn
+    planner pre-filled with that burn; the planner has quick time (+5 min ... +1 h) and delta-v
+    buttons, a typed delta-v field, and says whether the satellite is in ground contact now (the
+    engine checks contact at uplink time) or when the next contact starts.
+  - Robustness: a satellite whose state is not a bound orbit (seen live: STARLINK-1337 and -4464 with
+    bad element sets) is skipped by station-keeping and reported, instead of failing every screening
+    cycle for the whole fleet.
+  - GPU watchdog: runs elevated, raises TdrDelay to 10 s, and recovers a black screen by stopping
+    the LLM, sending Win+Ctrl+Shift+B, then restarting / re-enabling the NVIDIA adapter
+    (scripts/gpu-watchdog.ps1). LLM requests use smaller GPU batches (ASSISTANT_NUM_BATCH=128).
+
+
+5. SOURCES
+----------
+  Products
+  - https://orbitalradar.com/
+  - https://www.kratosspace.com/defense-and-government/space-domain-awareness/tracking-and-maneuver
+  - https://ilrs.gsfc.nasa.gov/data_and_products/predictions/maneuver.html
+  - https://www.astroscale-us.com/en/solutions/maneuvering-and-endurance
+  - https://aerospace.org/space-debris  (page blocks automated fetch; content from
+    https://aerospace.org/fact-sheet/cords-offers-space-debris-expertise)
+  - https://avmdynamics.com/detection/overview
+  - https://www.neuraspace.com/stm-ops
+  Papers and standards
+  - NASA Spacecraft Conjunction Assessment and Collision Avoidance Best Practices Handbook,
+    NASA/SP-20205011318 (rev. 1 2023: https://ntrs.nasa.gov/citations/20230002470; rev. 2:
+    https://ntrs.nasa.gov/api/citations/20260000453/downloads/CA_Handbook_Volume1-NASA-SP-20205011318_REV2-VOL1.pdf)
+  - Hall, Hejduk, Johnson (2017), 3-D Pc: https://ntrs.nasa.gov/api/citations/20170001476/downloads/20170001476.pdf
+  - Hejduk & Johnson (2016), Pc uncertainty: https://ntrs.nasa.gov/citations/20160010497
+  - Alfano, Review of conjunction probability methods for short-term encounters:
+    https://www.agi.com/getmedia/05e56d95-73f9-422e-bde8-3a0c34946a69/Review-of-Conjunction-Probability-Methods-for-Short-term-Encounters.pdf
+  - Evaluating the short-encounter assumption: https://ntrs.nasa.gov/api/citations/20180007755/downloads/20180007755.pdf
+  - Uriot et al., Spacecraft Collision Avoidance Challenge: https://link.springer.com/doi/10.1007/s42064-021-0101-5
+  - Lemmens & Krag (2014) maneuver detection; applied in https://arxiv.org/pdf/2605.19850
+  - Levit & Marshall, Improved orbit predictions using two-line elements: https://arxiv.org/pdf/1002.2277
+  - TLE uncertainty estimation using robust weighted differencing (TU Delft):
+    https://research.tudelft.nl/en/publications/tle-uncertainty-estimation-using-robust-weighted-differencing/
+  - Hernando-Ayuso & Bombardelli, CAM optimization: https://oa.upm.es/51461/ ;
+    multiple-impulse convex formulation: https://ar5iv.labs.arxiv.org/html/2101.07403
+  - CCSDS Orbit Data Messages / ISO 26900:2024: https://committee.iso.org/ru/standard/85529.html
