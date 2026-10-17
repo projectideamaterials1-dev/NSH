@@ -262,6 +262,8 @@ const SatelliteDetails: React.FC = () => {
   );
 };
 
+const BULLSEYE_MAX_DOTS = 150;
+
 /** Bullseye: radius = time to closest approach, angle = approach direction in the satellite's T-N plane. */
 const ConjunctionBullseye: React.FC = () => {
   const selectedId = useOrbitalStore(s => s.selectedSatelliteId);
@@ -298,14 +300,19 @@ const ConjunctionBullseye: React.FC = () => {
           {([['Ahead', c, c - R - 8], ['Behind', c, c + R + 16], ['+N', c + R + 12, c + 4], ['−N', c - R - 12, c + 4]] as const).map(([l, x, y]) => (
             <text key={l} x={x} y={y} fontSize="10" fill="#9aa8b6" textAnchor="middle" fontWeight="600">{l}</text>
           ))}
-          {items.map(item => {
+          {/* Soonest events only: with the whole catalog as the fleet there can be thousands. */}
+          {items.slice(0, BULLSEYE_MAX_DOTS).map(item => {
             const a = (item.approach_angle_deg - 90) * Math.PI / 180;   // 0° (from ahead) at the top
             const r = radius(item.eta);
             const color = riskMeta(item.risk).color;
             return (
-              <g key={item.cdm_id} style={{ cursor: 'pointer' }} onClick={() => selectSatellite(item.satellite_id)}>
+              // Positioned with a CSS transform so a dot glides inward as its TCA approaches instead of hopping.
+              <g key={item.cdm_id} onClick={() => selectSatellite(item.satellite_id)}
+                className="cursor-pointer transition-transform duration-700 ease-out-quart motion-reduce:transition-none"
+                style={{ transform: `translate(${c + r * Math.cos(a)}px, ${c + r * Math.sin(a)}px)` }}>
                 <title>{`${item.satellite_id} ↔ ${item.object_id}\nmiss ${formatKm(item.miss_distance_km)} in ${formatDuration(item.eta)}\n${CDM_STATUS_META[item.status]?.label}`}</title>
-                <circle cx={c + r * Math.cos(a)} cy={c + r * Math.sin(a)} r={item.risk === 'CRITICAL' ? 5.5 : 4} fill={color}
+                <circle cx={0} cy={0} r={item.risk === 'CRITICAL' ? 5.5 : 4} fill={color}
+                  className="transition-[fill,r] duration-300 animate-fade-in"
                   stroke={item.status === 'MITIGATED' ? '#e6edf3' : '#07090d'} strokeWidth={item.status === 'MITIGATED' ? 1.5 : 1} />
               </g>
             );
@@ -332,7 +339,15 @@ const ConjunctionBullseye: React.FC = () => {
           <tbody className="tabular">
             {items.slice(0, 6).map(item => (
               <tr key={item.cdm_id} className="border-t border-line">
-                <td className="py-1 text-ink truncate max-w-[88px]">{selectedId ? item.object_id : item.satellite_id}</td>
+                <td className="py-1 max-w-[120px]" title={`${item.satellite_id} ↔ ${item.object_id}`}>
+                  {selectedId ? <span className="block truncate text-ink">{item.object_id}</span> : (
+                    // Fleet view: the satellite, and what it meets (one satellite can have several events).
+                    <>
+                      <span className="block truncate text-ink">{item.satellite_id}</span>
+                      <span className="block truncate text-[11px] text-muted">↔ {item.object_id}</span>
+                    </>
+                  )}
+                </td>
                 <td className="py-1 text-right" style={{ color: riskMeta(item.risk).color }}>{formatKm(item.miss_distance_km)}</td>
                 <td className="py-1 text-right text-muted">{formatDuration(item.eta)}</td>
                 <td className="py-1 text-right" style={{ color: item.status === 'MITIGATED' ? CDM_STATUS_META.MITIGATED.color : riskMeta(item.risk).color }}>
@@ -388,17 +403,19 @@ const NearbyObjects: React.FC = () => {
 };
 
 export const LeftPanel: React.FC = () => {
-  const hasSelection = useOrbitalStore(s => !!s.selectedSatelliteId);
+  const selectedId = useOrbitalStore(s => s.selectedSatelliteId);
+  const hasSelection = !!selectedId;
   return (
     <aside className="w-full lg:w-[320px] flex-shrink-0 bg-panel lg:border-r border-line flex flex-col min-h-0 overflow-y-auto" aria-label="Selected satellite">
       <Panel title="Satellite">
-        <SatelliteDetails />
+        {/* keyed: a newly selected satellite's details fade in rather than swap in place */}
+        <div key={selectedId ?? 'none'} className="animate-content-in"><SatelliteDetails /></div>
       </Panel>
       <Panel title={<span className="inline-flex items-center gap-1.5"><Crosshair className="w-3.5 h-3.5" /> Conjunction bullseye</span>}>
         <ConjunctionBullseye />
       </Panel>
       {hasSelection && (
-        <Panel title="Nearby tracked objects" className="border-b-0">
+        <Panel title="Nearby tracked objects" className="border-b-0 animate-content-in">
           <NearbyObjects />
         </Panel>
       )}

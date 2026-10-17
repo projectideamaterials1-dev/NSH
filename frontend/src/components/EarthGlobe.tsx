@@ -2,17 +2,21 @@
 // React wrapper around the photorealistic Three.js Earth (lib/earthScene): feeds it telemetry,
 // handles hover/click picking, the selected-satellite label and texture loading state.
 
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, type ReactNode, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 
 import { EarthScene, type GlobePoint, type PickHit, type TextureQuality } from '../lib/earthScene';
 import { subsolarPoint } from '../lib/geo';
+import { STATION_COLORS, type Station } from '../lib/stations';
+import { cardPosition } from './SatelliteCard';
 
 export interface GlobeSatellite extends GlobePoint { id: string; color: string; ring: string | null }
 export interface GlobeStation extends GlobePoint { color: string }
 
 export interface EarthGlobeHandle {
   resetView: () => void;
+  /** Turns the globe to centre on a point. */
+  flyTo: (lon: number, lat: number) => void;
 }
 
 interface EarthGlobeProps {
@@ -20,12 +24,18 @@ interface EarthGlobeProps {
   satellites: GlobeSatellite[];
   selectedId: string | null;
   /** [lon, lat, alt m] triples. */
-  debris: { positions: Float32Array; length: number } | null;
+  debris: { positions: Float32Array; length: number; kinds?: Uint8Array | null } | null;
   trails: { id: string; path: GlobePoint[] }[];
   predicted: GlobePoint[] | null;
+  /** The predicted orbit without the queued burns (shown only when a burn is queued). */
+  coast?: GlobePoint[] | null;
   stations: GlobeStation[];
+  /** Named stations to label on the globe. */
+  stationLabels?: Station[];
+  /** Summary card shown next to the selected satellite. */
+  card?: ReactNode;
   visibleStations: GlobePoint[];
-  burns: GlobePoint[];
+  burns: (GlobePoint & { color?: string })[];
   clouds: boolean;
   /** Draw satellites as 3D models. */
   models: boolean;
@@ -38,10 +48,11 @@ interface EarthGlobeProps {
 const TEXTURE_BASE = `${import.meta.env.BASE_URL}textures/earth/`;
 
 export const EarthGlobe = forwardRef<EarthGlobeHandle, EarthGlobeProps>((props, ref) => {
-  const { timestamp, satellites, selectedId, debris, trails, predicted, stations, visibleStations, burns, clouds, models, follow } = props;
+  const { timestamp, satellites, selectedId, debris, trails, predicted, coast = null, stations, visibleStations, burns, clouds, models, follow } = props;
   const hostRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const labelRef = useRef<HTMLDivElement>(null);
+  const stationLabelRefs = useRef<(HTMLSpanElement | null)[]>([]);
   const sceneRef = useRef<EarthScene | null>(null);
   const propsRef = useRef(props);
   propsRef.current = props;
@@ -71,13 +82,31 @@ export const EarthGlobe = forwardRef<EarthGlobeHandle, EarthGlobeProps>((props, 
     scene.onUserInteract = () => propsRef.current.onUserMove();
     scene.onDetailImagery = setDetailImagery;
     scene.onFrame = () => {
+      // Station labels: hidden behind the Earth, and where they would overlap a label already placed
+      // (mission stations come first, so they win over nearby reference sites).
+      const labels = propsRef.current.stationLabels ?? [];
+      const placed: { x: number; y: number; w: number }[] = [];
+      labels.forEach((st, i) => {
+        const el = stationLabelRefs.current[i];
+        if (!el) return;
+        const p = scene.projectPoint({ lon: st.lon, lat: st.lat, alt: 0 });
+        const x = p ? p.x + 8 : 0, y = p ? p.y - 7 : 0, w = el.offsetWidth;
+        if (!p || placed.some(q => Math.abs(q.y - y) < 14 && x < q.x + q.w + 4 && q.x < x + w + 4)) {
+          el.style.visibility = 'hidden';
+          return;
+        }
+        placed.push({ x, y, w });
+        el.style.visibility = 'visible';
+        el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+      });
       const label = labelRef.current;
       const sel = selectedRef.current;
       if (!label) return;
       const screen = sel ? scene.selectedScreenPosition() : null;   // follows the smoothed motion
       if (!screen) { label.style.visibility = 'hidden'; return; }
       label.style.visibility = 'visible';
-      label.style.transform = `translate(${Math.round(screen.x + 16)}px, ${Math.round(screen.y - 12)}px)`;
+      const { left, top } = cardPosition(screen.x, screen.y, host.clientWidth, host.clientHeight);
+      label.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
     };
     scene.loadTextures(TEXTURE_BASE, setQuality).catch(() => {
       setFailure('Earth imagery could not be loaded. Check that /textures/earth is being served.');
@@ -148,6 +177,7 @@ export const EarthGlobe = forwardRef<EarthGlobeHandle, EarthGlobeProps>((props, 
       const sun = subsolarPoint(propsRef.current.timestamp ?? new Date().toISOString());
       sceneRef.current?.resetView(sun.lon - 25, Math.max(-35, Math.min(35, sun.lat + 12)));
     },
+    flyTo: (lon, lat) => sceneRef.current?.resetView(lon, lat),
   }), []);
 
   // ── Data → scene ───────────────────────────────────────────────────────────
@@ -158,7 +188,7 @@ export const EarthGlobe = forwardRef<EarthGlobeHandle, EarthGlobeProps>((props, 
     sceneRef.current?.setSatellites(satellites, selectedId ? satellites.findIndex(s => s.id === selectedId) : -1);
   }, [satellites, selectedId]);
 
-  useEffect(() => { sceneRef.current?.setDebris(debris?.positions ?? null, debris?.length ?? 0); }, [debris]);
+  useEffect(() => { sceneRef.current?.setDebris(debris?.positions ?? null, debris?.length ?? 0, debris?.kinds ?? null); }, [debris]);
 
   useEffect(() => {
     sceneRef.current?.setTrails(
@@ -167,7 +197,7 @@ export const EarthGlobe = forwardRef<EarthGlobeHandle, EarthGlobeProps>((props, 
     );
   }, [trails, selectedId]);
 
-  useEffect(() => { sceneRef.current?.setPredicted(predicted); }, [predicted]);
+  useEffect(() => { sceneRef.current?.setPredicted(predicted, coast); }, [predicted, coast]);
   useEffect(() => { sceneRef.current?.setStations(stations); }, [stations]);
   useEffect(() => { sceneRef.current?.setVisibility(selected, visibleStations); }, [selected?.lon, selected?.lat, selected?.alt, visibleStations]);
   useEffect(() => { sceneRef.current?.setBurns(burns); }, [burns]);
@@ -180,12 +210,20 @@ export const EarthGlobe = forwardRef<EarthGlobeHandle, EarthGlobeProps>((props, 
     <div className="absolute inset-0 overflow-hidden bg-[#010204]">
       <div ref={hostRef} className="absolute inset-0" data-testid="earth-globe" />
 
-      <div ref={labelRef} className="absolute left-0 top-0 pointer-events-none" style={{ visibility: 'hidden' }}>
-        {selected && (
+      {(props.stationLabels ?? []).map((st, i) => (
+        <span key={st.id} ref={el => { stationLabelRefs.current[i] = el; }} aria-hidden
+          className="absolute left-0 top-0 pointer-events-none text-[11px] font-medium whitespace-nowrap"
+          style={{ visibility: 'hidden', color: STATION_COLORS[st.role], textShadow: '0 0 3px #000, 0 0 3px #000' }}>
+          {st.name}
+        </span>
+      ))}
+
+      <div ref={labelRef} className="absolute left-0 top-0 z-20 pointer-events-none" style={{ visibility: 'hidden' }}>
+        {selected && (props.card ?? (
           <div className="px-2 py-0.5 rounded bg-panel/85 border border-accent/60 text-[12px] font-medium text-ink tabular whitespace-nowrap shadow-lg">
             {selected.id} · {(selected.alt / 1000).toFixed(0)} km
           </div>
-        )}
+        ))}
       </div>
 
       <div

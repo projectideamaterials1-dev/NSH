@@ -55,7 +55,7 @@ export const AlertsPanel: React.FC = () => {
             {visible.map(e => {
               const meta = EVENT_LEVEL_META[e.level] ?? EVENT_LEVEL_META.info;
               return (
-                <li key={e.id} className="flex gap-3 px-4 py-2.5 border-b border-line/60">
+                <li key={e.id} className="flex gap-3 px-4 py-2.5 border-b border-line/60 animate-item-in">
                   <span className="w-1 rounded-full flex-shrink-0" style={{ background: meta.color }} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-[11px] text-muted tabular">

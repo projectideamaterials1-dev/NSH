@@ -255,3 +255,29 @@ async def test_replacing_the_catalog_cancels_queued_burns_in_the_archive(tmp_pat
     assert {m["burn_id"] for m in cancelled} == {"Q0", "Q1"}
     assert all(m["reason"] == "CATALOG_REPLACED" for m in cancelled)
     archive.close()
+
+
+@pytest.mark.asyncio
+async def test_archive_retries_a_transient_io_error_instead_of_dropping(tmp_path, monkeypatch):
+    """On a Windows bind mount a commit can fail once with "disk I/O error"; the record must still land."""
+    import sqlite3
+    path = str(tmp_path / "archive.db")
+    StateManager._instance = None
+    state = StateManager()
+    archive = MissionArchive(path).attach(state)
+    real = archive._write_event
+    failures = {"left": 1}
+
+    def flaky(conn, payload):
+        if failures["left"]:
+            failures["left"] -= 1
+            raise sqlite3.OperationalError("disk I/O error")
+        return real(conn, payload)
+
+    monkeypatch.setattr(archive, "_write_event", flaky)
+    state.emit("warn", "test", "survives a flaky commit")
+    archive.flush()
+    assert failures["left"] == 0
+    assert any(e["message"] == "survives a flaky commit" for e in archive.events(level="warn"))
+    assert archive._write_conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "truncate"
+    archive.close()

@@ -1,7 +1,7 @@
 // src/components/ThreatsPanel.tsx
 // Fleet-wide predicted conjunctions (CDMs) with risk, time to closest approach and response status.
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Crosshair, FileUp, RefreshCw, ShieldCheck } from 'lucide-react';
 import useOrbitalStore from '../store/useOrbitalStore';
 import type { Conjunction } from '../store/useOrbitalStore';
@@ -9,6 +9,8 @@ import { CDM_STATUS_META, formatDuration, formatKm, formatPc, formatUtcTime, nee
 import { Button, EmptyState } from './ui';
 
 const RISK_ORDER: Record<string, number> = { CRITICAL: 0, WARNING: 1, WATCH: 2 };
+
+const PAGE = 200;
 
 export const ThreatsPanel: React.FC = () => {
   const conjunctions = useOrbitalStore(s => s.conjunctions);
@@ -20,6 +22,7 @@ export const ThreatsPanel: React.FC = () => {
   const lastScreen = useOrbitalStore(s => s.metrics?.last_screen ?? null);
   const hasData = useOrbitalStore(s => !!s.satellites?.length);
   const [filter, setFilter] = useState<'actionable' | 'all'>('actionable');
+  const [limit, setLimit] = useState(PAGE);   // a whole-catalog fleet can have thousands of events
   const openConjunction = useOrbitalStore(s => s.openConjunction);
   const pcThreshold = useOrbitalStore(s => s.config?.pcManeuverThreshold ?? 1e-4);
   const importCdm = useOrbitalStore(s => s.importCdm);
@@ -45,6 +48,7 @@ export const ThreatsPanel: React.FC = () => {
     const list = conjunctions.filter((c: Conjunction) => filter === 'all' || c.risk !== 'WATCH');
     return list.sort((a, b) => RISK_ORDER[a.risk] - RISK_ORDER[b.risk] || a.tca_ts - b.tca_ts);
   }, [conjunctions, filter]);
+  useEffect(() => setLimit(PAGE), [filter]);
   const watchCount = conjunctions.filter(c => c.risk === 'WATCH').length;
 
   return (
@@ -93,7 +97,7 @@ export const ThreatsPanel: React.FC = () => {
           </EmptyState>
         ) : (
           <ul>
-            {rows.map(c => {
+            {rows.slice(0, limit).map(c => {
               const risk = riskMeta(c.risk);
               // Autopilot acts on misses under 150 m or Pc at/above the threshold; others are monitored, not open failures.
               const status = c.status === 'ACTIVE' && !needsAction(c, pcThreshold)
@@ -102,7 +106,7 @@ export const ThreatsPanel: React.FC = () => {
               const eta = secondsUntil(c.tca, timestamp);
               const selected = c.satellite_id === selectedId;
               return (
-                <li key={c.cdm_id} className={`flex items-stretch border-b border-line/60 transition-colors ${selected ? 'bg-accent/10' : 'hover:bg-raised'}`}>
+                <li key={c.cdm_id} className={`flex items-stretch border-b border-line/60 transition-colors duration-200 animate-item-in ${selected ? 'bg-accent/10' : 'hover:bg-raised'}`}>
                   <button
                     onClick={() => selectSatellite(c.satellite_id)}
                     className="flex-1 min-w-0 text-left pl-4 pr-2 py-2.5"
@@ -139,6 +143,14 @@ export const ThreatsPanel: React.FC = () => {
               );
             })}
           </ul>
+        )}
+        {rows.length > limit && (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 text-[12px] text-muted">
+            <span className="tabular">Showing {limit} of {rows.length} (most urgent first)</span>
+            <button onClick={() => setLimit(l => l + PAGE)} className="h-7 px-2.5 rounded-md border border-line text-ink hover:bg-raised">
+              Show {Math.min(PAGE, rows.length - limit)} more
+            </button>
+          </div>
         )}
       </div>
     </div>

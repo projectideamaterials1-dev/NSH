@@ -33,7 +33,10 @@ export const RightPanel: React.FC<{ className?: string }> = ({ className = '' })
 
   return (
     <aside className={`w-full lg:w-[360px] flex-shrink-0 bg-panel lg:border-l border-line flex flex-col min-h-0 ${className}`} aria-label="Operations">
-      <nav className="flex border-b border-line flex-shrink-0" role="tablist">
+      <nav className="relative flex border-b border-line flex-shrink-0" role="tablist">
+        {/* One underline that slides to the active tab (tabs are equal width). */}
+        <span aria-hidden className="absolute bottom-[-1px] left-0 h-0.5 bg-accent rounded-full transition-transform duration-300 ease-out-quart motion-reduce:transition-none"
+          style={{ width: `${100 / tabs.length}%`, transform: `translateX(${tabs.findIndex(t => t.key === tab) * 100}%)` }} />
         {tabs.map(t => (
           <button
             key={t.key}
@@ -41,8 +44,8 @@ export const RightPanel: React.FC<{ className?: string }> = ({ className = '' })
             aria-selected={tab === t.key}
             aria-controls={`tab-${t.key}`}
             onClick={() => setTab(t.key)}
-            className={`flex-1 flex items-center justify-center gap-1 h-10 text-[12.5px] border-b-2 -mb-px transition-colors ${
-              tab === t.key ? 'text-ink border-accent font-medium' : 'text-muted border-transparent hover:text-ink'
+            className={`no-press flex-1 basis-0 min-w-0 flex items-center justify-center gap-1 h-10 text-[12.5px] transition-colors duration-200 ${
+              tab === t.key ? 'text-ink font-medium' : 'text-muted hover:text-ink hover:bg-raised/50'
             }`}
           >
             {t.label}
@@ -55,7 +58,7 @@ export const RightPanel: React.FC<{ className?: string }> = ({ className = '' })
           </button>
         ))}
       </nav>
-      <div className="flex-1 min-h-0" role="tabpanel" id={`tab-${tab}`}>
+      <div key={tab} className="flex-1 min-h-0 animate-content-in" role="tabpanel" id={`tab-${tab}`}>
         <ErrorBoundary name={tabs.find(t => t.key === tab)!.label}>
           {tab === 'fleet' && <FleetPanel />}
           {tab === 'threats' && <ThreatsPanel />}

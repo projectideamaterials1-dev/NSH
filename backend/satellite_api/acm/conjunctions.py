@@ -17,6 +17,7 @@ CDMRegistry tracks each predicted encounter from detection to resolution:
            -> RESOLVED (TCA passed safely) | COLLIDED
 """
 import math
+from collections import defaultdict
 from typing import Callable, Dict, List, Optional, Sequence
 
 import numpy as np
@@ -319,10 +320,15 @@ class CDMRegistry:
         """Merges a screening run into the registry. Returns counts of new/updated/cleared."""
         stats = {"new": 0, "updated": 0, "cleared": 0}
         seen = set()
+        # (satellite, object) -> its events in registry order: one lookup per prediction instead of a scan
+        # of the whole registry (thousands x thousands with the whole active catalog as the fleet).
+        index: Dict[tuple, List[dict]] = defaultdict(list)
+        for c in self.items:
+            index[(c["satellite_id"], c["object_id"])].append(c)
         for p in predictions:
             if p["tca_ts"] <= now_ts:
                 continue
-            match = self._match(p)
+            match = self._match(p, index)
             risk = risk_level(p["miss_distance_km"], p.get("pc"), p.get("pc_max"), p.get("pc_diluted", False))
             if match is None:
                 self._seq += 1
@@ -336,6 +342,7 @@ class CDMRegistry:
                 }
                 _record_pc(cdm, p.get("pc"), now_ts)
                 self.items.append(cdm)
+                index[(cdm["satellite_id"], cdm["object_id"])].append(cdm)
                 stats["new"] += 1
                 seen.add(cdm["cdm_id"])
                 if risk != "WATCH":
@@ -425,8 +432,9 @@ class CDMRegistry:
                       and c["peak_risk"] != "WATCH")
         return {"by_status": by_status, "open_by_risk": open_by_risk, "avoided": avoided, "total": len(self.items)}
 
-    def _match(self, p: dict) -> Optional[dict]:
-        for c in self.items:
+    def _match(self, p: dict, index: Optional[Dict[tuple, List[dict]]] = None) -> Optional[dict]:
+        candidates = self.items if index is None else index.get((p["satellite_id"], p["object_id"]), ())
+        for c in candidates:
             if (c["satellite_id"] == p["satellite_id"] and c["object_id"] == p["object_id"]
                     and c["status"] in ("ACTIVE", "MITIGATED", "CLEARED")
                     and abs(c["tca_ts"] - p["tca_ts"]) <= MATCH_TCA_S):

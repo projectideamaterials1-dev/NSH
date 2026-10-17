@@ -361,7 +361,10 @@ async def predicted_track(
     minutes: float = Query(95.0, gt=0, le=1440),
     step_s: float = Query(60.0, ge=5, le=600),
     model: str = Query("J2", description="Gravity model: J2 (engine), J4, J6"),
+    apply_burns: bool = Query(True, description="Apply this satellite's queued burns at their epochs"),
 ):
+    """Predicted ground track. By default the satellite's queued burns are applied at their epochs,
+    so the path shows the planned (post-burn) orbit; `burns` gives where each one fires."""
     state = request.app.state.orbital_state
     _require_ready(state)
     if model not in PRESETS:
@@ -370,25 +373,49 @@ async def predicted_track(
         idx = _sat_index(state, sat_id)
         vec = state.sat_buffer[idx:idx + 1].copy()
         start = state.current_time
+        start_ts = state.now_ts
+        horizon_s = minutes * 60
+        queued = sorted(
+            (float(m[0]) - start_ts, np.array(m[2:5], dtype=float), m[5]) for m in state.maneuver_queue
+            if m[1] == sat_id and 0 < float(m[0]) - start_ts <= horizon_s
+        ) if apply_burns else []
     gravity = None if model == "J2" else GravityModel(preset=model)
-    samples = int(minutes * 60 // step_s) + 1
+    samples = int(horizon_s // step_s) + 1
+
+    def advance(dt: float):
+        if dt <= 0:
+            return
+        if gravity:
+            gravity.propagate(vec, dt, max_step=min(dt, 10.0))
+        else:
+            propagate_states(vec, dt, max_step=min(dt, SAMPLING_RK4_STEP_S))
+
+    def sample(offset_s: float) -> dict:
+        t = start + timedelta(seconds=offset_s)
+        _, lat, lon, _ = convert_states_to_lla(vec, t)[0]
+        return {"t": iso_z(t), "offset_s": offset_s, "lat": round(lat, 4), "lon": round(lon, 4),
+                "alt_km": round(float(np.linalg.norm(vec[0, :3]) - R_EARTH), 3)}
 
     def compute():
-        points = []
+        points, burns, t, b = [], [], 0.0, 0
         for k in range(samples):
-            if k:
-                if gravity:
-                    gravity.propagate(vec, step_s, max_step=min(step_s, 10.0))
-                else:
-                    propagate_states(vec, step_s, max_step=min(step_s, SAMPLING_RK4_STEP_S))
-            t = start + timedelta(seconds=k * step_s)
-            _, lat, lon, _ = convert_states_to_lla(vec, t)[0]
-            points.append({"t": iso_z(t), "offset_s": k * step_s, "lat": round(lat, 4), "lon": round(lon, 4),
-                           "alt_km": round(float(np.linalg.norm(vec[0, :3]) - R_EARTH), 3)})
-        return points
+            target = k * step_s
+            while b < len(queued) and queued[b][0] <= target:
+                offset, dv, burn_id = queued[b]
+                advance(offset - t)
+                t = offset
+                vec[0, 3:] += dv
+                point = sample(offset)
+                burns.append({**point, "burn_id": burn_id, "delta_v_mps": round(float(np.linalg.norm(dv)) * 1000, 3)})
+                points.append(point)  # the path bends exactly at the burn
+                b += 1
+            advance(target - t)
+            t = target
+            points.append(sample(target))
+        return points, burns
 
-    points = await asyncio.to_thread(compute)
-    return {"satellite_id": sat_id, "model": model, "points": points}
+    points, burns = await asyncio.to_thread(compute)
+    return {"satellite_id": sat_id, "model": model, "points": points, "burns": burns}
 
 
 @router.get("/api/satellites/{sat_id}/passes", tags=["Satellites"])

@@ -97,6 +97,8 @@ class VisualizationSnapshotResponse(BaseModel):
     satellites: List[SatelliteStatus]
     # The exact tuple definition to force the JSON array-of-arrays
     debris_cloud: List[Tuple[str, float, float, float]]
+    # Indices into debris_cloud of tracked objects that are working satellites (the rest are debris).
+    tracked_satellites: List[int] = []
 # ============================================================================
 # DELTA TELEMETRY
 # ============================================================================

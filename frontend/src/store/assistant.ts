@@ -109,7 +109,7 @@ export function confirmBlocked(action: ProposedAction, simTimestamp: string | nu
  *  executed action look failed (the operator might then confirm it again and double a burn). */
 function refreshDashboard(): void {
   const ops = useOrbitalStore.getState();
-  for (const refresh of [ops.fetchOps, ops.fetchManeuvers, ops.fetchDecisions, ops.fetchAutopilot]) {
+  for (const refresh of [ops.fetchOps, ops.fetchManeuvers, ops.fetchDecisions, ops.fetchAutopilot, () => ops.fetchSelectedInsights()]) {
     Promise.resolve().then(refresh).catch(() => { /* next poll catches up */ });
   }
 }

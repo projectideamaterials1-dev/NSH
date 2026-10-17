@@ -1,7 +1,8 @@
 // src/components/ui.tsx
 // Small, consistent UI primitives shared by all dashboard panels.
 
-import React, { Component, ErrorInfo, ReactNode, useEffect, useRef, useState } from 'react';
+import React, { Component, ErrorInfo, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { STATUS_META, statusMeta } from '../lib/format';
 
@@ -53,7 +54,9 @@ export const Button: React.FC<
   const iconOnly = children === undefined || children === null;
   return (
     <button
-      className={`inline-flex items-center justify-center gap-2 h-8 rounded-md border text-[13px] whitespace-nowrap transition-colors
+      className={`inline-flex items-center justify-center gap-2 h-8 rounded-md border text-[13px] whitespace-nowrap
+        transition-[color,background-color,border-color,box-shadow,transform,filter] duration-150 ease-out-quart
+        active:scale-[0.96] active:duration-75
         [&>svg]:flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent
         ${iconOnly ? 'w-8' : 'px-3'} ${styles} ${className}`}
       {...props}
@@ -64,7 +67,21 @@ export const Button: React.FC<
   );
 };
 
+/** Keeps a component mounted for `exitMs` after `open` turns false so it can play an exit animation.
+ *  `closing` is true during that window. Reduced-motion users get an instant unmount. */
+export function usePresence(open: boolean, exitMs: number): { mounted: boolean; closing: boolean } {
+  const [mounted, setMounted] = useState(open);
+  useEffect(() => {
+    if (open) { setMounted(true); return; }
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setMounted(false); return; }
+    const id = window.setTimeout(() => setMounted(false), exitMs);
+    return () => window.clearTimeout(id);
+  }, [open, exitMs]);
+  return { mounted: open || mounted, closing: !open && mounted };
+}
+
 let modalSeq = 0;
+const MODAL_EXIT_MS = 150;
 // Open dialogs, innermost last: only the top one handles Escape/Tab (a burn planner opened from the
 // conjunction view must not close both).
 const modalStack: number[] = [];
@@ -82,6 +99,17 @@ export const Modal: React.FC<{
   const titleId = `modal-title-${seq}`;
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  // Escape, the backdrop and the close button play the exit animation first; a parent that unmounts
+  // the dialog itself (e.g. after a successful submit) skips it.
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
+  const requestClose = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { onCloseRef.current(); return; }
+    setClosing(true);
+    window.setTimeout(() => onCloseRef.current(), MODAL_EXIT_MS);
+  }, []);
 
   // Escape closes; Tab stays inside the dialog; focus moves in on open and back to the opener on close.
   useEffect(() => {
@@ -93,7 +121,7 @@ export const Modal: React.FC<{
       if (modalStack[modalStack.length - 1] !== seq) return;
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onCloseRef.current();
+        requestClose();
         return;
       }
       if (e.key !== 'Tab' || !dialog) return;
@@ -111,17 +139,20 @@ export const Modal: React.FC<{
       if (at >= 0) modalStack.splice(at, 1);
       opener?.focus?.();
     };
-  }, [seq]);
+  }, [seq, requestClose]);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-2 sm:p-6" onClick={onClose}>
+  // Portalled to <body>: an ancestor with a transform (panel enter animations) or overflow clipping
+  // would otherwise trap the "fixed" overlay inside that panel.
+  return createPortal(
+    <div className={`fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-[2px] p-2 sm:p-6 ${closing ? 'animate-fade-out' : 'animate-fade-in'}`}
+      onClick={requestClose}>
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="bg-panel border border-line rounded-xl shadow-2xl flex flex-col max-h-[94dvh] sm:max-h-[88vh] w-full focus:outline-none"
+        className={`bg-panel border border-line rounded-xl shadow-2xl flex flex-col max-h-[94dvh] sm:max-h-[88vh] w-full focus:outline-none will-change-transform ${closing ? 'animate-dialog-out' : 'animate-dialog-in'}`}
         style={{ maxWidth: width }}
         onClick={e => e.stopPropagation()}
       >
@@ -130,11 +161,12 @@ export const Modal: React.FC<{
             <h3 id={titleId} className="text-base font-semibold text-ink">{title}</h3>
             {subtitle && <p className="text-[13px] text-muted mt-0.5">{subtitle}</p>}
           </div>
-          <Button variant="ghost" onClick={onClose} aria-label="Close" icon={<X className="w-4 h-4" />} />
+          <Button variant="ghost" onClick={requestClose} aria-label="Close" icon={<X className="w-4 h-4" />} />
         </header>
         <div className="overflow-y-auto p-4 sm:p-5">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 

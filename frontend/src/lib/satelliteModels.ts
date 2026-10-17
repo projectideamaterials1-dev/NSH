@@ -37,7 +37,7 @@ const BUILTIN_RULES: [RegExp, BuiltinKind, string][] = [
 ];
 const CUBESAT_GLB = 'nasa/cubesat.glb';   // NASA's generic CubeSat, used for the 'cubesat' kind
 
-const MAX_MODELS = 140;                      // nearest satellites shown as models; the rest stay dots
+const MAX_MODELS = 360;                      // nearest satellites shown as models; the rest stay dots
 const BASE_PX = 15;                          // on-screen radius of a model, whole-Earth view
 const SELECTED_PX = 42;
 const DOCKED = 4e-4;                         // ~2.5 km: objects this close are one stack - draw one model
@@ -283,11 +283,13 @@ export class SatelliteModelLayer {
 
   /** Per frame: picks the satellites to draw as models (with hysteresis, so they don't flicker as the
    * camera moves), places them at the smoothed positions, sizes them to a constant on-screen size and
-   * eases their orientation towards the direction of travel. */
-  update(camera: THREE.PerspectiveCamera, viewportHeight: number, occluded: (p: THREE.Vector3) => boolean, world: ArrayLike<number>) {
+   * eases their orientation towards the direction of travel. Returns the indices drawn as models, so
+   * the scene can hide their dots. */
+  update(camera: THREE.PerspectiveCamera, viewportHeight: number, occluded: (p: THREE.Vector3) => boolean, world: ArrayLike<number>): Set<number> {
+    const drawn = new Set<number>();
 
     this.group.visible = this.enabled;
-    if (!this.enabled || !viewportHeight) return;
+    if (!this.enabled || !viewportHeight) return drawn;
     const now = performance.now();
     const dt = this.lastFrame ? Math.min(now - this.lastFrame, 100) : 16;
     this.lastFrame = now;
@@ -351,10 +353,12 @@ export class SatelliteModelLayer {
       if (fresh || (h && this.guessed.has(id))) obj.quaternion.copy(target); else obj.quaternion.slerp(target, ease);
       if (h) this.guessed.delete(id); else this.guessed.add(id);
       obj.visible = true;
+      drawn.add(i);
     }
     for (const [id, inst] of this.instances) if (!keep.has(id)) inst.obj.visible = false;
     this.shownLast.clear();
     keep.forEach(id => this.shownLast.add(id));
+    return drawn;
   }
 
   private instanceFor(id: string): THREE.Object3D | null {

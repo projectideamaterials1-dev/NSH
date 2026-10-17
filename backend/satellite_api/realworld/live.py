@@ -16,6 +16,7 @@ Live mode loop (every TICK_S of wall time):
     switched on), objects are re-anchored at "now" instead of integrating the gap.
 """
 import asyncio
+import os
 import collections
 import contextlib
 import logging
@@ -39,17 +40,60 @@ logger = logging.getLogger(__name__)
 TICK_S = 1.0
 RESYNC_S = 300.0
 MAX_CATCHUP_S = 900.0
-MAX_SATELLITES = 500
+# Upper bound on the operated fleet. The whole active catalog (~12-13k) fits: screening is one GPU pass and
+# the docked-pair check is spatially hashed; measured ~70 s per screening cycle at 12k on a GTX 1650 SUPER.
+MAX_SATELLITES = int(os.environ.get("REALWORLD_SATELLITE_LIMIT", "20000"))
 MAX_OBJECTS = 20000
 
 
 REFINE_HALF_WINDOW_S = 150.0
-ATTACHED_KM = 0.5            # objects this close with ...
-ATTACHED_REL_KMS = 0.002     # ... this little relative velocity are docked / berthed, not colliding
+# Objects this close with this little relative velocity are docked / berthed, not colliding. Docked
+# vehicles get their own element sets, and SGP4 puts them a few hundred metres off the station (ISS
+# modules vs Soyuz / Progress / Dragon: ~0.64 km, 0.6 m/s) - so the distance has slack. A real encounter
+# at that range closes at tens of m/s or more; close formation flyers (e.g. TanDEM-X) also count as attached.
+ATTACHED_KM = 2.0
+ATTACHED_REL_KMS = 0.002
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+_CELL_BITS = 21                     # per axis: +-1M cells of ATTACHED_KM covers beyond lunar distance
+_CELL_OFF = 1 << (_CELL_BITS - 1)
+
+
+def _cell_keys(cells: np.ndarray) -> np.ndarray:
+    c = np.clip(cells + _CELL_OFF, 0, (1 << _CELL_BITS) - 1).astype(np.int64)
+    return (c[:, 0] << (2 * _CELL_BITS)) | (c[:, 1] << _CELL_BITS) | c[:, 2]
+
+
+def _neighbour_pairs(states: np.ndarray, anchors: np.ndarray, max_km: float, max_rel_kms: float):
+    """(anchor row, other row) pairs closer than max_km and slower relative to each other than max_rel_kms."""
+    cells = np.floor(states[:, :3] / max_km).astype(np.int64)
+    keys = _cell_keys(cells)
+    order = np.argsort(keys, kind="stable")
+    sorted_keys = keys[order]
+    found_a, found_b = [], []
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            for dz in (-1, 0, 1):
+                q = _cell_keys(cells[anchors] + np.array([dx, dy, dz]))
+                lo = np.searchsorted(sorted_keys, q, "left")
+                hi = np.searchsorted(sorted_keys, q, "right")
+                counts = hi - lo
+                if not counts.any():
+                    continue
+                a = np.repeat(anchors, counts)
+                starts = np.repeat(lo - np.cumsum(counts) + counts, counts)
+                b = order[starts + np.arange(counts.sum())]
+                found_a.append(a)
+                found_b.append(b)
+    if not found_a:
+        return []
+    a, b = np.concatenate(found_a), np.concatenate(found_b)
+    keep = (a != b) & (np.linalg.norm(states[a, :3] - states[b, :3], axis=1) < max_km)         & (np.linalg.norm(states[a, 3:] - states[b, 3:], axis=1) < max_rel_kms)
+    return list(zip(a[keep].tolist(), b[keep].tolist()))
 
 
 class Sgp4Refiner:
@@ -138,6 +182,7 @@ class RealWorldService:
         self.request: Optional[dict] = None
         self.source_info: Dict[str, dict] = {}
         self.warnings: List[str] = []
+        self._selection_warnings: List[str] = []   # from the last load (fleet / object limits); kept on refresh
         self.loaded_at: Optional[float] = None
         self.last_resync_wall: Optional[float] = None
         self.last_resync_sim: Optional[float] = None
@@ -220,7 +265,10 @@ class RealWorldService:
 
     async def load(self, fleet: List[str], objects: List[str], norad_ids: List[int], max_satellites: int = 60,
                    max_objects: int = 5000, replace: bool = True, live: Optional[bool] = None, force: bool = False,
-                   conjunction_service=None) -> dict:
+                   conjunction_service=None, prune_stale: bool = False) -> dict:
+        """prune_stale (with replace=False): drop satellites and objects already in the state that this load
+        did not select - used when startup re-applies the catalog over a mission restored from Redis, whose
+        rows may come from an earlier, different selection. Kept rows keep fuel, burns and history."""
         unknown = [k for k in fleet + objects if k not in catalog.SOURCES]
         if unknown:
             raise ValueError(f"Unknown sources: {unknown}. See GET /api/catalog/sources")
@@ -242,7 +290,18 @@ class RealWorldService:
             fleet_norads = {o.norad_id for o, _ in chosen_fleet}
             chosen_objs, dropped_objs = self._select(tracked_objs, request["max_objects"], fleet_norads, when)
             if dropped_fleet:
-                warnings.append(f"{dropped_fleet} more satellites available; raise max_satellites to include them")
+                # Fleet candidates left out may still be loaded as tracked objects (e.g. "All active satellites"):
+                # those are on the map and screened, just not operated - say so instead of "available".
+                tracked = {o.norad_id for o, _ in chosen_objs}
+                if not replace:
+                    tracked |= {o.norad_id for o in self.objects.values()}
+                as_tracked = min(dropped_fleet, len(({o.norad_id for o in fleet_objs} - fleet_norads) & tracked))
+                if as_tracked:
+                    warnings.append(f"{as_tracked} more satellites from the fleet groups are shown as tracked satellites "
+                                    f"(on the map and screened, not operated); raise max_satellites to operate them")
+                if dropped_fleet > as_tracked:
+                    warnings.append(f"{dropped_fleet - as_tracked} more satellites available; "
+                                    f"raise max_satellites to include them")
             if dropped_objs:
                 warnings.append(f"{dropped_objs} more tracked objects available; raise max_objects to include them")
             if not chosen_fleet:
@@ -279,9 +338,14 @@ class RealWorldService:
                     state.debris_ballistic[state.debris_id_to_idx[did]] = catalog.ballistic_coefficient(obj)
                 for sid, (obj, _) in zip(sat_ids, chosen_fleet):
                     state.sat_ballistic[state.sat_id_to_idx[sid]] = catalog.ballistic_coefficient(obj)
+                self._drop_promoted()
+                if prune_stale and not replace:
+                    self._prune_unselected(set(sat_ids), set(deb_ids), conjunction_service)
+                state.payload_objects = {did for did, obj in self.objects.items() if catalog.is_payload(obj.name, obj.source)}
                 self._update_attached()
                 self._snapshot_fuel()
                 self.request, self.source_info, self.warnings = request, info, warnings
+                self._selection_warnings = [w for w in warnings if " more " in w]
                 self.loaded_at = self.last_refresh_wall = self.last_resync_wall = time.time()
                 self.last_resync_sim = when.timestamp()
                 self.last_error = None
@@ -321,6 +385,7 @@ class RealWorldService:
                             state.nominal_buffer[idx] = s
                             state.sat_ballistic[idx] = catalog.ballistic_coefficient(obj)
                             self._anchor_fuel[sid] = float(state.sat_fuel[idx])
+                        self._drop_promoted()
                         self._update_attached()
                     added = ids
                 if len(current) + len(added) < target:
@@ -372,86 +437,133 @@ class RealWorldService:
         self._anchor_fuel = {sid: float(state.sat_fuel[state.sat_id_to_idx[sid]])
                              for sid in self.fleet if sid in state.sat_id_to_idx}
 
-    def _maneuvered(self, sid: str) -> bool:
+    def _maneuvered(self, sid: str, queued: Optional[set] = None) -> bool:
+        """`queued`: satellites with a queued burn, when the caller checks many (saves a queue scan each)."""
         state = self.state
         idx = state.sat_id_to_idx[sid]
         return (float(state.sat_fuel[idx]) < self._anchor_fuel.get(sid, float("inf")) - 1e-9
                 or sid in state.eol_satellites
-                or any(m[1] == sid for m in state.maneuver_queue)
+                or (sid in queued if queued is not None else any(m[1] == sid for m in state.maneuver_queue))
                 or state.satellite_mode(sid) not in ("NOMINAL",))
 
     async def resync(self, when: datetime) -> dict:
-        """Re-anchors catalog objects to SGP4 at `when` (moving the clock there if needed)."""
+        """Re-anchors catalog objects to SGP4 at `when` (moving the clock there if needed).
+
+        The numeric work (J2 propagation across the gap, SGP4 for every object, the docked-pair check) runs
+        in a worker thread while the state lock is held: with the whole catalog loaded it takes seconds, and
+        on the event loop it froze the API and the telemetry stream. Burns that fall due are executed on the
+        loop in between, because they emit events."""
         state = self.state
         async with state.lock:
             if not state.is_ready() or state.current_time is None:
                 return {"anchored": 0}
             dt = when.timestamp() - state.now_ts
-            sats = [(sid, obj) for sid, obj in self.fleet.items() if sid in state.sat_id_to_idx and not self._maneuvered(sid)]
+            queued = {m[1] for m in state.maneuver_queue}
+            sats = [(sid, obj) for sid, obj in self.fleet.items()
+                    if sid in state.sat_id_to_idx and not self._maneuvered(sid, queued)]
             debs = [(did, obj) for did, obj in self.objects.items() if did in state.debris_id_to_idx]
             if dt > 1e-6:
-                # Rows that are not re-anchored below (manoeuvred satellites, objects from /api/telemetry)
-                # follow the engine's J2 model across the gap.
-                self._propagate_rows(state.sat_buffer, state.sat_count, {state.sat_id_to_idx[s] for s, _ in sats}, dt)
-                self._propagate_rows(state.debris_buffer, state.debris_count, {state.debris_id_to_idx[d] for d, _ in debs}, dt)
-                state._advance_clock_and_ghosts(dt)
+                await asyncio.to_thread(self._coast_unanchored, sats, debs, dt)
                 state._execute_due_maneuvers(when.timestamp())
             state.current_time = when
-
-            anchored = 0
-            if sats:
-                vecs, ok = catalog.propagate([o for _, o in sats], when)
-                idx = np.array([state.sat_id_to_idx[sid] for sid, _ in sats])
-                state.sat_buffer[idx[ok]] = vecs[ok]
-                state.nominal_buffer[idx[ok]] = vecs[ok]
-                anchored += int(ok.sum())
-                if dt > 1e-6 and (~ok).any():
-                    # SGP4 failed for these rows (decayed/invalid elements, etc.) -
-                    # fall back to the engine's own J2 propagation across the gap
-                    # instead of leaving them frozen while the clock moves on.
-                    failed = idx[~ok]
-                    work = state.sat_buffer[failed].copy()
-                    propagate_fast(work, dt)
-                    state.sat_buffer[failed] = work
-            if debs:
-                vecs, ok = catalog.propagate([o for _, o in debs], when)
-                idx = np.array([state.debris_id_to_idx[did] for did, _ in debs])
-                state.debris_buffer[idx[ok]] = vecs[ok]
-                anchored += int(ok.sum())
-                if dt > 1e-6 and (~ok).any():
-                    failed = idx[~ok]
-                    work = state.debris_buffer[failed].copy()
-                    propagate_fast(work, dt)
-                    state.debris_buffer[failed] = work
+            anchored = await asyncio.to_thread(self._anchor, sats, debs, when, dt)
             state.last_telemetry_ts = when.timestamp()
             state.telemetry_version += 1
-            self._update_attached()
             self._snapshot_fuel()
             self.last_resync_wall, self.last_resync_sim = time.time(), when.timestamp()
             return {"anchored": anchored, "clock_jump_s": round(dt, 3)}
 
-    def _update_attached(self):
-        """Finds catalog objects flying as one body (NORAD gives docked vehicles the station's elements).
+    def _coast_unanchored(self, sats, debs, dt: float):
+        """Rows that are not re-anchored (manoeuvred satellites, objects from /api/telemetry) follow the
+        engine's J2 model across the gap; the clock and the ghost slots advance. Caller holds the lock."""
+        state = self.state
+        self._propagate_rows(state.sat_buffer, state.sat_count, {state.sat_id_to_idx[s] for s, _ in sats}, dt)
+        self._propagate_rows(state.debris_buffer, state.debris_count, {state.debris_id_to_idx[d] for d, _ in debs}, dt)
+        state._advance_clock_and_ghosts(dt)
+
+    def _anchor(self, sats, debs, when: datetime, dt: float) -> int:
+        """SGP4 at `when` for every catalog object, then the docked-pair check. Caller holds the lock."""
+        state = self.state
+        anchored = 0
+        if sats:
+            vecs, ok = catalog.propagate([o for _, o in sats], when)
+            idx = np.array([state.sat_id_to_idx[sid] for sid, _ in sats])
+            state.sat_buffer[idx[ok]] = vecs[ok]
+            state.nominal_buffer[idx[ok]] = vecs[ok]
+            anchored += int(ok.sum())
+            if dt > 1e-6 and (~ok).any():
+                # SGP4 failed for these rows (decayed/invalid elements, etc.) -
+                # fall back to the engine's own J2 propagation across the gap
+                # instead of leaving them frozen while the clock moves on.
+                failed = idx[~ok]
+                work = state.sat_buffer[failed].copy()
+                propagate_fast(work, dt)
+                state.sat_buffer[failed] = work
+        if debs:
+            vecs, ok = catalog.propagate([o for _, o in debs], when)
+            idx = np.array([state.debris_id_to_idx[did] for did, _ in debs])
+            state.debris_buffer[idx[ok]] = vecs[ok]
+            anchored += int(ok.sum())
+            if dt > 1e-6 and (~ok).any():
+                failed = idx[~ok]
+                work = state.debris_buffer[failed].copy()
+                propagate_fast(work, dt)
+                state.debris_buffer[failed] = work
+        self._update_attached()
+        return anchored
+
+    def _prune_unselected(self, sat_ids: set, deb_ids: set, conjunction_service=None):
+        """Removes state rows that are not part of the current selection. A restored row left behind by an
+        earlier selection is maintained by nobody: it drifts, is skipped by the docked-pair check, and when
+        the same satellite is also loaded as a tracked object it "collides" with its own copy every step.
         Caller holds the state lock."""
         state = self.state
-        n = state.sat_count
+        stale_sats = [sid for sid in list(state.sat_id_to_idx) if sid not in sat_ids]
+        stale_debs = [did for did in list(state.debris_id_to_idx) if did not in deb_ids]
+        if stale_sats:
+            remap = state.remove_satellites(stale_sats, actor="catalog reload")
+            if conjunction_service is not None:
+                conjunction_service.autopilot.remap_satellites(remap)
+            for sid in stale_sats:
+                self.fleet.pop(sid, None)
+        if stale_debs:
+            state.remove_debris(stale_debs)
+            for did in stale_debs:
+                self.objects.pop(did, None)
+        if stale_sats or stale_debs:
+            state.emit("info", "catalog", f"Startup reload removed {len(stale_sats)} satellite(s) and {len(stale_debs)} "
+                       f"object(s) left over from an earlier catalog selection")
+
+    def _drop_promoted(self):
+        """A satellite that joined the fleet stops being a tracked object (it was one when e.g. "All active
+        satellites" is loaded): otherwise it is drawn twice and screened against its own copy. Caller holds
+        the state lock."""
+        fleet_norads = {o.norad_id for o in self.fleet.values()}
+        promoted = [did for did, obj in self.objects.items() if obj.norad_id in fleet_norads]
+        if promoted:
+            self.state.remove_debris(promoted)
+            for did in promoted:
+                self.objects.pop(did, None)
+
+    def _update_attached(self):
+        """Finds catalog objects flying as one body (NORAD gives docked vehicles the station's elements).
+        Caller holds the state lock.
+
+        Spatial hash: every object goes into an ATTACHED_KM cube; a fleet satellite is compared only with
+        the objects in its own and the 26 neighbouring cubes. Comparing each satellite with every object
+        took ~19 s with the whole active catalog as the fleet (12k x 19k) and blocked the clock."""
+        state = self.state
+        n, m = state.sat_count, state.debris_count
         pairs = set()
         if n:
-            sats = state.sat_buffer[:n]
-            others = [(sats, state.idx_to_sat_id), (state.debris_buffer[:state.debris_count], state.idx_to_debris_id)]
-            for i in range(n):
-                sid = state.idx_to_sat_id[i]
-                if sid not in self.fleet:
-                    continue
-                for buf, id_map in others:
-                    if not len(buf):
-                        continue
-                    close = np.nonzero((np.linalg.norm(buf[:, :3] - sats[i, :3], axis=1) < ATTACHED_KM)
-                                       & (np.linalg.norm(buf[:, 3:] - sats[i, 3:], axis=1) < ATTACHED_REL_KMS))[0]
-                    for j in close:
-                        other = id_map[int(j)]
-                        if other != sid and (other in self.fleet or other in self.objects):
-                            pairs.add(frozenset((sid, other)))
+            ids = [state.idx_to_sat_id[i] for i in range(n)] + [state.idx_to_debris_id[j] for j in range(m)]
+            allx = np.vstack([state.sat_buffer[:n], state.debris_buffer[:m]]) if m else state.sat_buffer[:n]
+            anchors = np.array([i for i in range(n) if ids[i] in self.fleet], dtype=np.int64)
+            if len(anchors):
+                for i, j in _neighbour_pairs(allx, anchors, ATTACHED_KM, ATTACHED_REL_KMS):
+                    sid, other = ids[i], ids[j]
+                    if other != sid and (other in self.fleet or other in self.objects):
+                        pairs.add(frozenset((sid, other)))
         state.attached_pairs = pairs
 
     @staticmethod
@@ -494,7 +606,8 @@ class RealWorldService:
                     hit = catalog.detect_maneuver(old, new, da_threshold_km=threshold)
                     if hit:
                         detected.append({**hit, "id": key, "role": role, "detected_at": iso_z(_utcnow())})
-            self.source_info, self.warnings = info, warnings
+            # Fetch problems are per refresh; what the last load left out still applies.
+            self.source_info, self.warnings = info, warnings + self._selection_warnings
             self.last_refresh_wall = time.time()
             self.maneuver_detections.extend(detected)
         when = _utcnow() if self.live else self.state.current_time
@@ -580,6 +693,7 @@ class RealWorldService:
             "attached_pairs": len(state.attached_pairs),
             "sources": self.source_info,
             "warnings": self.warnings,
+            "limits": {"max_satellites": MAX_SATELLITES, "max_objects": MAX_OBJECTS},
             "skipped": self.skipped,
             "element_age_hours": {"median": round(float(np.median(ages)), 1), "max": round(float(max(ages)), 1)} if ages else None,
             "loaded_at": iso_z(self.loaded_at) if self.loaded_at else None,

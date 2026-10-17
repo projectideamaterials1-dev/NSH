@@ -63,6 +63,7 @@ export class EarthScene {
   private readonly visibility: THREE.LineSegments;
   private readonly selectedTrail = makeLine('#38d6f5', 2.5, 0.95);
   private readonly predicted = makeLine('#e6edf3', 1.6, 0.85, true);
+  private readonly coast = makeLine('#9aa8b6', 1.2, 0.45, true);   // the orbit without a queued burn
 
   private satWorld = new Float32Array(0);
   private readonly motion = new MotionSmoother();   // satellites glide between telemetry snapshots
@@ -71,6 +72,8 @@ export class EarthScene {
   private stationWorld = new Float32Array(0);
   private burnWorld = new Float32Array(0);
   private satCount = 0;
+  /** Satellites currently drawn as 3-D models: their dots are hidden so only the model shows. */
+  private modelDrawn = new Set<number>();
   private stationCount = 0;
   private burnCount = 0;
   private followTarget: THREE.Vector3 | null = null;
@@ -167,7 +170,7 @@ export class EarthScene {
       new THREE.LineBasicMaterial({ color: '#3fb950', transparent: true, opacity: 0.85, depthWrite: false }),
     );
     for (const obj of [this.trails, this.visibility]) { obj.frustumCulled = false; obj.renderOrder = 3; this.scene.add(obj); }
-    for (const line of [this.selectedTrail, this.predicted]) { line.renderOrder = 3; this.lines.push(line); this.scene.add(line); }
+    for (const line of [this.selectedTrail, this.predicted, this.coast]) { line.renderOrder = 3; this.lines.push(line); this.scene.add(line); }
 
     // Satellite models are the only lit objects (the Earth uses its own shaders): sunlight + a little fill.
     this.scene.add(this.sunLight, this.fillLight, new THREE.AmbientLight(0xffffff, 0.45), this.models.group);
@@ -270,7 +273,7 @@ export class EarthScene {
     this.satellites.update(n, (i, pos, col, size) => {
       pos.set(this.satWorld.subarray(i * 3, i * 3 + 3), i * 3);
       col.set(rgba(sats[i].color), i * 4);
-      size[i] = i === selectedIndex ? 17 : 13;
+      size[i] = this.dotSize(i);
     });
     this.satCount = n;
     this.models.setSatellites(ids, ids[selectedIndex] ?? null, headings);
@@ -286,6 +289,10 @@ export class EarthScene {
       col.set(linearRgba('#38d6f5'), 0);
       size[0] = 36;
     });
+  }
+
+  private dotSize(i: number) {
+    return this.modelDrawn.has(i) ? 0 : i === this.selectedSat ? 17 : 13;
   }
 
   /** Smoothed positions at `now` into satWorld (what is drawn and picked). */
@@ -317,14 +324,17 @@ export class EarthScene {
     return this.project(new THREE.Vector3().fromArray(this.satWorld, this.selectedSat * 3));
   }
 
-  /** `positions` holds [lon, lat, alt m] triples. */
-  setDebris(positions: Float32Array | null, count: number) {
+  /** `positions` holds [lon, lat, alt m] triples; `kinds[i]` = 1 marks a working satellite outside the
+   *  fleet (drawn violet and a little larger), 0 debris. */
+  setDebris(positions: Float32Array | null, count: number, kinds: Uint8Array | null = null) {
     const v = new THREE.Vector3();
     const color = linearRgba('#a8b5c4', 0.75);
+    const satColor = linearRgba('#b392f0', 0.85);
     this.debris.update(positions ? count : 0, (i, pos, col, size) => {
       toVector(positions![i * 3], positions![i * 3 + 1], positions![i * 3 + 2], v).toArray(pos, i * 3);
-      col.set(color, i * 4);
-      size[i] = 3.2;
+      const sat = kinds?.[i] === 1;
+      col.set(sat ? satColor : color, i * 4);
+      size[i] = sat ? 4.2 : 3.2;
     });
   }
 
@@ -345,8 +355,9 @@ export class EarthScene {
     setLinePath(this.selectedTrail, (selected ?? []).map(p => toVector(p.lon, p.lat, p.alt)));
   }
 
-  setPredicted(points: GlobePoint[] | null) {
+  setPredicted(points: GlobePoint[] | null, coast: GlobePoint[] | null = null) {
     setLinePath(this.predicted, (points ?? []).map(p => toVector(p.lon, p.lat, p.alt)));
+    setLinePath(this.coast, (coast ?? []).map(p => toVector(p.lon, p.lat, p.alt)));
   }
 
   setStations(stations: (GlobePoint & { color: string })[]) {
@@ -376,15 +387,16 @@ export class EarthScene {
     this.visibility.geometry.setAttribute('position', new THREE.Float32BufferAttribute(segments, 3));
   }
 
-  setBurns(burns: GlobePoint[]) {
+  setBurns(burns: (GlobePoint & { color?: string })[]) {
     if (this.burnWorld.length < burns.length * 3) this.burnWorld = new Float32Array(burns.length * 3);
     const v = new THREE.Vector3();
-    const color = linearRgba('#d29922', 0.95);
+    const executed = linearRgba('#d29922', 0.95);
     this.burns.update(burns.length, (i, pos, col, size) => {
       toVector(burns[i].lon, burns[i].lat, burns[i].alt, v).toArray(pos, i * 3);
       v.toArray(this.burnWorld, i * 3);
-      col.set(color, i * 4);
-      size[i] = 9;
+      // Planned burns carry their own colour and sit on the orbit; executed ones mark the ground.
+      col.set(burns[i].color ? linearRgba(burns[i].color!, 0.95) : executed, i * 4);
+      size[i] = burns[i].color ? 12 : 9;
     });
     this.burnCount = burns.length;
   }
@@ -547,7 +559,11 @@ export class EarthScene {
     this.earthMaterial.uniforms.cloudShadow.value = cloudFade;
     this.tileLayer.update(this.camera, this.container.clientHeight, performance.now());
     this.fillLight.position.copy(this.camera.position);
-    this.models.update(this.camera, this.container.clientHeight, p => this.isOccluded(p), this.satWorld);
+    const drawn = this.models.update(this.camera, this.container.clientHeight, p => this.isOccluded(p), this.satWorld);
+    if (drawn.size !== this.modelDrawn.size || [...drawn].some(i => !this.modelDrawn.has(i))) {
+      this.modelDrawn = drawn;
+      this.satellites.setSizes(this.satCount, (i, size) => { size[i] = this.dotSize(i); });
+    }
     this.camera.near = Math.max(0.002, altitude * 0.3);
     this.camera.far = altitude + 3;
     this.camera.updateProjectionMatrix();

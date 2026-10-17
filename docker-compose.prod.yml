@@ -59,6 +59,8 @@ services:
       - LEADER_LOCK_TTL_S=${LEADER_LOCK_TTL_S:-15}
       - LEADER_RENEW_INTERVAL_S=${LEADER_RENEW_INTERVAL_S:-5}
       - ACM_ARCHIVE=1
+      # Worker processes for planning / post-burn verification / Pc (satellite_api/compute/pool.py).
+      - ACM_WORKERS=${ACM_WORKERS:-4}
       - AUTOPILOT=${AUTOPILOT:-1}
       # Real-world data on startup (CelesTrak source keys, see GET /api/catalog/sources); empty = off
       - REALWORLD_FLEET=${REALWORLD_FLEET:-}

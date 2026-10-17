@@ -20,6 +20,7 @@ advanced by CONFIG.cdmScreenIntervalSeconds or telemetry/burns changed, and in b
 uplinked as soon as a threatened satellite enters ground-station contact.
 """
 import asyncio
+import contextlib
 import copy
 import logging
 import math
@@ -36,6 +37,9 @@ from satellite_api.acm.decision_support import (
 )
 from satellite_api.acm.fleet_coordinator import coordinate_fleet
 from satellite_api.acm.plugins import get_plugin
+from satellite_api.compute import planning as compute_planning
+from satellite_api.compute import pool as compute_pool
+from satellite_api.compute.evasion import evaluate_evasion
 from satellite_api.acm.scheduler import BurnRequest, evaluate_sequence, queue_burns
 from satellite_api.config import CONFIG
 from satellite_api.ground_stations import brain_stations, has_los
@@ -69,6 +73,8 @@ class Autopilot:
     def __init__(self):
         self.brain = AutonomousBrain()
         self.stations = brain_stations()
+        self._verify_deadline = math.inf    # per planning cycle, see VERIFY_BUDGET_S
+        self._unverified = 0
         self.last_plan_summary: Dict[str, int] = {}
         self._last_reject: Dict[str, tuple] = {}
         self._proposal_seq = 0
@@ -116,9 +122,16 @@ class Autopilot:
         pending_sats = {p["satellite_id"] for p in state.proposals.values() if p["status"] == "PENDING"}
 
         conjunctions, threat_cdms = [], defaultdict(list)
-        for cdm in state.cdms.open():
+        open_cdms = state.cdms.open()
+        # Two fleet satellites closing on each other produce an event for each of them: only one should
+        # maneuver (the one whose ID sorts first); the other keeps its event for display only.
+        active_pairs = {(c["satellite_id"], c["object_id"]) for c in open_cdms if c["status"] == "ACTIVE"}
+        for cdm in open_cdms:
             idx = state.sat_id_to_idx.get(cdm["satellite_id"])
             if idx is None or cdm["status"] != "ACTIVE" or cdm["tca_ts"] <= now_ts:
+                continue
+            if (cdm["object_id"] in state.sat_id_to_idx and cdm["object_id"] < cdm["satellite_id"]
+                    and (cdm["object_id"], cdm["satellite_id"]) in active_pairs):
                 continue
             conj = Conjunction(
                 sat_idx=idx, debris_idx=0, tca_seconds=cdm["tca_ts"] - now_ts,
@@ -139,8 +152,17 @@ class Autopilot:
         self.brain.eol_scheduled |= eol_idx
 
         reported = set(self.brain.skipped_unbound)
-        plans = self.brain.plan_evasion(sat_states, nominal, fuels, conjunctions, now, self.stations,
-                                        evasion_mode=plugin.mode)
+        # Worker thread: planning works on the copies above and the planner's own state, and with a
+        # whole-catalog fleet it takes seconds - on the event loop it froze the API and telemetry stream.
+        self._verify_deadline = time.time() + VERIFY_BUDGET_S     # wall clock: compared in worker processes
+        self._unverified = 0
+        # In a worker process: planning works on the copies above and the planner's own state, which comes
+        # back with the plans. With a whole-catalog fleet it takes seconds of pure Python.
+        brain_after, plans = await compute_pool.run(compute_planning.plan, self.brain, sat_states, nominal, fuels,
+                                                    conjunctions, now, self.stations, evasion_mode=plugin.mode)
+        if brain_after is not self.brain:
+            self.brain.__dict__.update(brain_after.__dict__)
+        summary["evasions_deferred"] = getattr(self.brain, "evasions_deferred", 0)
         for i in sorted(self.brain.skipped_unbound - reported):
             state.emit("warn", "autopilot", f"{state.idx_to_sat_id[i]}: state is not a bound orbit (bad element set?) - "
                        "station-keeping skipped for it", satellite_id=state.idx_to_sat_id[i])
@@ -180,8 +202,29 @@ class Autopilot:
         for p in plans:
             by_sat[p.sat_idx].append(p)
 
+        # IDs as of planning: verification below releases the state lock, and a fleet resize meanwhile can
+        # move satellites to other rows - such a plan is dropped (and re-planned next cycle), never misapplied.
+        planned_ids = {idx: state.idx_to_sat_id[idx] for idx in by_sat}
+        summary["sequences_dropped_state_changed"] = 0
+        # Avoidance plans: build every satellite's evaluation job under the lock, then release it once and
+        # evaluate them all in parallel in the worker processes (alternatives + post-burn re-screening).
+        evasion_jobs = {}
         for idx, seq in by_sat.items():
-            sid = state.idx_to_sat_id[idx]
+            if any(p.category == EVASION for p in seq) and not any(p.category == EOL for p in seq):
+                evasion_jobs[idx] = self._evasion_job(state, idx, sorted(seq, key=lambda p: p.burn_time_offset_s),
+                                                      threat_cdms.get(idx, []), fuels[idx], now_ts)
+        evasion_results = {}
+        if evasion_jobs:
+            async with _released(state.lock):
+                results = await asyncio.gather(*(compute_pool.run(evaluate_evasion, job)
+                                                 for job in evasion_jobs.values()))
+            evasion_results = dict(zip(evasion_jobs, results))
+
+        for idx, seq in by_sat.items():
+            sid = planned_ids[idx]
+            if state.idx_to_sat_id.get(idx) != sid:
+                summary["sequences_dropped_state_changed"] += 1
+                continue
             summary["sequences_planned"] += 1
             seq = sorted(seq, key=lambda p: p.burn_time_offset_s)
             kind = EOL if any(p.category == EOL for p in seq) else (
@@ -189,8 +232,10 @@ class Autopilot:
             candidates = []
             total_dv_mps = sum(float(np.linalg.norm(p.delta_v_rtn)) for p in seq) * 1000.0
             if kind == EVASION:
-                seq, rationale, candidates = await self._choose_evasion(
-                    state, idx, seq, threat_cdms.get(idx, []), fuels[idx], now_ts)
+                seq, rationale, candidates = self._finish_evasion(state, evasion_jobs[idx], evasion_results[idx], now_ts)
+                if state.idx_to_sat_id.get(idx) != sid:
+                    summary["sequences_dropped_state_changed"] += 1
+                    continue
             elif kind == EOL:
                 rationale = rationale_eol(fuels[idx], total_dv_mps)
             else:
@@ -223,6 +268,10 @@ class Autopilot:
                     state.record_decision(satellite_id=sid, kind=kind, outcome="REJECTED", rationale=rationale,
                                           reason=evaluation.reason, cdm_ids=cdm_ids, candidates=candidates,
                                           burns=self._burn_rows(burns), actor="autopilot")
+        summary["evasions_unverified"] = self._unverified
+        if self._unverified:
+            state.emit("warn", "autopilot", f"{self._unverified} avoidance plan(s) this cycle used the planner's "
+                       f"plan without post-burn re-screening (verification budget of {VERIFY_BUDGET_S:.0f} s used)")
         self.last_plan_summary = summary
         return summary
 
@@ -268,9 +317,9 @@ class Autopilot:
         else:
             state.emit("info", "autopilot", "Station-keeping return scheduled", satellite_id=sid, rationale=rationale)
 
-    async def _choose_evasion(self, state, idx: int, seq, threats: List[dict], fuel_kg: float, now_ts: float):
-        """Verifies the planner's evasion against the post-maneuver trajectory and, when it leaves the
-        primary threat unresolved or creates a secondary conjunction, tries the alternatives."""
+    def _evasion_job(self, state, idx: int, seq, threats: List[dict], fuel_kg: float, now_ts: float) -> dict:
+        """Everything evaluate_evasion (compute/evasion.py) needs, copied out of the live state so it can run
+        in a worker process with the state lock released. Caller holds the lock."""
         sid = state.idx_to_sat_id[idx]
         threat_rows = sorted(({"object_id": c["object_id"], "miss_distance_km": c["miss_distance_km"],
                                "pc": c.get("pc"), "tca_s": c["tca_ts"] - now_ts, "clearance_km": _clearance(c)}
@@ -280,72 +329,37 @@ class Autopilot:
             first = seq[0].burn_time_offset_s
             threat_rows = [{"object_id": "unknown", "miss_distance_km": 0.0, "pc": None, "tca_s": first,
                             "clearance_km": 0.2}]
-        first_label = _label("radial" if any(p.maneuver_type.value == "RADIAL_SHUNT" for p in seq) else "transverse",
-                             _direction(seq))
-        options = [(first_label, seq)]
         verify = CONFIG.verifyManeuvers and bool(threats)
+        job = {"sid": sid, "idx": idx, "seq": seq, "threat_rows": threat_rows, "fuel_kg": fuel_kg,
+               "sat_state": state.sat_buffer[idx].copy(), "nominal": state.nominal_buffer[idx].copy(),
+               "sat_ballistic": float(state.sat_ballistic[idx]), "now_ts": now_ts, "verify": verify,
+               "deadline": self._verify_deadline,
+               "first_label": _label("radial" if any(p.maneuver_type.value == "RADIAL_SHUNT" for p in seq)
+                                     else "transverse", _direction(seq)),
+               "max_candidates": MAX_EVASION_CANDIDATES,
+               "objects": None, "ids": [], "types": [], "obj_ballistic": None, "horizon_s": 0.0}
         if verify:
-            sat_state = state.sat_buffer[idx].copy()
-            nominal = state.nominal_buffer[idx].copy()
-            brain_threats = [Conjunction(sat_idx=idx, debris_idx=0, tca_seconds=t["tca_s"],
-                                         miss_distance_km=t["miss_distance_km"], relative_velocity_kms=0.0,
-                                         risk_score=1.0, pc=t["pc"], requires_action=True,
-                                         target_clearance_km=t["clearance_km"]) for t in threat_rows]
-            for mode in ("transverse", "radial"):
-                for direction in (1.0, -1.0):
-                    label = _label(mode, direction)
-                    if label == first_label:
-                        continue
-                    alt = self.brain.calculate_perfect_evasion_sequence(idx, brain_threats, fuel_kg, sat_state,
-                                                                        nominal, mode=mode, direction=direction)
-                    if alt:
-                        options.append((label, alt))
-            objects, ids, types, obj_b = _screen_objects(state, idx)
+            job["objects"], job["ids"], job["types"], job["obj_ballistic"] = _screen_objects(state, idx)
             screen_horizon = CONFIG.cdmHorizonSeconds if ENGINE_NAME == "cpp" else min(CONFIG.cdmHorizonSeconds, 3600.0)
-            horizon = max(screen_horizon, max(t["tca_s"] for t in threat_rows) + 600.0)
-            threat_ids = {t["object_id"] for t in threat_rows}
+            job["horizon_s"] = max(screen_horizon, max(t["tca_s"] for t in threat_rows) + 600.0)
+        return job
 
-        candidates, chosen, rejected = [], None, []
-        for label, plan in options[:MAX_EVASION_CANDIDATES]:
-            cand = {"label": label, "n_burns": len(plan),
-                    "total_dv_mps": round(sum(float(np.linalg.norm(p.delta_v_rtn)) for p in plan) * 1000, 4),
-                    "fuel_kg": round(sum(p.estimated_fuel_kg for p in plan), 4),
-                    "first_burn_s": threat_rows[0]["tca_s"] - plan[0].burn_time_offset_s,
-                    "clean": None, "_plan": plan, "_score": (0, 0.0, 0.0)}
-            candidates.append(cand)
-            if not verify:
-                chosen = cand
-                break
-            burns = [{"offset_s": p.burn_time_offset_s,
-                      "dv_eci_kms": np.array([p.delta_v_eci_dict[a] for a in "xyz"])} for p in plan]
-            check = await asyncio.to_thread(verify_sequence, state.sat_buffer[idx].copy(), sid, burns, objects,
-                                            ids, types, now_ts, horizon, threat_ids,
-                                            float(state.sat_ballistic[idx]), obj_b)
-            cand["verification"] = check
-            cand["clean"] = check["clean"]
-            unresolved = sum(r["needs_action"] for r in check["primary"])
-            secondary = sum(r["needs_action"] for r in check["secondary"])
-            closest_secondary = min([r["miss_distance_km"] for r in check["secondary"]] or [math.inf])
-            cand["_score"] = (unresolved + secondary, -closest_secondary, cand["fuel_kg"])
-            if check["clean"]:
-                chosen = cand
-                break
-            rejected.append({"label": label, "why": ", ".join(filter(None, [
-                f"{secondary} secondary conjunction(s)" if secondary else "",
-                "primary threat not cleared" if unresolved else ""]))})
-        if chosen is None:
-            chosen = min(candidates, key=lambda c: c["_score"])
-            state.emit("crit", "autopilot", f"No evasion option is fully clean; using {chosen['label']} "
+    def _finish_evasion(self, state, job: dict, result: dict, now_ts: float):
+        """Applies a worker's evaluation: locks the satellite for the chosen plan and writes the rationale.
+        Caller holds the lock."""
+        sid, idx, plan = job["sid"], job["idx"], result["plan"]
+        if result["no_clean"]:
+            state.emit("crit", "autopilot", f"No evasion option is fully clean; using {result['chosen']['label']} "
                        f"(least residual risk). Operator review advised.", satellite_id=sid)
-        plan = chosen["_plan"]
+        if result["budget_spent"]:
+            self._unverified += 1
         self.brain.locked_satellites[idx] = (now_ts + plan[-1].burn_time_offset_s + 1.0, "EVASION")
-        rejected = [r for r in rejected if r["label"] != chosen["label"]]
-        rationale = rationale_evasion(threat_rows, chosen, rejected, chosen["fuel_kg"])
-        for c in candidates:
-            c["chosen"] = c is chosen
-            c.pop("_plan")
-            c.pop("_score")
-        return plan, rationale, candidates
+        rationale = rationale_evasion(job["threat_rows"], result["chosen"], result["rejected"],
+                                      result["chosen"]["fuel_kg"])
+        if result["budget_spent"]:
+            rationale += (" Not re-screened after the burn: this cycle's verification budget went to"
+                          " more urgent events.")
+        return plan, rationale, result["candidates"]
 
     # ── human-in-the-loop ───────────────────────────────────────────────────────
     def _propose(self, state, idx, sid, kind, seq, burns, evaluation, rationale, candidates, cdm_ids, now_ts):
@@ -459,16 +473,47 @@ def _pending(state, proposal_id: str) -> dict:
     return prop
 
 
+# Apogee/perigee filter margin for verification screens: covers the warning radius plus the largest
+# semi-major-axis change a single plan can make (15 m/s in LEO moves a by ~25 km) with room to spare.
+SHELL_MARGIN_KM = 75.0
+_MU = 398600.4418
+
+
+def _altitude_shells(states: np.ndarray):
+    """(perigee radius, apogee radius) in km per (N, 6) ECI state; unbound or degenerate rows get
+    (0, inf) so the filter always keeps them."""
+    r = np.linalg.norm(states[:, :3], axis=1)
+    v2 = np.einsum("ij,ij->i", states[:, 3:], states[:, 3:])
+    h2 = np.einsum("ij,ij->i", *(np.cross(states[:, :3], states[:, 3:]),) * 2)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        inv_a = 2.0 / r - v2 / _MU
+        a = 1.0 / inv_a
+        e = np.sqrt(np.clip(1.0 - h2 / (_MU * a), 0.0, None))
+        rp, ra = a * (1.0 - e), a * (1.0 + e)
+    bad = ~np.isfinite(rp) | ~np.isfinite(ra) | (inv_a <= 0)
+    rp[bad], ra[bad] = 0.0, np.inf
+    return rp, ra
+
+
 def _screen_objects(state, idx: int):
-    """Every other tracked object (debris, then satellites), minus physically attached ones."""
+    """Every other tracked object (debris, then satellites) that could come close to satellite `idx`,
+    minus physically attached ones. Objects whose altitude range (perigee to apogee) does not overlap the
+    satellite's within SHELL_MARGIN_KM can never approach it, so they are left out: with the whole active
+    catalog tracked this cuts each post-burn verification screen several-fold."""
     sid = state.idx_to_sat_id[idx]
     others = [i for i in range(state.sat_count) if i != idx]
     objects = np.vstack([state.debris_buffer[:state.debris_count], state.sat_buffer[others]])
     ids = [state.idx_to_debris_id[i] for i in range(state.debris_count)] + [state.idx_to_sat_id[i] for i in others]
     types = ["DEBRIS"] * state.debris_count + ["SATELLITE"] * len(others)
     ballistic = np.concatenate([state.debris_ballistic[:state.debris_count], state.sat_ballistic[others]])
+    keep = np.ones(len(ids), dtype=bool)
+    if len(ids):
+        rp, ra = _altitude_shells(objects)
+        sp, sa = _altitude_shells(state.sat_buffer[idx:idx + 1])
+        keep &= (rp <= sa[0] + SHELL_MARGIN_KM) & (ra >= sp[0] - SHELL_MARGIN_KM)
     if state.attached_pairs:
-        keep = np.array([not state.is_attached(sid, o) for o in ids], dtype=bool)
+        keep &= np.array([not state.is_attached(sid, o) for o in ids], dtype=bool)
+    if not keep.all():
         objects = objects[keep]
         ballistic = ballistic[keep]
         ids = [o for o, k in zip(ids, keep) if k]
@@ -478,6 +523,24 @@ def _screen_objects(state, idx: int):
 
 def public_proposal(prop: dict) -> dict:
     return {k: v for k, v in prop.items() if not k.startswith("_")}
+
+SLOW_LOCK_LOG_S = 2.0
+# Post-burn verification (re-screening candidate plans against the whole catalog) per planning cycle.
+VERIFY_BUDGET_S = 20.0
+
+
+@contextlib.asynccontextmanager
+async def _released(lock: asyncio.Lock):
+    """Temporarily gives up a lock the caller holds, and takes it back before returning (also on error)."""
+    lock.release()
+    try:
+        yield
+    finally:
+        await lock.acquire()
+
+SLOW_CYCLE_S = 10.0
+MAX_CYCLE_REST_S = 120.0
+
 
 class ConjunctionService:
     def __init__(self, state, engine=process_conjunctions):
@@ -552,13 +615,21 @@ class ConjunctionService:
             SCREEN_DURATION.observe(elapsed)
             if state.attached_pairs:
                 predictions = [p for p in predictions if not state.is_attached(p["satellite_id"], p["object_id"])]
-            predictions = await asyncio.to_thread(annotate_pc, predictions, start_ts, external_index, element_ages)
+            predictions = await compute_pool.run(annotate_pc, predictions, start_ts, external_index, element_ages)
 
             async with state.lock:
+                t_lock = time.perf_counter()
                 stats = state.cdms.apply(predictions, state.now_ts, state.emit)
+                t_apply = time.perf_counter() - t_lock
                 state.active_cdm_warnings = len(state.cdms.open())
                 do_plan = CONFIG.autopilotEnabled if plan is None else plan
                 plan_summary = await self.autopilot.plan_and_schedule(state) if do_plan else {}
+                held = time.perf_counter() - t_lock
+                if held > SLOW_LOCK_LOG_S:
+                    # Everything that needs the state (clock tick, telemetry stream, most API calls) waits this long.
+                    logger.warning(f"Screening cycle held the state lock for {held:.1f}s (CDM update {t_apply:.1f}s, "
+                                   f"planning {held - t_apply:.1f}s; {len(predictions)} predictions, "
+                                   f"plan {({k: v for k, v in plan_summary.items() if v})})")
                 if do_plan:
                     self._last_plan_ts = state.now_ts
 
@@ -653,8 +724,15 @@ class ConjunctionService:
         while True:
             try:
                 if self.due():
+                    t0 = time.perf_counter()
                     await self.run_cycle()
                     await self._record_cycle(None)
+                    took = time.perf_counter() - t0
+                    if took > SLOW_CYCLE_S:
+                        # A whole-catalog fleet screens for about a minute and new telemetry is always waiting by
+                        # then: without a pause the GPU and the state lock would never be free. Rest as long as
+                        # the cycle took (at most MAX_CYCLE_REST_S), so screening uses at most about half the time.
+                        await asyncio.sleep(min(took, MAX_CYCLE_REST_S))
                 elif self.plan_due():
                     await self.plan_cycle()
             except asyncio.CancelledError:

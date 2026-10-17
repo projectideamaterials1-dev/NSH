@@ -11,12 +11,18 @@ import { COLORS, formatDuration, formatUtcTime } from '../lib/format';
 import { Button, Modal } from './ui';
 
 const PRESETS = [
-  { key: 'prograde', label: 'Prograde', axis: 't', sign: 1, hint: 'Raises the opposite side of the orbit' },
-  { key: 'retrograde', label: 'Retrograde', axis: 't', sign: -1, hint: 'Lowers the opposite side of the orbit' },
-  { key: 'radial-out', label: 'Radial out', axis: 'r', sign: 1, hint: 'Rotates the line of apsides' },
-  { key: 'radial-in', label: 'Radial in', axis: 'r', sign: -1, hint: 'Rotates the line of apsides' },
-  { key: 'normal', label: 'Normal', axis: 'n', sign: 1, hint: 'Changes inclination / RAAN' },
-  { key: 'anti-normal', label: 'Anti-normal', axis: 'n', sign: -1, hint: 'Changes inclination / RAAN' },
+  { key: 'prograde', label: 'Prograde', axis: 't', sign: 1, hint: 'Raises the opposite side of the orbit',
+    detail: 'Fires along the direction of travel, speeding the satellite up. The orbit grows: half an orbit later the satellite is higher, and each lap takes slightly longer. Use it to climb, or to arrive later than a threat.' },
+  { key: 'retrograde', label: 'Retrograde', axis: 't', sign: -1, hint: 'Lowers the opposite side of the orbit',
+    detail: 'Fires against the direction of travel, slowing the satellite down. The orbit shrinks: half an orbit later the satellite is lower, and each lap takes slightly less time. Use it to descend, de-orbit, or arrive earlier than a threat.' },
+  { key: 'radial-out', label: 'Radial out', axis: 'r', sign: 1, hint: 'Rotates the line of apsides',
+    detail: 'Fires straight up, away from Earth. The orbit’s high and low points shift around it: a quarter orbit ahead the satellite is higher, a quarter orbit behind it is lower. Average altitude and lap time stay the same.' },
+  { key: 'radial-in', label: 'Radial in', axis: 'r', sign: -1, hint: 'Rotates the line of apsides',
+    detail: 'Fires straight down, towards Earth. The opposite of radial out: a quarter orbit ahead the satellite is lower, a quarter orbit behind it is higher. Average altitude and lap time stay the same.' },
+  { key: 'normal', label: 'Normal', axis: 'n', sign: 1, hint: 'Changes inclination / RAAN',
+    detail: 'Fires sideways, out of the orbit plane (towards the orbit’s "north" side). Tilts the orbit instead of resizing it: at an equator crossing it changes the inclination, near the northern- or southernmost point it swings the plane (RAAN). Moves the satellite sideways off its usual ground track.' },
+  { key: 'anti-normal', label: 'Anti-normal', axis: 'n', sign: -1, hint: 'Changes inclination / RAAN',
+    detail: 'Fires sideways, out of the orbit plane, the opposite way to normal. Tilts the orbit the other way: inclination at an equator crossing, the orientation of the plane (RAAN) near the northern- or southernmost point.' },
 ] as const;
 
 const Check: React.FC<{ ok: boolean; label: string; detail?: string }> = ({ ok, label, detail }) => (
@@ -128,17 +134,28 @@ export const ManualBurnModal: React.FC<{ satelliteId: string; onClose: () => voi
           {mode === 'preset' ? (
             <>
               <div className="grid grid-cols-3 gap-2">
-                {PRESETS.map(p => (
-                  <button
-                    key={p.key}
-                    onClick={() => setPreset(p.key)}
-                    title={p.hint}
-                    className={`h-9 rounded-md border text-[13px] transition-colors ${
-                      preset === p.key ? 'border-accent bg-accent/15 text-ink' : 'border-line bg-raised text-muted hover:text-ink'
-                    }`}
-                  >
-                    {p.label}
-                  </button>
+                {PRESETS.map((p, i) => (
+                  <div key={p.key} className="relative group">
+                    <button
+                      onClick={() => setPreset(p.key)}
+                      aria-describedby={`burn-preset-${p.key}`}
+                      className={`w-full h-9 rounded-md border text-[13px] transition-colors ${
+                        preset === p.key ? 'border-accent bg-accent/15 text-ink' : 'border-line bg-raised text-muted hover:text-ink'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                    {/* Hover / keyboard-focus description; edge columns align to their side so it stays inside the dialog. */}
+                    <div id={`burn-preset-${p.key}`} role="tooltip"
+                      className={`pointer-events-none absolute top-full z-20 mt-1.5 w-64 rounded-md border border-line bg-panel px-3 py-2 text-[12px] leading-relaxed text-muted shadow-xl
+                        invisible opacity-0 translate-y-1 transition-[opacity,transform,visibility] duration-150 ease-out-quart
+                        group-hover:visible group-hover:opacity-100 group-hover:translate-y-0 group-hover:delay-300
+                        group-has-[:focus-visible]:visible group-has-[:focus-visible]:opacity-100 group-has-[:focus-visible]:translate-y-0
+                        ${i % 3 === 0 ? 'left-0' : i % 3 === 2 ? 'right-0' : 'left-1/2 -translate-x-1/2'}`}>
+                      <span className="block font-medium text-ink mb-0.5">{p.label}</span>
+                      {p.detail}
+                    </div>
+                  </div>
                 ))}
               </div>
               <p className="text-[12px] text-muted -mt-2">{PRESETS.find(p => p.key === preset)!.hint}.</p>

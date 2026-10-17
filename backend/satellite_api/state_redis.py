@@ -218,6 +218,7 @@ class RedisStateManager(StateManager):
                               for k, v in self.sat_modes.items()},
                 "eol_satellites": sorted(self.eol_satellites),
                 "attached_pairs": [sorted(pair) for pair in self.attached_pairs],
+                "payload_objects": sorted(self.payload_objects),
                 "external_cdms": self.external_cdms.to_list(),
                 # Human-in-the-loop state: pending proposals must survive a restart or failover, or an
                 # operator's approval would hit a 404 and the threat would silently be re-proposed.
@@ -292,6 +293,7 @@ class RedisStateManager(StateManager):
                               for k, v in meta["sat_modes"].items()}
             self.eol_satellites = set(meta["eol_satellites"])
             self.attached_pairs = {frozenset(pair) for pair in meta.get("attached_pairs", [])}
+            self.payload_objects = set(meta.get("payload_objects", []))
             self.external_cdms.restore(meta.get("external_cdms", []))
             self.decisions.clear()
             self.decisions.extend(meta.get("decisions", []))

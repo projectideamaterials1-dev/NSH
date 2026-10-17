@@ -39,6 +39,8 @@ export function snapshotToBinaryBuffers(data: any): {
   const debrisColors = new Uint8ClampedArray(debrisCount * 4);
   const debrisRisk = new Float32Array(debrisCount);
   const debrisIds: string[] = new Array(debrisCount);
+  const debrisKinds = new Uint8Array(debrisCount);
+  for (const i of data.tracked_satellites ?? []) if (i >= 0 && i < debrisCount) debrisKinds[i] = 1;
 
   for (let i = 0; i < debrisCount; i++) {
     const d = data.debris_cloud[i];
@@ -50,7 +52,7 @@ export function snapshotToBinaryBuffers(data: any): {
   }
 
   return {
-    debris: { positions: debrisPositions, colors: debrisColors, ids: debrisIds, riskScores: debrisRisk, length: debrisCount },
+    debris: { positions: debrisPositions, colors: debrisColors, ids: debrisIds, riskScores: debrisRisk, kinds: debrisKinds, length: debrisCount },
     satellites: { positions: satPositions, colors: satColors, fuels: satFuels, ids: satIds, statuses: satStatuses, length: satCount },
     timestamp: data.timestamp,
   };

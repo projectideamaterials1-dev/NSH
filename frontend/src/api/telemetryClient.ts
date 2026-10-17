@@ -14,6 +14,7 @@ export interface TelemetrySnapshot {
   timestamp: string;
   satellites: any[];
   debris_cloud: [string, number, number, number][];
+  tracked_satellites?: number[];
 }
 
 export interface WorkerRequest {

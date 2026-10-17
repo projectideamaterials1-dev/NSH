@@ -161,6 +161,19 @@ async def test_manual_burn_preview_and_schedule(client):
     pending = (await client.get("/api/maneuvers", params={"status": "pending"})).json()["maneuvers"]
     assert pending[0]["maneuver_type"] == "MANUAL"
 
+    # The predicted track flies the queued burn: identical until it fires, higher afterwards.
+    params = {"minutes": 60, "step_s": 60}
+    planned = (await client.get("/api/satellites/SAT-A/track", params=params)).json()
+    coast = (await client.get("/api/satellites/SAT-A/track", params={**params, "apply_burns": False})).json()
+    assert coast["burns"] == [] and len(planned["burns"]) == 1
+    burn = planned["burns"][0]
+    assert burn["burn_id"] == pending[0]["burn_id"] and burn["delta_v_mps"] == pytest.approx(2.0, rel=1e-3)
+    assert len(planned["points"]) == len(coast["points"]) + 1     # extra vertex exactly at the burn
+    assert planned["points"][0] == coast["points"][0]
+    coast_half = next(p for p in coast["points"] if p["offset_s"] >= burn["offset_s"] + 2820)   # ~half an orbit on
+    half_orbit = next(p for p in planned["points"] if p["offset_s"] == coast_half["offset_s"])
+    assert half_orbit["alt_km"] > coast_half["alt_km"] + 3          # prograde 2 m/s raises the far side
+
     burn_id = pending[0]["burn_id"]
     assert (await client.delete(f"/api/maneuver/{burn_id}")).status_code == 200
     cancelled = (await client.get("/api/maneuvers", params={"status": "cancelled"})).json()["maneuvers"]

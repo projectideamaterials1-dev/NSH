@@ -1,5 +1,6 @@
 import numpy as np
 import math
+import time
 from typing import List, Optional
 from datetime import datetime, timedelta
 from dataclasses import dataclass
@@ -23,6 +24,32 @@ DRY_MASS = 500.0
 STATION_KEEPING_RADIUS_KM = 10.0  
 COLLISION_THRESHOLD_KM = 0.100    
 J2_CONST = 1.5 * J2 * MU_EARTH * R_EARTH * R_EARTH
+
+# RK4 step: 5 s in LEO (~1,200 steps per orbit); higher orbits keep the same steps-per-orbit instead of
+# the same seconds, so a geostationary station-keeping plan costs ~1,200 steps instead of ~17,000.
+RK4_MIN_STEP_S = 5.0
+RK4_STEPS_PER_ORBIT = 1200
+# Station-keeping is routine and is planned within this much wall time per cycle; satellites not reached
+# are planned next cycle (the loop starts where the last one stopped). Threat evasion is never budgeted.
+SK_PLAN_BUDGET_S = 3.0
+# Evasion: threats closer than EVASION_ALWAYS_PLAN_S to TCA are always planned this cycle; later ones are
+# planned soonest-first within EVASION_PLAN_BUDGET_S and the rest next cycle (screening runs about once a
+# minute at whole-catalog scale, so a threat hours out loses minutes, not its chance of an avoidance burn).
+EVASION_ALWAYS_PLAN_S = 1800.0
+EVASION_PLAN_BUDGET_S = 8.0
+# ... and at most this many evasions per cycle beyond the always-planned ones: every evasion is then
+# verified by re-screening up to four candidate plans against the whole catalog under the state lock.
+EVASION_MAX_PER_CYCLE = 20
+
+
+def _rk4_step_s(r_eci: np.ndarray, v_eci: np.ndarray) -> float:
+    r, v = float(np.linalg.norm(r_eci)), float(np.linalg.norm(v_eci))
+    energy = 2.0 / r - v * v / MU_EARTH if r > 0 else 0.0
+    if not np.isfinite(energy) or energy <= 0.0:
+        return RK4_MIN_STEP_S
+    period = 2.0 * math.pi * math.sqrt((1.0 / energy) ** 3 / MU_EARTH)
+    return max(RK4_MIN_STEP_S, period / RK4_STEPS_PER_ORBIT)
+
 
 class ManeuverType(Enum):
     PHASING_PROGRADE = "PHASING_PROGRADE"
@@ -88,6 +115,8 @@ class AutonomousBrain:
         self.skipped_unbound = set()   # satellite indices whose state is not a bound orbit (reported, not planned)
         # 🚀 PATCH 1: Global Sequence Registry to prevent overlapping burns
         self.locked_satellites = {}
+        self._sk_cursor = 0   # where the budgeted station-keeping pass resumes next cycle
+        self.evasions_deferred = 0   # threatened satellites left for the next cycle by the evasion budget
         
     # ========================================================================
     # 1. HIGH-FIDELITY PHYSICS & FRAME ROTATION
@@ -121,7 +150,7 @@ class AutonomousBrain:
     def propagate_rk4(self, r_eci: np.ndarray, v_eci: np.ndarray, dt_s: float) -> tuple:
         if dt_s <= 0: return r_eci.copy(), v_eci.copy()
         state = np.concatenate([r_eci, v_eci])
-        steps = max(1, int(math.ceil(dt_s / 5.0))) 
+        steps = max(1, int(math.ceil(dt_s / _rk4_step_s(r_eci, v_eci))))
         dt = dt_s / steps
         for _ in range(steps):
             v1 = state[3:6]
@@ -327,9 +356,19 @@ class AutonomousBrain:
                      current_time: datetime, ground_stations: list, evasion_mode: str = "auto") -> List[ManeuverPlan]:
         plans = []
         curr_ts = current_time.timestamp()
-        
+        threatened = {c.sat_idx for c in conjunctions if c.is_threat()}
+        n_sats = len(sat_states)
+        t_budget = time.perf_counter() + SK_PLAN_BUDGET_S
+        start = self._sk_cursor % n_sats if n_sats else 0
+
         # ── 1. CLOSED-LOOP STATION KEEPING (The 6km Healing Drift) ──
-        for sat_idx in range(len(sat_states)):
+        # Round-robin from where the last cycle stopped, within SK_PLAN_BUDGET_S (a whole-catalog fleet
+        # would otherwise hold the state lock for a minute). Evasion below is never cut short.
+        for k in range(n_sats):
+            sat_idx = (start + k) % n_sats
+            if time.perf_counter() > t_budget:
+                self._sk_cursor = sat_idx
+                break
             if sat_idx in self.eol_scheduled: continue
             
             # Skip if currently executing a maneuver sequence (of either kind)
@@ -341,8 +380,7 @@ class AutonomousBrain:
                 continue
 
             # Skip if there is an active emergency threat for this satellite
-            has_threat = any(c.sat_idx == sat_idx for c in conjunctions if c.is_threat())
-            if has_threat: continue
+            if sat_idx in threatened: continue
 
             # Evaluate distance to the Nominal Ghost Slot
             sat_state = sat_states[sat_idx]
@@ -433,7 +471,15 @@ class AutonomousBrain:
                 threats_by_sat[conj.sat_idx] = []
             threats_by_sat[conj.sat_idx].append(conj)
             
-        for sat_idx, threats in threats_by_sat.items():
+        self.evasions_deferred = 0
+        planned_evasions = 0
+        t_evasion_budget = time.perf_counter() + EVASION_PLAN_BUDGET_S
+        for sat_idx, threats in sorted(threats_by_sat.items(), key=lambda kv: min(c.tca_seconds for c in kv[1])):
+            urgent = min(c.tca_seconds for c in threats) <= EVASION_ALWAYS_PLAN_S
+            if not urgent and (time.perf_counter() > t_evasion_budget or planned_evasions >= EVASION_MAX_PER_CYCLE):
+                self.evasions_deferred += 1
+                continue
+            planned_evasions += 1
             sat_state = sat_states[sat_idx]
             sat_fuel = sat_fuels[sat_idx]
             

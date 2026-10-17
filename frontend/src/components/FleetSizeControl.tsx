@@ -7,14 +7,14 @@ import { Check, Loader2 } from 'lucide-react';
 import useOrbitalStore from '../store/useOrbitalStore';
 import { Button } from './ui';
 
-const MAX_SATELLITES = 500;   // backend limit (realworld/live.py MAX_SATELLITES)
+const DEFAULT_LIMIT = 500;   // backends that don't report their limit
 
 export const FleetSizeControl: React.FC = () => {
   const realWorld = useOrbitalStore(s => s.realWorld);
   const resizeFleet = useOrbitalStore(s => s.resizeFleet);
   const current = realWorld?.satellites ?? 0;
   // Upper bound for the slider: everything the selected fleet sources published (before stale/duplicate filtering).
-  const available = Math.min(MAX_SATELLITES, Math.max(current,
+  const available = Math.min(realWorld?.limits?.max_satellites ?? DEFAULT_LIMIT, Math.max(current,
     (realWorld?.request?.fleet ?? []).reduce((sum, key) => sum + (realWorld?.sources[key]?.count ?? 0), 0)
     + (realWorld?.request?.norad_ids?.length ?? 0)));
   const [target, setTarget] = useState(current);

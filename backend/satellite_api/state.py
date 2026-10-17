@@ -157,6 +157,8 @@ class StateManager:
         # Pairs of object IDs that are physically attached (e.g. vehicles docked to a station): never
         # reported as collisions or conjunctions. Maintained by realworld.live for catalog objects.
         self.attached_pairs: set = set()
+        # Tracked (non-fleet) objects that are working satellites rather than debris: drawn as satellites.
+        self.payload_objects: set = set()
         # Explainability / human-in-the-loop (acm/autopilot.py)
         self.decisions: deque = deque(maxlen=MAX_DECISIONS)    # autopilot decision log
         self.decision_seq = 0
@@ -300,6 +302,31 @@ class StateManager:
         self.telemetry_version += 1
         self.burn_version += 1
         return remap
+
+    def remove_debris(self, debris_ids) -> int:
+        """Removes tracked objects (e.g. ones just promoted into the fleet) and compacts the buffers.
+        Their open conjunctions are dropped. Returns how many were removed. Caller holds the lock."""
+        gone = {d for d in debris_ids if d in self.debris_id_to_idx}
+        if not gone:
+            return 0
+        old_count = self.debris_count
+        keep = [i for i in range(old_count) if self.idx_to_debris_id[i] not in gone]
+        n = len(keep)
+        rows = np.array(keep, dtype=np.int64)
+        self.debris_buffer[:n] = self.debris_buffer[rows]
+        self.debris_buffer[n:old_count] = 0.0
+        self.debris_ballistic[:n] = self.debris_ballistic[rows]
+        self.debris_ballistic[n:old_count] = np.nan
+        kept_ids = [self.idx_to_debris_id[i] for i in keep]
+        self.debris_id_to_idx = {d: i for i, d in enumerate(kept_ids)}
+        self.idx_to_debris_id = dict(enumerate(kept_ids))
+        self.debris_count = n
+        self.payload_objects -= gone
+        self.attached_pairs = {p for p in self.attached_pairs if not (p & gone)}
+        self.cdms.items = [c for c in self.cdms.items
+                           if not (c["object_id"] in gone and c["status"] in self.cdms.OPEN + ("CLEARED",))]
+        self.telemetry_version += 1
+        return len(gone)
 
     def _ensure_debris_capacity(self, needed: int):
         cap = self.debris_buffer.shape[0]

@@ -15,6 +15,7 @@ Prometheus metrics at GET /metrics (text exposition format).
 require `Authorization: Bearer <token>` (Prometheus `authorization:` scrape setting); nginx.conf
 also refuses /metrics from outside the compose network.
 """
+import logging
 import hmac
 import os
 import time
@@ -157,3 +158,35 @@ def install(app) -> None:
             if not hmac.compare_digest(supplied.encode(), f"Bearer {token}".encode()):
                 return Response("Unauthorized", status_code=401, headers={"WWW-Authenticate": "Bearer"})
         return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
+
+
+
+def start_stall_detector(loop, threshold_s: float = 5.0):
+    """Logs the main thread's stack whenever the event loop stops answering for `threshold_s`: a blocked
+    loop freezes the live clock, the telemetry stream and every API call at once, and is otherwise
+    invisible. A daemon thread pings the loop once a second; cost is negligible. ACM_STALL_LOG_S=0 disables."""
+    import sys
+    import threading
+    import traceback
+    if threshold_s <= 0:
+        return None
+    main_tid = threading.get_ident()
+
+    def watch():
+        while not loop.is_closed():
+            answered = threading.Event()
+            try:
+                loop.call_soon_threadsafe(answered.set)
+            except RuntimeError:          # loop closed
+                return
+            if not answered.wait(threshold_s):
+                frame = sys._current_frames().get(main_tid)
+                stack = "".join(traceback.format_stack(frame)[-15:]) if frame else "(no frame)"
+                logging.getLogger("satellite_api.stall").warning(
+                    f"Event loop blocked for more than {threshold_s:.0f} s; main thread is at:\n{stack}")
+                answered.wait()           # one report per stall
+            time.sleep(1.0)
+
+    thread = threading.Thread(target=watch, name="loop-stall-detector", daemon=True)
+    thread.start()
+    return thread

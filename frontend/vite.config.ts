@@ -17,6 +17,7 @@ export default defineConfig(() => {
         '/api': {
           target: process.env.API_PROXY_TARGET || 'http://localhost:8000',
           changeOrigin: true,
+          secure: false,   // allows API_PROXY_TARGET=https://localhost (the local stack's self-signed cert)
         },
       },
     },

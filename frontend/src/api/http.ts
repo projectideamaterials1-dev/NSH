@@ -13,6 +13,14 @@ export function apiFetch(path: string, init: RequestInit = {}): Promise<Response
   return fetch(path, { ...init, headers });
 }
 
+/** A non-2xx response; `status` is the HTTP status code. */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 export async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await apiFetch(path, init);
   if (!response.ok) {
@@ -23,7 +31,7 @@ export async function apiJson<T>(path: string, init: RequestInit = {}): Promise<
     } catch {
       /* non-JSON error body */
     }
-    throw new Error(detail);
+    throw new ApiError(detail, response.status);
   }
   return response.json() as Promise<T>;
 }

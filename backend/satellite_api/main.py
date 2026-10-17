@@ -46,7 +46,8 @@ async def _autoload_catalog(service, conjunction_service):
         await service.load(fleet=fleet, objects=objects, norad_ids=[], replace=not restored,
                            max_satellites=max_satellites,
                            max_objects=int(os.environ.get("REALWORLD_MAX_OBJECTS", "5000")),
-                           live=os.environ.get("REALWORLD_LIVE", "1") != "0", conjunction_service=conjunction_service)
+                           live=os.environ.get("REALWORLD_LIVE", "1") != "0", conjunction_service=conjunction_service,
+                           prune_stale=restored)
         logger.info(f"Loaded real-world catalog on startup: fleet={fleet} objects={objects}")
     except Exception as e:  # never block startup on the network
         logger.error(f"Startup catalog load failed: {e}")
@@ -81,6 +82,14 @@ def _create_state():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # `docker kill -s USR1 <backend>` prints every thread's stack to the log: finds what holds the state
+    # lock from a worker thread, which the event-loop stall detector cannot see.
+    import faulthandler
+    import signal
+    if hasattr(signal, "SIGUSR1"):
+        faulthandler.register(signal.SIGUSR1, all_threads=True)
+    from satellite_api.observability import start_stall_detector
+    start_stall_detector(asyncio.get_running_loop(), float(os.environ.get("ACM_STALL_LOG_S", "5")))
     state = app.state.orbital_state
     operations_service = None
     live_service = None
@@ -138,6 +147,8 @@ async def lifespan(app: FastAPI):
     service = getattr(app.state, "conjunction_service", None)
     if service:
         await service.stop()
+    from satellite_api.compute import pool as compute_pool
+    compute_pool.shutdown()
     live_service = getattr(app.state, "realworld", None)
     if live_service:
         await live_service.stop()

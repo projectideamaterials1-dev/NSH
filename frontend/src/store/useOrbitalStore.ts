@@ -55,6 +55,8 @@ export const useOrbitalStore = create<OrbitalState>()(
     autopilot: null,
     config: null,
     selectedTrack: null,
+    selectedTrackBurns: null,
+    selectedTrackCoast: null,
     selectedPasses: null,
     screening: false,
     realWorld: null,

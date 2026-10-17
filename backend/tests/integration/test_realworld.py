@@ -457,3 +457,90 @@ async def test_orbit_fit_needs_history_then_fits_the_engine_to_sgp4(client, cele
     assert fit["fitted"] is True and fit["sets"] == 3 and fit["span_h"] == pytest.approx(13.0)
     assert fit["rms_km"] < 1.0                         # the engine reproduces 13 h of SGP4 to under a kilometre
     assert len(fit["rms_per_set_km"]) == 3 and fit["difference_from_latest_sgp4_km"] < 5.0
+
+
+def test_docked_vehicle_with_own_elements_is_attached():
+    """Docked vehicles get their own element sets: SGP4 puts them ~0.64 km off the station at ~0.6 m/s
+    (seen live: ISS modules vs Soyuz / Progress / Dragon). They are one body, not a conjunction; an
+    object crossing at the same distance with orbital closing speed is not."""
+    from types import SimpleNamespace
+    iss = np.array([6778.0, 0.0, 0.0, 0.0, 7.67, 0.0])
+    sats = np.array([iss, iss + [0.0, 0.636, 0.0, 0.0006, 0.0, 0.0]])
+    debris = np.array([iss + [0.4, 0.0, 0.0, 0.0, -7.0, 3.0]])
+    state = SimpleNamespace(sat_count=2, sat_buffer=sats, idx_to_sat_id={0: "ISS (ZARYA)", 1: "SOYUZ-MS 29"},
+                            debris_buffer=debris, debris_count=1, idx_to_debris_id={0: "DEB"}, attached_pairs=set())
+    service = live.RealWorldService(state)
+    service.fleet = {"ISS (ZARYA)": None, "SOYUZ-MS 29": None}
+    service.objects = {"DEB": None}
+    service._update_attached()
+    assert state.attached_pairs == {frozenset(("ISS (ZARYA)", "SOYUZ-MS 29"))}
+
+
+@pytest.mark.asyncio
+async def test_snapshot_marks_tracked_satellites(client, celestrak):
+    """Working satellites outside the fleet are flagged so the map draws them as satellites, not debris."""
+    await _load(client)
+    state = app.state.orbital_state
+    assert state.payload_objects == set(), "the debris source holds no working satellites"
+    assert catalog.is_payload("GALILEO 21", "active") and not catalog.is_payload("FALCON 9 R/B", "active")
+    assert not catalog.is_payload("ISS DEB (TOOLBAG)", "active") and not catalog.is_payload("NOAA 21", "cosmos-2251-debris")
+
+    snap = (await client.get("/api/visualization/snapshot")).json()
+    assert snap["tracked_satellites"] == []
+    state.payload_objects = {snap["debris_cloud"][1][0]}
+    snap = (await client.get("/api/visualization/snapshot")).json()
+    assert snap["tracked_satellites"] == [1]
+    assert {"geo", "gnss", "active"} <= set(catalog.SOURCES)
+
+
+@pytest.mark.asyncio
+async def test_fleet_overflow_shown_as_tracked_is_not_reported_missing(client, celestrak):
+    """Fleet candidates beyond max_satellites that are loaded as tracked objects are on the map: the
+    warning says so instead of claiming they are merely "available"."""
+    status = await _load(client, max_satellites=1, objects=["stations"])
+    assert status["satellites"] == 1
+    text = " ".join(status["warnings"])
+    assert "shown as tracked satellites" in text and "more satellites available" not in text
+
+
+@pytest.mark.asyncio
+async def test_refresh_keeps_load_limit_warnings(client, celestrak):
+    """The periodic element refresh replaces fetch warnings but must not drop what the load left out."""
+    status = await _load(client, max_satellites=1, objects=["stations"])
+    before = [w for w in status["warnings"] if "shown as tracked satellites" in w]
+    assert before
+    await app.state.realworld.refresh(force=True)
+    assert before[0] in (await client.get("/api/catalog/status")).json()["warnings"]
+
+
+@pytest.mark.asyncio
+async def test_growing_the_fleet_drops_the_tracked_copies(client, celestrak):
+    """Satellites promoted into the fleet stop being tracked objects: no object is drawn or screened twice."""
+    await _load(client, max_satellites=1, objects=["stations"])
+    state = app.state.orbital_state
+    tracked_before = state.debris_count
+    assert tracked_before > 0 and not set(state.sat_id_to_idx) & set(state.debris_id_to_idx)
+    resp = await client.post("/api/catalog/resize", json={"max_satellites": 50})
+    assert resp.status_code == 200, resp.text
+    added = len(resp.json()["added"])
+    assert added > 0
+    assert not set(state.sat_id_to_idx) & set(state.debris_id_to_idx)
+    assert state.debris_count == tracked_before - added
+    snap = (await client.get("/api/visualization/snapshot")).json()
+    assert len(snap["debris_cloud"]) == state.debris_count
+
+
+@pytest.mark.asyncio
+async def test_reload_over_restored_mission_prunes_rows_from_an_earlier_selection(client, celestrak):
+    """Startup re-applies the catalog over a mission restored from Redis. Rows from an earlier, bigger
+    selection must go: nobody maintains them, and as tracked copies they "collide" with themselves."""
+    state = app.state.orbital_state
+    await _load(client, max_satellites=50, objects=["stations"])
+    service = app.state.realworld
+    big = set(state.sat_id_to_idx)
+    await service.load(["stations"], ["stations"], [], max_satellites=2, max_objects=5000, replace=False,
+                       live=False, prune_stale=True)
+    assert state.sat_count == len(service.fleet) == 2
+    assert set(state.sat_id_to_idx) <= big
+    assert not set(state.sat_id_to_idx) & set(state.debris_id_to_idx)
+    assert set(state.debris_id_to_idx) == set(service.objects)

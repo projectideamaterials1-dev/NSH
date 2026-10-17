@@ -1,13 +1,15 @@
 // src/components/Header.tsx
 // Top bar: product, simulation clock, mission KPIs, threat level, autopilot, settings and link status.
 
-import React, { useMemo, useState } from 'react';
-import { Bot, Columns3, Keyboard, Maximize, MessageSquare, Minimize, Orbit, PanelsLeftRight, Settings, ShieldAlert } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { BookOpen, Bot, Columns3, Keyboard, Maximize, MessageSquare, Minimize, Orbit, PanelsLeftRight, RadioTower, Settings, ShieldAlert } from 'lucide-react';
 import useOrbitalStore, { selectOpenThreatCounts } from '../store/useOrbitalStore';
 import useAssistantStore from '../store/assistant';
 import useLayoutStore from '../store/layout';
 import { formatCount, formatUtcDate, formatUtcTime, COLORS } from '../lib/format';
 import { SettingsModal } from './SettingsModal';
+import { GroundStationsModal } from './GroundStationsModal';
+import { LibraryModal } from './LibraryModal';
 import { Button } from './ui';
 
 const Kpi: React.FC<{ label: string; value: string; tone?: string; hint?: string; className?: string }> = ({ label, value, tone, hint, className = '' }) => (
@@ -21,6 +23,15 @@ const Kpi: React.FC<{ label: string; value: string; tone?: string; hint?: string
 
 const LinkStatus: React.FC = () => {
   const { state, latencyMs, error } = useOrbitalStore(s => s.connectionStatus);
+  // Latency changes on every frame; sample it once a second so the readout is legible.
+  const latestLatency = useRef(latencyMs);
+  latestLatency.current = latencyMs;
+  const [shownLatency, setShownLatency] = useState(latencyMs);
+  useEffect(() => {
+    const id = window.setInterval(() => setShownLatency(latestLatency.current), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const latency = shownLatency ?? latencyMs;
   const meta = {
     connected: { color: COLORS.ok, label: 'Live' },
     connecting: { color: COLORS.warn, label: error?.startsWith('Awaiting') ? 'No telemetry' : 'Connecting' },
@@ -36,10 +47,11 @@ const LinkStatus: React.FC = () => {
         )}
         <span className="relative inline-flex w-2.5 h-2.5 rounded-full" style={{ background: meta.color }} />
       </span>
-      <div className="flex flex-col leading-tight">
+      {/* Fixed width: a changing label or latency must not shift the rest of the header. */}
+      <div className="flex flex-col leading-tight w-[84px]">
         <span className="text-[13px] font-medium whitespace-nowrap" style={{ color: meta.color }}>{meta.label}</span>
-        <span className="text-[11px] text-muted tabular">
-          {state === 'connected' && latencyMs !== null ? `${Math.round(latencyMs)} ms` : 'backend'}
+        <span className="text-[11px] text-muted tabular whitespace-nowrap">
+          {state === 'connected' && latency !== null ? `${Math.round(latency)} ms` : 'backend'}
         </span>
       </div>
     </div>
@@ -116,6 +128,7 @@ export const Header: React.FC = () => {
   const spaceWeather = useOrbitalStore(s => s.spaceWeather);
   const setShowShortcuts = useOrbitalStore(s => s.setShowShortcuts);
   const [showSettings, setShowSettings] = useState(false);
+  const [page, setPage] = useState<'stations' | 'library' | null>(null);
   const assistantOpen = useAssistantStore(s => s.open);
   const setAssistantOpen = useAssistantStore(s => s.setOpen);
   const mapOnly = useLayoutStore(s => s.collapsed.left && s.collapsed.right);
@@ -200,6 +213,14 @@ export const Header: React.FC = () => {
             icon={<MessageSquare className="w-4 h-4" />} className={assistantOpen ? 'text-accent' : ''}>
             <span className="hidden xl:inline">Assistant</span>
           </Button>
+          <Button variant="ghost" onClick={() => setPage('stations')} aria-label="Ground stations" title="Ground stations"
+            icon={<RadioTower className="w-4 h-4" />}>
+            <span className="hidden 2xl:inline">Stations</span>
+          </Button>
+          <Button variant="ghost" onClick={() => setPage('library')} aria-label="Library" title="Library: space stations and the Solar System"
+            icon={<BookOpen className="w-4 h-4" />}>
+            <span className="hidden 2xl:inline">Library</span>
+          </Button>
           <Button variant="ghost" onClick={toggleFocus} aria-label="Map only" aria-pressed={mapOnly}
             title={mapOnly ? 'Show the side panels (M)' : 'Map only: hide both side panels (M)'}
             icon={mapOnly ? <PanelsLeftRight className="w-4 h-4" /> : <Columns3 className="w-4 h-4" />}
@@ -216,6 +237,8 @@ export const Header: React.FC = () => {
       </div>
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {page === 'stations' && <GroundStationsModal onClose={() => setPage(null)} />}
+      {page === 'library' && <LibraryModal onClose={() => setPage(null)} />}
     </header>
   );
 };

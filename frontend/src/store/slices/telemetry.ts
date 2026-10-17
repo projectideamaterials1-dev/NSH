@@ -131,6 +131,8 @@ export const createTelemetryActions = (set: SetState, get: GetState): TelemetryA
       selectedSatelliteId: id,
       hoveredSatelliteId: id ? null : get().hoveredSatelliteId,
       selectedTrack: null,
+      selectedTrackBurns: null,
+      selectedTrackCoast: null,
       selectedPasses: null,
     });
     if (id) get().fetchSelectedInsights(id);

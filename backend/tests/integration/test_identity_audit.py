@@ -102,7 +102,10 @@ def test_cli_issue_and_list(tmp_path, capsys):
     f = str(tmp_path / "u.json")
     assert cli.main(["--file", f, "add-user", "carol", "--role", "operator"]) == 0
     assert cli.main(["--file", f, "issue", "carol", "--expires-days", "30"]) == 0
-    key = capsys.readouterr().out.strip().splitlines()[-1]
+    # The key line, not just the last line: background threads (archive writer, stall detector) log JSON
+    # to stdout too and can interleave with the CLI's output.
+    key = next((line for line in reversed(capsys.readouterr().out.strip().splitlines())
+                if identity.KEY_RE.match(line)), "")
     assert identity.KEY_RE.match(key)
     stored = json.loads((tmp_path / "u.json").read_text())
     assert key.split("_")[2] not in json.dumps(stored)                              # only the hash is stored

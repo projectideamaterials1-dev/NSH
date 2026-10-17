@@ -23,6 +23,7 @@ import type {
   SatelliteDetail,
   SetState,
   SimConfigDto,
+  TrackBurn,
   TrackPoint,
   TradeSpace,
 } from '../types';
@@ -98,7 +99,7 @@ export const createOpsActions = (set: SetState, get: GetState): OpsActions => ({
     const proposal = await apiJson<Proposal>(
       `/api/proposals/${encodeURIComponent(proposalId)}/${approve ? 'approve' : 'reject'}`,
       { method: 'POST', body: JSON.stringify(approve ? {} : { reason: reason ?? null }) });
-    await Promise.all([get().fetchOps(), get().fetchManeuvers(), get().fetchDecisions()]);
+    await Promise.all([get().fetchOps(), get().fetchManeuvers(), get().fetchDecisions(), get().fetchSelectedInsights()]);
     return proposal;
   },
 
@@ -135,19 +136,27 @@ export const createOpsActions = (set: SetState, get: GetState): OpsActions => ({
 
   fetchSelectedInsights: async (id = get().selectedSatelliteId) => {
     if (!id) {
-      set({ selectedTrack: null, selectedPasses: null, selectedCatalog: null });
+      set({ selectedTrack: null, selectedTrackBurns: null, selectedTrackCoast: null, selectedPasses: null, selectedCatalog: null });
       return;
     }
     const [track, passes, catalog] = await Promise.allSettled([
-      apiJson<{ points: TrackPoint[] }>(`/api/satellites/${encodeURIComponent(id)}/track?minutes=95&step_s=60`),
+      apiJson<{ points: TrackPoint[]; burns: TrackBurn[] }>(`/api/satellites/${encodeURIComponent(id)}/track?minutes=95&step_s=60`),
       apiJson<{ passes: GroundPass[] }>(`/api/satellites/${encodeURIComponent(id)}/passes?hours=6`),
       get().realWorld?.loaded
         ? apiJson<CatalogObjectInfo>(`/api/catalog/objects/${encodeURIComponent(id)}`)
         : Promise.reject(new Error('no catalog')),
     ]);
+    // With a burn queued, also fetch the orbit it would fly without it, so the map can show both.
+    const burns = track.status === 'fulfilled' ? track.value.burns ?? [] : [];
+    const coast = burns.length
+      ? await apiJson<{ points: TrackPoint[] }>(`/api/satellites/${encodeURIComponent(id)}/track?minutes=95&step_s=60&apply_burns=false`)
+        .then(r => r.points, () => null)
+      : null;
     if (get().selectedSatelliteId !== id) return; // selection changed meanwhile
     set({
       selectedTrack: track.status === 'fulfilled' ? track.value.points : null,
+      selectedTrackBurns: track.status === 'fulfilled' ? burns : null,
+      selectedTrackCoast: coast,
       selectedPasses: passes.status === 'fulfilled' ? passes.value.passes : null,
       selectedCatalog: catalog.status === 'fulfilled' ? catalog.value : null,
     });
@@ -158,13 +167,13 @@ export const createOpsActions = (set: SetState, get: GetState): OpsActions => ({
       method: 'POST',
       body: JSON.stringify({ satelliteId, maneuver_sequence: maneuverSequence }),
     });
-    await Promise.all([get().fetchManeuvers(), get().fetchOps()]);
+    await Promise.all([get().fetchManeuvers(), get().fetchOps(), get().fetchSelectedInsights()]);
     return result;
   },
 
   cancelManeuver: async (burnId) => {
     await apiJson(`/api/maneuver/${encodeURIComponent(burnId)}`, { method: 'DELETE' });
-    await Promise.all([get().fetchManeuvers(), get().fetchOps()]);
+    await Promise.all([get().fetchManeuvers(), get().fetchOps(), get().fetchSelectedInsights()]);
   },
 
   planManualBurn: async (satelliteId, burns, dryRun) => {
@@ -172,7 +181,7 @@ export const createOpsActions = (set: SetState, get: GetState): OpsActions => ({
       method: 'POST',
       body: JSON.stringify({ satelliteId, burns, dry_run: dryRun }),
     });
-    if (!dryRun) await Promise.all([get().fetchManeuvers(), get().fetchOps()]);
+    if (!dryRun) await Promise.all([get().fetchManeuvers(), get().fetchOps(), get().fetchSelectedInsights()]);
     return result;
   },
 

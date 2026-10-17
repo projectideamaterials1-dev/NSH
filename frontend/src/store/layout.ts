@@ -33,9 +33,19 @@ interface LayoutState {
   /** Map-only focus: both panels collapse; pressing it again brings them back. */
   toggleFocus: () => void;
   toggleFullscreen: () => Promise<void>;
+  /** A request for the map / globe to fly to a point (e.g. a ground station picked in a list). */
+  focus: { lat: number; lon: number; seq: number } | null;
+  focusOn: (lat: number, lon: number) => void;
+  /** Show the reference tracking networks (not used for contact) on the map and globe. */
+  showReferenceStations: boolean;
+  setShowReferenceStations: (show: boolean) => void;
 }
 
 const useLayoutStore = create<LayoutState>((set, get) => ({
+  focus: null,
+  focusOn: (lat, lon) => set({ focus: { lat, lon, seq: (get().focus?.seq ?? 0) + 1 } }),
+  showReferenceStations: false,
+  setShowReferenceStations: show => set({ showReferenceStations: show }),
   collapsed: load(),
   fullscreen: typeof document !== 'undefined' && !!document.fullscreenElement,
   togglePanel: side => {

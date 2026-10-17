@@ -55,6 +55,14 @@ export class PointLayer {
     pos.needsUpdate = true;
   }
 
+  /** Rewrites only the sizes of the first `count` points (0 hides a point). */
+  setSizes(count: number, fill: (i: number, size: Float32Array) => void) {
+    const size = this.points.geometry.getAttribute('aSize') as THREE.BufferAttribute | undefined;
+    if (!size || count === 0) return;
+    for (let i = 0; i < count; i++) fill(i, size.array as Float32Array);
+    size.needsUpdate = true;
+  }
+
   setPixelRatio(ratio: number) {
     (this.points.material as THREE.ShaderMaterial).uniforms.pixelRatio.value = ratio;
   }

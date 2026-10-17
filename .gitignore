@@ -105,3 +105,7 @@ frontend/.npmrc
 
 # Runtime logs (gpu-watchdog etc.)
 /logs/
+
+# Archive journal (SQLite TRUNCATE mode) and local .env copies - never commit (secrets)
+backend/data/*.db-journal
+backend/data/env.backup-*

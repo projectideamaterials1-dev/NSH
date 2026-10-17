@@ -60,6 +60,7 @@ const SpaceWeatherRow: React.FC = () => {
 
 export const DataSourcesModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const status = useOrbitalStore(s => s.realWorld);
+  const maxSats = status?.limits?.max_satellites ?? 500;
   const sources = useOrbitalStore(s => s.catalogSources);
   const fetchCatalogSources = useOrbitalStore(s => s.fetchCatalogSources);
   const loadCatalog = useOrbitalStore(s => s.loadCatalog);
@@ -197,8 +198,8 @@ export const DataSourcesModal: React.FC<{ onClose: () => void }> = ({ onClose })
         <section className="grid grid-cols-2 gap-x-6 gap-y-4">
           <label className="block">
             <span className="block text-[13px] text-ink mb-1.5">Max satellites</span>
-            <input type="number" min={1} max={500} value={draft.max_satellites} className={`${inputClass} w-full`}
-              onChange={e => setDraft(d => ({ ...d, max_satellites: Math.max(1, Math.min(500, Number(e.target.value) || 1)) }))} />
+            <input type="number" min={1} max={maxSats} value={draft.max_satellites} className={`${inputClass} w-full`}
+              onChange={e => setDraft(d => ({ ...d, max_satellites: Math.max(1, Math.min(maxSats, Number(e.target.value) || 1)) }))} />
             <span className="block text-[11px] text-faint mt-1">Shared fairly across the selected sources (newest element sets first)</span>
           </label>
           <label className="block">

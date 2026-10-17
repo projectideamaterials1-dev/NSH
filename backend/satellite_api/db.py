@@ -14,6 +14,7 @@ import logging
 import os
 import queue
 import sqlite3
+import time
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -108,8 +109,13 @@ SCHEMA = [
 def _connect(path: str) -> sqlite3.Connection:
     if path != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path, check_same_thread=False)
+    conn = sqlite3.connect(path, check_same_thread=False, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    if path != ":memory:":
+        # TRUNCATE keeps the rollback journal file and empties it, instead of creating and deleting it on
+        # every commit (the default). On a Windows bind mount, antivirus / the indexer briefly locking each
+        # new journal file made commits fail with "disk I/O error".
+        conn.execute("PRAGMA journal_mode=TRUNCATE")
     return conn
 
 
@@ -174,6 +180,32 @@ class MissionArchive:
         self._thread.join(timeout=5)
 
     # ── writer thread ─────────────────────────────────────────────────────────
+    WRITE_RETRIES = 4
+
+    def _write_with_retry(self, conn, kind: str, payload):
+        """Writes one record; transient OperationalErrors (I/O errors and locks on a host bind mount) are
+        retried with a short backoff instead of dropping the record."""
+        for attempt in range(self.WRITE_RETRIES + 1):
+            try:
+                with self._read_lock:
+                    if kind == "maneuver":
+                        self._write_maneuver(conn, payload)
+                    elif kind == "event":
+                        self._write_event(conn, payload)
+                    elif kind == "pending_maneuver":
+                        self._write_pending(conn, payload)
+                    elif kind == "audit":
+                        self._write_audit(conn, payload)
+                    elif kind == "decision":
+                        self._write_decision(conn, payload)
+                    conn.commit()
+                return
+            except sqlite3.OperationalError:
+                conn.rollback()
+                if attempt == self.WRITE_RETRIES:
+                    raise
+                time.sleep(0.05 * 2 ** attempt)
+
     def _writer(self):
         conn = _connect(self.path)
         for statement in SCHEMA:
@@ -192,18 +224,7 @@ class MissionArchive:
                 if kind == "__flush__":
                     payload["event"].set()
                     continue
-                with self._read_lock:
-                    if kind == "maneuver":
-                        self._write_maneuver(conn, payload)
-                    elif kind == "event":
-                        self._write_event(conn, payload)
-                    elif kind == "pending_maneuver":
-                        self._write_pending(conn, payload)
-                    elif kind == "audit":
-                        self._write_audit(conn, payload)
-                    elif kind == "decision":
-                        self._write_decision(conn, payload)
-                    conn.commit()
+                self._write_with_retry(conn, kind, payload)
             except Exception:
                 # A single malformed payload must never kill this thread: doing so
                 # silently stops all future persistence, leaks the input queue

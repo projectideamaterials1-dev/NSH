@@ -66,9 +66,15 @@ SOURCES: Dict[str, Source] = {s.key: s for s in (
     Source("oneweb", "OneWeb", "fleet", ("GROUP=oneweb",), "OneWeb broadband constellation (~1,200 km)"),
     Source("starlink", "Starlink", "fleet", ("GROUP=starlink",), "SpaceX Starlink broadband constellation"),
     Source("gps-ops", "GPS (operational)", "fleet", ("GROUP=gps-ops",), "US GPS navigation satellites (MEO)"),
+    Source("geo", "Geostationary", "fleet", ("GROUP=geo",),
+           "Communications and weather satellites in geostationary orbit (~35,786 km)"),
+    Source("gnss", "Navigation (all GNSS)", "fleet", ("GROUP=gnss",),
+           "GPS, Galileo, GLONASS, BeiDou, QZSS and NavIC navigation satellites (MEO / GEO / IGSO)"),
     Source("weather", "Weather", "fleet", ("GROUP=weather",), "NOAA, Meteosat, Himawari, INSAT and other weather satellites"),
     Source("resource", "Earth resources", "fleet", ("GROUP=resource",), "Landsat, Sentinel and other Earth-resources satellites"),
     Source("science", "Science", "fleet", ("GROUP=science",), "Hubble and other science missions"),
+    Source("active", "All active satellites", "objects", ("GROUP=active",),
+           "Every active satellite NORAD publishes, in every orbit (LEO, MEO, GEO, HEO): about 13,000"),
     Source("fengyun-1c-debris", "Fengyun-1C debris", "objects", ("GROUP=fengyun-1c-debris",),
            "Fragments from the 2007 Chinese anti-satellite test"),
     Source("cosmos-2251-debris", "Cosmos 2251 debris", "objects", ("GROUP=cosmos-2251-debris",),
@@ -80,6 +86,14 @@ SOURCES: Dict[str, Source] = {s.key: s for s in (
     Source("last-30-days", "Recent launches", "objects", ("GROUP=last-30-days",),
            "Objects launched in the last 30 days"),
 )}
+
+
+_NOT_PAYLOAD = re.compile(r"\b(DEB|R/B|AKM|PKM)\b|ROCKET BODY|FRAGMENT")
+
+
+def is_payload(name: str, source: str) -> bool:
+    """A working satellite rather than debris or a rocket body (by source group, then name)."""
+    return not source.endswith("-debris") and not _NOT_PAYLOAD.search(name.upper())
 
 
 @dataclass

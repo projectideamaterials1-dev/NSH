@@ -21,6 +21,7 @@ interface TelemetrySnapshot {
   timestamp: string;
   satellites: SatelliteData[];
   debris_cloud: [string, number, number, number][]; // exactly 4‑element tuple
+  tracked_satellites?: number[];                    // indices into debris_cloud that are working satellites
 }
 
 interface WorkerRequest {
@@ -40,6 +41,7 @@ interface WorkerResponse {
     colors: Uint8ClampedArray;
     ids: string[];
     riskScores: Float32Array;
+    kinds: Uint8Array;
     length: number;
   };
   satellites?: {
@@ -86,8 +88,10 @@ const COLOR = {
 // PARSING FUNCTIONS – Heavily optimized for 100k+ arrays
 // ============================================================================
 
-function parseDebrisCloud(debrisArray: [string, number, number, number][]) {
+function parseDebrisCloud(debrisArray: [string, number, number, number][], trackedSatellites: number[] = []) {
   const count = debrisArray.length;
+  const kinds = new Uint8Array(count);
+  for (const i of trackedSatellites) if (i >= 0 && i < count) kinds[i] = 1;
   const positions = new Float32Array(count * 3);   // [lon, lat, alt] * count
   const colors = new Uint8ClampedArray(count * 4);
   const riskScores = new Float32Array(count);
@@ -112,7 +116,7 @@ function parseDebrisCloud(debrisArray: [string, number, number, number][]) {
     // No high risk because riskScore is always 0.1
   }
 
-  return { positions, colors, ids, riskScores, count, highRiskCount };
+  return { positions, colors, ids, riskScores, kinds, count, highRiskCount };
 }
 
 function parseSatellites(satellites: SatelliteData[]) {
@@ -186,7 +190,7 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
       throw new Error('Invalid message type or missing payload');
     }
 
-    const debris = parseDebrisCloud(payload.debris_cloud);
+    const debris = parseDebrisCloud(payload.debris_cloud, payload.tracked_satellites);
     const satellites = parseSatellites(payload.satellites);
     const parseTime = performance.now() - start;
 
@@ -199,6 +203,7 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
         colors: debris.colors,
         ids: debris.ids,
         riskScores: debris.riskScores,
+        kinds: debris.kinds,
         length: debris.count,
       },
       satellites: {
@@ -222,6 +227,7 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
       debris.positions.buffer,
       debris.colors.buffer,
       debris.riskScores.buffer,
+      debris.kinds.buffer,
       satellites.positions.buffer,
       satellites.colors.buffer,
       satellites.fuels.buffer,

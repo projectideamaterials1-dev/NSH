@@ -82,11 +82,15 @@ def _build_snapshot(state, bbox=None, page: int = 1, per_page: Optional[int] = N
     ids = [id_map.get(i, "UNKNOWN") for i in deb_rows[:, 0].astype(np.int64).tolist()]
     lat, lon, alt = np.round(deb_rows[:, 1:4], 4).T.tolist() if total_debris else ([], [], [])
     debris_cloud = list(map(list, zip(ids, lat, lon, alt)))
+    payloads = state.payload_objects
+    # Indices into debris_cloud of tracked objects that are working satellites (not debris).
+    tracked_satellites = [i for i, oid in enumerate(ids) if oid in payloads] if payloads else []
 
     snapshot = {
         "timestamp": iso_z(state.current_time),
         "satellites": satellites,
         "debris_cloud": debris_cloud,
+        "tracked_satellites": tracked_satellites,
     }
     return snapshot, total_debris
 
@@ -130,9 +134,10 @@ async def snapshot_stream(request: Request):
         while not await request.is_disconnected():
             if state.is_ready() and state.current_time is not None:
                 async with state.lock:
-                    ts = state.current_time.isoformat()
+                    # Re-checked under the lock: a catalog load can clear the clock while we waited for it.
+                    ts = state.current_time.isoformat() if state.current_time is not None else None
                     snapshot = None
-                    if ts != last_timestamp:
+                    if ts is not None and ts != last_timestamp:
                         snapshot, _ = _build_snapshot(state)
                 if snapshot is not None:
                     yield b"data: " + orjson.dumps(snapshot) + b"\n\n"

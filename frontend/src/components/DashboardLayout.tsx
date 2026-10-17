@@ -3,7 +3,7 @@
 // Below the lg breakpoint the three panes become switchable views (the map stays mounted so the
 // WebGL context survives switching). On lg and up each side panel collapses to a thin rail.
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, Map as MapIcon, PanelLeft, PanelRight } from 'lucide-react';
 import useOrbitalStore, { selectPendingProposals } from '../store/useOrbitalStore';
 import useLayoutStore, { type Side } from '../store/layout';
@@ -16,6 +16,24 @@ import { ErrorBoundary } from './ui';
 
 type Pane = 'map' | 'details' | 'ops';
 
+// visibility animates with width: it flips at the end of a collapse and the start of an expand, so the
+// slide plays and a collapsed panel is then truly hidden (not just zero-width).
+const SLIDE = 'lg:transition-[width,visibility] lg:duration-300 lg:ease-in-out-quart motion-reduce:transition-none';
+
+/** True at the lg breakpoint, where the side panels collapse (below it they are switchable views). */
+function useIsLg(): boolean {
+  const query = '(min-width: 1024px)';
+  const [match, setMatch] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia?.(query);
+    if (!mq) return;
+    const on = () => setMatch(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return match;
+}
+
 /** The strip between a side panel and the map: collapses the panel, or stands in for it while collapsed. */
 const Rail: React.FC<{ side: Side; label: string; badge?: number }> = ({ side, label, badge }) => {
   const collapsed = useLayoutStore(s => s.collapsed[side]);
@@ -24,7 +42,7 @@ const Rail: React.FC<{ side: Side; label: string; badge?: number }> = ({ side, l
   const Icon = pointsLeft ? ChevronLeft : ChevronRight;
   return (
     <div className={`hidden lg:flex flex-col items-center flex-shrink-0 bg-panel border-line ${side === 'left' ? 'border-r' : 'border-l'}
-      ${collapsed ? 'w-9' : 'w-4 hover:w-6 transition-[width]'}`}>
+      transition-[width] duration-300 ease-in-out-quart ${collapsed ? 'w-9' : 'w-4 hover:w-6'}`}>
       <button onClick={() => toggle(side)} aria-expanded={!collapsed}
         aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${label} panel`} title={`${collapsed ? 'Show' : 'Hide'} ${label} panel ([ / ])`}
         className="w-full h-10 flex items-center justify-center text-muted hover:text-ink hover:bg-raised border-b border-line">
@@ -32,7 +50,7 @@ const Rail: React.FC<{ side: Side; label: string; badge?: number }> = ({ side, l
       </button>
       {collapsed && (
         <button onClick={() => toggle(side)} tabIndex={-1} aria-hidden
-          className="flex-1 w-full flex flex-col items-center gap-2 pt-3 text-[12px] text-muted hover:text-ink hover:bg-raised">
+          className="no-press animate-fade-in flex-1 w-full flex flex-col items-center gap-2 pt-3 text-[12px] text-muted hover:text-ink hover:bg-raised">
           <span className="[writing-mode:vertical-rl] rotate-180 tracking-wide">{label}</span>
           {!!badge && <span className="tabular text-[11px] px-1.5 rounded-full text-warn bg-warn/15">{badge}</span>}
         </button>
@@ -46,6 +64,7 @@ export const DashboardLayout: React.FC = React.memo(() => {
   const pending = useOrbitalStore(selectPendingProposals).length;
   const collapsed = useLayoutStore(s => s.collapsed);
   const show = (p: Pane) => (pane === p ? 'flex' : 'hidden');
+  const isLg = useIsLg();
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
@@ -60,7 +79,9 @@ export const DashboardLayout: React.FC = React.memo(() => {
         ))}
       </nav>
       <div className="flex-1 min-h-0 flex">
-        <div className={`${show('details')} ${collapsed.left ? 'lg:hidden' : 'lg:flex'} flex-1 lg:flex-none min-w-0`}>
+        {/* On lg the panel slides: width animates while the panel inside keeps its own width (no reflow). */}
+        <div className={`${show('details')} lg:flex flex-1 lg:flex-none min-w-0 lg:overflow-hidden ${SLIDE} ${collapsed.left ? 'lg:w-0 lg:invisible' : 'lg:w-[320px]'}`}
+          inert={collapsed.left && isLg ? true : undefined}>
           <ErrorBoundary name="Satellite panel"><LeftPanel /></ErrorBoundary>
         </div>
         <Rail side="left" label="Satellite" />
@@ -71,7 +92,8 @@ export const DashboardLayout: React.FC = React.memo(() => {
           <ErrorBoundary name="Command bar"><SimulationControls /></ErrorBoundary>
         </main>
         <Rail side="right" label="Operations" badge={pending} />
-        <div className={`${show('ops')} ${collapsed.right ? 'lg:hidden' : 'lg:flex'} flex-1 lg:flex-none min-w-0`}>
+        <div className={`${show('ops')} lg:flex flex-1 lg:flex-none min-w-0 lg:overflow-hidden lg:justify-end ${SLIDE} ${collapsed.right ? 'lg:w-0 lg:invisible' : 'lg:w-[360px]'}`}
+          inert={collapsed.right && isLg ? true : undefined}>
           <ErrorBoundary name="Operations panel"><RightPanel /></ErrorBoundary>
         </div>
       </div>

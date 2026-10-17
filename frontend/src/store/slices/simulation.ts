@@ -1,7 +1,7 @@
 // src/store/slices/simulation.ts
 // Browser-driven simulation clock (paused in live mode, where the backend owns time).
 
-import { apiJson } from '../../api/http';
+import { ApiError, apiJson } from '../../api/http';
 import telemetryClient from '../../api/telemetryClient';
 import { CONSTANTS } from '../frames';
 import type { GetState, SetState, SimulationActions, SimulationStepResponse } from '../types';
@@ -30,8 +30,14 @@ export const createSimulationActions = (set: SetState, get: GetState): Simulatio
       if (result.maneuvers_executed > 0) await get().fetchManeuvers();
       return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Step failed';
       get().setSimulationRunning(false);
+      if (error instanceof ApiError && error.status === 409) {
+        // Live mode came on elsewhere (another tab, the assistant, a backend restart) before our status
+        // poll saw it: the backend owns the clock now. Not an error - pick up live mode and stop stepping.
+        await get().fetchRealWorld();
+        return null;
+      }
+      const message = error instanceof Error ? error.message : 'Step failed';
       set((state) => ({ simulation: { ...state.simulation, status: 'error', error: message } }));
       return null;
     } finally {

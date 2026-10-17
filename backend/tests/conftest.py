@@ -5,6 +5,7 @@ import sys
 os.environ.setdefault("ACM_ARCHIVE", "0")
 os.environ.setdefault("ACM_BACKGROUND", "0")
 os.environ.setdefault("ACM_IGNORE_SAVED_CONFIG", "1")
+os.environ.setdefault("ACM_WORKERS", "0")   # threads; tests/unit/test_compute_pool.py covers real worker processes
 os.environ.pop("REDIS_URL", None)
 
 import pytest

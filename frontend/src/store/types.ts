@@ -55,6 +55,8 @@ export interface DebrisBinaryData {
   colors: Uint8ClampedArray;
   ids: string[];
   riskScores: Float32Array;
+  /** 1 = a working satellite outside the fleet (tracked, not operated), 0 = debris / rocket body. */
+  kinds?: Uint8Array;
   length: number;
 }
 
@@ -363,6 +365,8 @@ export interface AutopilotInfo {
 }
 
 export interface TrackPoint { t: string; offset_s: number; lat: number; lon: number; alt_km: number }
+/** A queued burn on the predicted track: where and when it fires. */
+export interface TrackBurn extends TrackPoint { burn_id: string; delta_v_mps: number }
 
 export interface GroundPass {
   station_id: string;
@@ -449,6 +453,8 @@ export interface RealWorldStatus {
   tracked_objects: number;
   sources: Record<string, { fetched_at?: string; cached?: boolean; stale?: boolean; count?: number; error?: string }>;
   warnings: string[];
+  /** Backend caps (REALWORLD_SATELLITE_LIMIT); older backends omit it. */
+  limits?: { max_satellites: number; max_objects: number };
   skipped: { stale: number; propagation: number; duplicate: number };
   element_age_hours: { median: number; max: number } | null;
   loaded_at: string | null;
@@ -556,6 +562,10 @@ export interface OrbitalData {
   autopilot: AutopilotInfo | null;
   config: SimConfigDto | null;
   selectedTrack: TrackPoint[] | null;
+  /** Queued burns applied along `selectedTrack` (the track is the planned, post-burn path). */
+  selectedTrackBurns: TrackBurn[] | null;
+  /** The same track without the queued burns (only fetched when there are any). */
+  selectedTrackCoast: TrackPoint[] | null;
   selectedPasses: GroundPass[] | null;
   screening: boolean;
 

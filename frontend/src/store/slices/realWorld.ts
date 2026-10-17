@@ -61,7 +61,7 @@ export const createRealWorldActions = (set: SetState, get: GetState): RealWorldA
     const status = await apiJson<RealWorldStatus>('/api/catalog/load', { method: 'POST', body: JSON.stringify(request) });
     if (request.replace) {
       // A new object set: drop trails, replay frames and the selection that belonged to the old one.
-      set({ trails: {}, history: [], replayIndex: null, selectedSatelliteId: null, selectedTrack: null,
+      set({ trails: {}, history: [], replayIndex: null, selectedSatelliteId: null, selectedTrack: null, selectedTrackBurns: null, selectedTrackCoast: null,
             selectedPasses: null, selectedCatalog: null, satelliteDetails: {}, conjunctions: [], imagery: {} });
     }
     set({ realWorld: status });
@@ -80,7 +80,7 @@ export const createRealWorldActions = (set: SetState, get: GetState): RealWorldA
       realWorld: result.status,
       trails: Object.fromEntries(Object.entries(trails).filter(([id]) => !removed.has(id))),
       ...(selectedSatelliteId && removed.has(selectedSatelliteId)
-        ? { selectedSatelliteId: null, selectedTrack: null, selectedPasses: null, selectedCatalog: null } : {}),
+        ? { selectedSatelliteId: null, selectedTrack: null, selectedTrackBurns: null, selectedTrackCoast: null, selectedPasses: null, selectedCatalog: null } : {}),
     });
     await telemetryClient.refresh();
     await Promise.all([get().fetchOps(), get().fetchManeuvers(), get().fetchImagery()]);

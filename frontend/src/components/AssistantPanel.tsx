@@ -13,7 +13,7 @@ import useOrbitalStore from '../store/useOrbitalStore';
 import useAssistantStore, {
   confirmBlocked, type ChatMessage, type ChatReply, type ProposedAction,
 } from '../store/assistant';
-import { Button } from './ui';
+import { Button, usePresence } from './ui';
 
 const SUGGESTIONS = [
   'Which open conjunction is the most dangerous right now, and why?',
@@ -295,7 +295,8 @@ export const AssistantPanel: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [open, setOpen]);
 
-  if (!open) return null;
+  const { mounted, closing } = usePresence(open, 180);
+  if (!mounted) return null;
 
   const submit = (text = draft) => {
     if (!text.trim() || pending) return;
@@ -304,7 +305,7 @@ export const AssistantPanel: React.FC = () => {
   };
 
   return (
-    <aside className="fixed right-0 top-14 bottom-0 z-40 w-full sm:w-[460px] bg-panel border-l border-line shadow-2xl flex flex-col"
+    <aside className={`fixed right-0 top-14 bottom-0 z-40 w-full sm:w-[460px] bg-panel border-l border-line shadow-2xl flex flex-col will-change-transform ${closing ? 'animate-drawer-out pointer-events-none' : 'animate-drawer-in'}`}
       aria-label="Operator assistant">
       <header className="flex items-center gap-2 px-4 h-11 border-b border-line flex-shrink-0">
         <MessageSquare className="w-4 h-4 text-accent" />
@@ -348,13 +349,13 @@ export const AssistantPanel: React.FC = () => {
           </div>
         )}
         {messages.map((m, i) => m.role === 'user' ? (
-          <div key={i} className="flex justify-end">
+          <div key={i} className="flex justify-end animate-content-in">
             <div className="max-w-[85%] rounded-lg bg-accent/15 border border-accent/30 px-3 py-2 text-[13px] text-ink whitespace-pre-wrap">
               {m.content}
             </div>
           </div>
-        ) : <AssistantMessage key={i} message={m} />)}
-        {pending && <PendingIndicator />}
+        ) : <div key={i} className="animate-content-in"><AssistantMessage message={m} /></div>)}
+        {pending && <div className="animate-fade-in"><PendingIndicator /></div>}
       </div>
 
       <form className="border-t border-line p-3 flex gap-2 flex-shrink-0" onSubmit={e => { e.preventDefault(); submit(); }}>
