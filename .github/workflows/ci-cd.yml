@@ -34,7 +34,7 @@ jobs:
         # can't flake the fast unit/integration suite that gates every PR.
         run: pytest tests/ --ignore=tests/benchmark -v --cov=satellite_api --cov-report=xml --cov-fail-under=80
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           files: ./backend/coverage.xml
         continue-on-error: true
